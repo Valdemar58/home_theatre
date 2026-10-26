@@ -81,6 +81,7 @@ Docker: `NODE_OPTIONS="--dns-result-order=ipv4first --no-network-family-autosele
 - MTU: docker-сеть проекта с MTU `${DOCKER_MTU:-1376}` (подбиралось под прежний VPN-туннель, под v2rayN/nekoray не перепроверялось); при 1500 TLS из контейнеров виснет (`UND_ERR_CONNECT_TIMEOUT` к Shikimori, 429/блок индексаторов). Менять MTU — только `docker compose down && up -d`.
 - Bazarr новых версий требует `audio_only_include` в элементах языкового профиля (иначе HTTP 500) — учтено в `bootstrap.py`.
 - На Windows: SQLite-ошибки «locking protocol» у Jellyfin на NTFS-маунте, Docker-диск WSL (`ext4.vhdx`) только растёт — главная причина переезда на Linux.
+- На Windows базу календаря (`config/anime-calendar/anime-calendar.db`, WAL) **не читать с хоста**, пока контейнер пишет: общая память WAL через границу Windows/Docker не видна, чтение даёт «database disk image is malformed» (сама база цела). Запросы — изнутри: `docker exec anime-calendar node -e` с `node:sqlite` и `/data/anime-calendar.db` (`readOnly: true`); целостность — `PRAGMA integrity_check`.
 
 ## Где остановились (2026-10-13)
 
