@@ -3,6 +3,7 @@ import { described, episodeDigest, fillEpisodes, isStubDescription, seasonEpisod
 import type { EpisodeInfo, MediaLite, PlotInfo } from "@/lib/types";
 import { getDetails, type AnilistDetails } from "./anilist";
 import { cached } from "./cache";
+import { corpusOf, deepestByEpisode } from "./corpus-store";
 import { db, now } from "./db";
 import { env, seerrConfigured } from "./env";
 import { externalIds, mappingForAnilist } from "./idmap";
@@ -326,6 +327,25 @@ export function ensureRecap(d: AnilistDetails): Promise<PlotInfo["recap"]> {
 
 // ---------------------------------------------------------------- всё вместе
 
+/**
+ * Пометить серии, у которых в корпусе есть подробный пересказ (Википедия, Fandom). Серий из TMDB/Kitsu нет,
+ * а корпус собран — серии берём из корпуса.
+ */
+function withDetails(id: number, episodes: EpisodeInfo[]): EpisodeInfo[] {
+  const texts = corpusOf(id);
+  if (!texts.length) return episodes;
+  const deep = new Map<number, { sources: string[]; chars: number }>();
+  for (const t of texts) {
+    if (t.depth === "teaser") continue;
+    const cur = deep.get(t.ep) ?? { sources: [], chars: 0 };
+    deep.set(t.ep, { sources: [...cur.sources, t.source], chars: Math.max(cur.chars, t.text.length) });
+  }
+  const base = episodes.length ? episodes : [...deepestByEpisode(texts).values()].map((t): EpisodeInfo => ({
+    number: t.ep, title: t.title, overview: null, lang: null, airDate: null, still: null,
+  }));
+  return base.map((e) => ({ ...e, detail: deep.get(e.number) ?? null }));
+}
+
 export async function plotOf(d: AnilistDetails): Promise<PlotInfo> {
   const [eps, ru] = await Promise.all([
     episodesOf(d).catch(() => ({ episodes: [] as EpisodeInfo[], overview: null, source: null })),
@@ -348,7 +368,7 @@ export async function plotOf(d: AnilistDetails): Promise<PlotInfo> {
   }
   const hasPrequels = d.relations.some((r) => r.relationType === "PREQUEL");
   return {
-    episodes: eps.episodes, source: eps.source, stub, synopsis: synopsis?.text ?? null, synopsisBy: synopsis?.by ?? null,
+    episodes: withDetails(d.id, eps.episodes), source: eps.source, stub, synopsis: synopsis?.text ?? null, synopsisBy: synopsis?.by ?? null,
     pending, hasPrequels, recap: hasPrequels ? readRecap(d.id) : null,
   };
 }

@@ -112,7 +112,16 @@ export type EpisodeInfo = {
   lang: "ru" | "en" | null;
   airDate: string | null;
   still: string | null;
+  /** Есть подробный пересказ в корпусе сюжета (сам текст — по кнопке, /api/anime/[id]/corpus?ep=N) */
+  detail?: { sources: string[]; chars: number } | null;
 };
+
+/** Тексты одной серии из корпуса сюжета: по источникам, подробные первыми */
+export type EpisodeTexts = {
+  source: string; lang: string; depth: "teaser" | "full" | "script"; title: string | null; text: string; url: string | null;
+  /** Перевод на русский (ИИ), если уже сделан */
+  translation: { text: string; model: string; provider: string } | null;
+}[];
 
 /** Сюжет тайтла: серии, синопсис от ИИ вместо заглушки, «что было раньше» */
 export type PlotInfo = {
@@ -277,6 +286,32 @@ export type TaskInfo = {
   error: string | null;
   createdAt: number;
   finishedAt: number | null;
+};
+
+/** Сбор корпуса сюжета (задача «corpus»): шаг, сколько сделано, что нашлось по источникам */
+export type CorpusProgress = {
+  anilistId: number;
+  /** Текущий шаг: источник или пересказ */
+  step: string;
+  done: number;
+  total: number;
+  startedAt: number;
+  updatedAt: number;
+  finished: boolean;
+  /** Серий с текстом по источникам */
+  found: Record<string, number>;
+  errors: string[];
+};
+
+/** Корпус сюжета тайтла: задача, её прогресс и что уже собрано */
+export type CorpusState = {
+  task: TaskInfo | null;
+  progress: CorpusProgress | null;
+  /** Серий с каким-либо текстом и с подробным пересказом */
+  episodes: number;
+  deep: number;
+  /** Серий по источникам: tmdb, wiki-en, fandom, danime */
+  sources: Record<string, number>;
 };
 
 /** Озвучки тайтла: найденное фоновой задачей и её состояние */

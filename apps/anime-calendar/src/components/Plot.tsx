@@ -1,10 +1,10 @@
 "use client";
-import { BookOpenIcon, CheckIcon, EyeIcon, EyeSlashIcon, SparklesIcon } from "@heroicons/react/24/outline";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { BookOpenIcon, CheckIcon, DocumentTextIcon, EyeIcon, EyeSlashIcon, SparklesIcon } from "@heroicons/react/24/outline";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { api, usePlot } from "@/lib/client";
-import type { AnimeDetails, EpisodeInfo, ListEntry, PlotInfo } from "@/lib/types";
+import { useEffect, useRef, useState } from "react";
+import { api, useMe, usePlot } from "@/lib/client";
+import type { AnimeDetails, CorpusState, EpisodeInfo, EpisodeTexts, ListEntry, PlotInfo } from "@/lib/types";
 import { formatDate, formatTime, relative } from "@/lib/time";
 import { Img } from "./Img";
 import { Badge, cx, Spinner } from "./ui";
@@ -175,6 +175,7 @@ export function Episodes({ media, entry, now }: { media: AnimeDetails; entry?: L
                 ) : (
                   <Overview text={r.info.overview} en={r.info.lang === "en"} />
                 ))}
+                {r.info?.detail && !hidden && <EpisodeDetail id={media.id} ep={r.number} detail={r.info.detail} />}
               </div>
             </div>
           );
@@ -186,7 +187,143 @@ export function Episodes({ media, entry, now }: { media: AnimeDetails; entry?: L
         )}
         {plot?.source && <span className="ml-auto">{hasText ? "Названия и описания" : eps.some((e) => e.title) ? "Названия и кадры" : "Кадры"} — {plot.source}</span>}
       </div>
+      <CorpusBar id={media.id} />
     </section>
+  );
+}
+
+const SOURCE_LABEL: Record<string, string> = { "wiki-en": "Википедия", fandom: "Fandom", danime: "dアニメストア", tmdb: "TMDB" };
+const sourceLabel = (s: string) => SOURCE_LABEL[s] ?? s;
+
+/** Подробный пересказ серии из корпуса: по кнопке, вкладки по источникам. */
+function EpisodeDetail({ id, ep, detail }: { id: number; ep: number; detail: NonNullable<EpisodeInfo["detail"]> }) {
+  const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState(0);
+  const { data: texts, isLoading } = useQuery({
+    queryKey: ["episode-texts", id, ep], queryFn: () => api<EpisodeTexts>(`/api/anime/${id}/corpus?ep=${ep}`), enabled: open, staleTime: 3600_000,
+  });
+  const qc = useQueryClient();
+  const [original, setOriginal] = useState(false);
+  const translate = useMutation({
+    mutationFn: (source: string) => api<NonNullable<EpisodeTexts[number]["translation"]>>(`/api/anime/${id}/corpus/translate`, { method: "POST", json: { ep, source } }),
+    onSuccess: (tr, source) => {
+      qc.setQueryData<EpisodeTexts>(["episode-texts", id, ep], (old) => old?.map((t) => (t.source === source ? { ...t, translation: tr } : t)));
+      setOriginal(false);
+    },
+  });
+  // Все хуки — выше: свёрнутое и раскрытое состояние должны вызывать их одинаково
+  if (!open) return (
+    <button onClick={() => setOpen(true)} className="mt-1 flex items-center gap-1.5 text-xs text-accent-300 hover:text-accent-200">
+      <DocumentTextIcon className="h-3.5 w-3.5" />
+      Подробный пересказ · EN · {detail.sources.map(sourceLabel).join(", ")} · ~{Math.max(1, Math.round(detail.chars / 1200))} мин чтения
+    </button>
+  );
+  const cur = texts?.[Math.min(tab, (texts?.length ?? 1) - 1)];
+  const ru = cur?.lang !== "ru" && !original ? cur?.translation : null;
+  return (
+    <div className="mt-2 rounded-lg bg-gray-900/60 ring-1 ring-gray-700">
+      <div className="flex flex-wrap items-center gap-1 border-b border-gray-700/60 px-2 py-1.5">
+        {texts?.map((t, i) => (
+          <button key={t.source} onClick={() => setTab(i)}
+            className={cx("rounded-md px-2 py-0.5 text-xs", i === tab ? "tone-accent soft" : "text-gray-400 hover:text-gray-200")}>
+            {sourceLabel(t.source)} <span className="uppercase text-gray-500">{t.lang}</span>
+          </button>
+        ))}
+        <button onClick={() => setOpen(false)} className="ml-auto px-2 text-xs text-gray-500 hover:text-gray-300">Свернуть</button>
+      </div>
+      {isLoading && <p className="flex items-center gap-2 px-3 py-3 text-sm text-gray-500"><Spinner className="h-4 w-4" /> Загружаю…</p>}
+      {cur && (
+        <div className="px-3 py-3">
+          {cur.lang !== "ru" && (
+            <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+              {cur.translation ? (
+                <>
+                  <button onClick={() => setOriginal(false)} className={cx("rounded-md px-2 py-0.5", !original ? "tone-info soft" : "text-gray-400 hover:text-gray-200")}>Русский</button>
+                  <button onClick={() => setOriginal(true)} className={cx("rounded-md px-2 py-0.5", original ? "tone-info soft" : "text-gray-400 hover:text-gray-200")}>Оригинал</button>
+                </>
+              ) : (
+                <button onClick={() => translate.mutate(cur.source)} disabled={translate.isPending} className="tone-info soft rounded-md px-2 py-0.5">
+                  {translate.isPending
+                    ? <span className="flex items-center gap-1.5"><Spinner className="h-3 w-3" /> Перевожу — {cur.text.length > 6000 ? "до пары минут" : "до минуты"}…</span>
+                    : "Перевести на русский"}
+                </button>
+              )}
+              {translate.error && <span className="text-negative-300">{String((translate.error as Error).message)}</span>}
+            </div>
+          )}
+          <p className="max-h-[60vh] overflow-y-auto whitespace-pre-line text-sm leading-relaxed text-gray-300">{ru ? ru.text : cur.text}</p>
+          <p className="mt-2 flex flex-wrap items-center gap-x-1 text-xs text-gray-500">
+            {cur.url ? <a href={cur.url} target="_blank" rel="noreferrer" className="hover:text-gray-300">{sourceLabel(cur.source)}</a> : sourceLabel(cur.source)}
+            {cur.source === "wiki-en" || cur.source === "fandom" ? " — текст под лицензией CC BY-SA" : ""}
+            {ru && <span className="flex items-center gap-1">· <SparklesIcon className="h-3 w-3" /> перевод ИИ ({ru.model}), возможны неточности</span>}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const fmtDuration = (sec: number) => (sec < 60 ? `${Math.round(sec)} с` : `${Math.floor(sec / 60)} мин ${Math.round(sec % 60)} с`);
+
+/** Сбор подробного сюжета (только админ): кнопка и ход сбора — шаг, сколько сделано, сколько осталось. */
+function CorpusBar({ id }: { id: number }) {
+  const { data: me } = useMe();
+  const qc = useQueryClient();
+  const admin = Boolean(me?.isAdmin);
+  const { data: st } = useQuery({
+    queryKey: ["corpus", id], queryFn: () => api<CorpusState>(`/api/anime/${id}/corpus`), enabled: admin,
+    refetchInterval: (q) => (q.state.data?.task && ["queued", "running"].includes(q.state.data.task.status) ? 2000 : false),
+  });
+  const start = useMutation({
+    mutationFn: () => api<CorpusState>(`/api/anime/${id}/corpus`, { method: "POST" }),
+    onSuccess: (s) => qc.setQueryData(["corpus", id], s),
+  });
+  const active = st?.task && ["queued", "running"].includes(st.task.status);
+  const wasActive = useRef(false);
+  useEffect(() => {
+    // Сбор закончился — серии получили пометки «подробный пересказ»
+    if (wasActive.current && !active) void qc.invalidateQueries({ queryKey: ["plot", id] });
+    wasActive.current = Boolean(active);
+  }, [active, id, qc]);
+  if (!admin || !st) return null;
+  const p = st.progress;
+  const elapsed = p ? (p.updatedAt - p.startedAt) / 1000 : 0;
+  const left = p && p.done > 0 && !p.finished ? (elapsed / p.done) * (p.total - p.done) : null;
+  return (
+    <div className="mt-3 rounded-xl bg-gray-800/40 px-4 py-3 text-sm ring-1 ring-gray-700">
+      <div className="flex flex-wrap items-center gap-3">
+        <DocumentTextIcon className="h-5 w-5 shrink-0 text-gray-400" />
+        <span className="mr-auto text-gray-300">
+          {active ? (st.task!.status === "queued" ? "Сбор сюжета в очереди…" : `Собираю сюжет: ${p?.step ?? "…"}`)
+            : st.episodes ? `Подробный пересказ есть у ${st.deep} из ${st.episodes} серий` : "Подробного сюжета ещё нет: пересказы серий с Википедии, Fandom и японские анонсы"}
+        </span>
+        {!active && (
+          <button onClick={() => start.mutate()} disabled={start.isPending} className="tone-accent soft rounded-lg px-3 py-1.5 font-medium">
+            {st.episodes ? "Обновить сюжет" : "Собрать сюжет"}
+          </button>
+        )}
+      </div>
+      {active && p && (
+        <div className="mt-2">
+          <div className="h-1.5 overflow-hidden rounded-full bg-gray-700">
+            <div className="tone-accent solid h-full transition-all" style={{ width: `${Math.round((p.done / Math.max(1, p.total)) * 100)}%` }} />
+          </div>
+          <p className="mt-1 flex flex-wrap gap-x-3 text-xs text-gray-500">
+            <span>{p.done} из {p.total}</span>
+            <span>прошло {fmtDuration(elapsed)}</span>
+            {left !== null && <span>осталось ~{fmtDuration(left)}</span>}
+          </p>
+        </div>
+      )}
+      {p && (Object.keys(p.found).length > 0 || p.errors.length > 0) && (
+        <p className="mt-1 flex flex-wrap gap-x-3 text-xs text-gray-500">
+          {Object.entries(p.found).map(([s, n]) => <span key={s}>{sourceLabel(s)}: {n}</span>)}
+          {p.errors.map((e) => <span key={e} className="text-negative-300">{e}</span>)}
+        </p>
+      )}
+      {st.task?.status === "error" && <p className="mt-1 text-xs text-negative-300">{st.task.error}</p>}
+      {start.error && <p className="mt-1 text-xs text-negative-300">{String((start.error as Error).message)}</p>}
+    </div>
   );
 }
 

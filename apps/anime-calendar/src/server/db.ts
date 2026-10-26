@@ -369,7 +369,28 @@ function migrate(db: Db) {
       sources TEXT,
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (anilist_id, kind)
+    );
+    -- Корпус сюжета: тексты о сериях из всех источников, без срока жизни (строки не удаляются:
+    -- изменился текст — новая строка, текущая — последняя). ep — номер серии в тайтле AniList;
+    -- depth — анонс (teaser) / пересказ (full) / сценарий (script)
+    CREATE TABLE IF NOT EXISTS episode_text (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      anilist_id INTEGER NOT NULL,
+      ep INTEGER NOT NULL,
+      source TEXT NOT NULL,
+      lang TEXT NOT NULL,
+      depth TEXT NOT NULL,
+      title TEXT,
+      text TEXT NOT NULL,
+      url TEXT,
+      license TEXT,
+      hash TEXT NOT NULL,
+      fetched_at INTEGER NOT NULL,
+      aired TEXT,
+      UNIQUE (anilist_id, ep, source, hash)
     );`);
+  // Дата выхода серии по источнику (YYYY-MM-DD) — проверка сопоставления серий с AniList
+  if (!columns("episode_text").has("aired")) db.exec("ALTER TABLE episode_text ADD COLUMN aired TEXT");
   // Уведомления: вкладка, тайтл (обложка), автор (аватар), подпись и действия
   const noticeCols = columns("notifications");
   if (!noticeCols.has("grp")) {
