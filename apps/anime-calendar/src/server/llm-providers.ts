@@ -77,6 +77,8 @@ export function ollamaChat(r: ChatRequest): Promise<ChatResponse> {
 
 // ---------------------------------------------------------------- внешний API
 
+const REASONING_BUDGET = 8192;
+
 // Семафор: не больше N запросов одновременно
 let active = 0;
 const waiters: (() => void)[] = [];
@@ -107,7 +109,9 @@ export function externalChat(r: ChatRequest): Promise<ChatResponse> {
         ],
         response_format: { type: "json_object" },
         temperature: 0.3,
-        max_tokens: r.maxTokens ?? 4096,
+        // Умная модель сначала «рассуждает» — эти токены входят в лимит (платятся только потраченные),
+        // поэтому к нужному ответу добавляется запас, иначе ответ не успевает начаться
+        max_tokens: (r.maxTokens ?? 4096) + REASONING_BUDGET,
         stream: false,
       }),
       signal: AbortSignal.timeout(r.timeoutMs),
