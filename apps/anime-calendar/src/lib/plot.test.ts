@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { episodeDigest, fillEpisodes, isGenericEpisodeTitle, isStubDescription, seasonEpisodes, type RawEpisode } from "./plot";
+import { episodeDigest, fillEpisodes, isGenericEpisodeTitle, isStubDescription, seasonEpisodes, seasonFit, type RawEpisode } from "./plot";
 
 const raw = (number: number, title: string | null, overview: string | null): RawEpisode => ({ number, title, overview, airDate: null, still: null });
 
@@ -39,5 +39,25 @@ describe("сюжет", () => {
     const d = episodeDigest(eps, 1000);
     expect(d.length).toBeLessThanOrEqual(1000);
     expect(d.split("\n")[0]).toMatch(/^1\. x+…$/);
+  });
+});
+
+describe("seasonFit", () => {
+  const weekly = (start: string, n: number): RawEpisode[] => Array.from({ length: n }, (_, i) => ({
+    number: i + 1, title: null, overview: null, still: null, airDate: new Date(Date.parse(start) + i * 7 * 86400_000).toISOString().slice(0, 10),
+  }));
+
+  it("сезон в период показа", () => {
+    expect(seasonFit(weekly("2025-10-08", 12), { start: "2025-10-08", end: "2025-12-24" })).toEqual({ inside: 12, dated: 12, offset: 0 });
+  });
+
+  it("anime-lists указали прошлый сезон — внутри ничего", () => {
+    expect(seasonFit(weekly("2023-01-11", 12), { start: "2025-10-08", end: "2025-12-24" }).inside).toBe(0);
+  });
+
+  it("вторая часть сезона: сдвиг до первой серии в период показа", () => {
+    const fit = seasonFit(weekly("2024-01-06", 24), { start: "2024-04-06", end: "2024-06-22" });
+    expect(fit.offset).toBe(13);
+    expect(fit.inside).toBeGreaterThanOrEqual(11);
   });
 });

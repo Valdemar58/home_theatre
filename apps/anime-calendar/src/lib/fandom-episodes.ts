@@ -75,3 +75,21 @@ export function plotSections(html: string): { synopsis: string | null; plot: str
   }
   return { synopsis, plot };
 }
+
+const STOP = new Set(["the", "and", "for", "with", "was", "that", "this", "from", "into", "can", "my", "season", "part", "wiki", "fandom", "anime", "series"]);
+const titleWords = (s: string) => [...new Set(s.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/)
+  .filter((w) => w.length >= 3 && !STOP.has(w) && !/^\d+(st|nd|rd|th)?$/.test(w)))];
+
+/**
+ * Насколько вики из поиска Fandom про этот тайтл: доля значимых слов названия (без «season», «the», номеров),
+ * найденных в имени, описании или адресе вики. Лучшее из названий тайтла (английское, ромадзи).
+ */
+export function wikiMatchScore(titles: string[], wiki: { name: string; description?: string | null; url: string }): number {
+  const hay = new Set(titleWords(`${wiki.name} ${wiki.description ?? ""} ${wiki.url.replace(/[-.]/g, " ")}`));
+  let best = 0;
+  for (const t of titles) {
+    const w = titleWords(t);
+    if (w.length) best = Math.max(best, w.filter((x) => hay.has(x)).length / w.length);
+  }
+  return best;
+}

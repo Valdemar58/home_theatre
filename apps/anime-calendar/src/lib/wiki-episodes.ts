@@ -108,3 +108,28 @@ export function pickSeason(rows: WikiEpisode[], w: SeasonWindow, today = new Dat
   if (w.count !== null) eps = eps.slice(0, w.count);
   return eps.map((r, i) => ({ ...r, ep: i + 1 }));
 }
+
+export type Dated = { ep: number; date: string };
+
+/** Дата показа по японскому времени (расписание AniList — unix-время выхода). */
+export const jstDate = (unix: number) => new Date((unix + 9 * 3600) * 1000).toISOString().slice(0, 10);
+
+/**
+ * Привязать строки источника к сериям эталонной шкалы по дате выхода (±tol дней): строка получает
+ * самую раннюю ещё свободную серию с подходящей датой, серии одного дня — по порядку. Строка без пары
+ * не берётся: порядковый номер ненадёжен (у одной серии нет даты — все следующие съезжают на одну).
+ */
+export function alignToTimeline<T extends { date: string | null; overall?: string | null }>(rows: T[], timeline: Dated[], tol = 1): (T & { ep: number })[] {
+  const free = [...timeline].sort((a, b) => a.ep - b.ep);
+  const used = new Set<number>();
+  const out: (T & { ep: number })[] = [];
+  const sorted = rows.filter((r) => r.date).sort((a, b) => a.date!.localeCompare(b.date!) || Number(a.overall ?? 0) - Number(b.overall ?? 0));
+  for (const r of sorted) {
+    const t = Date.parse(r.date!);
+    const hit = free.find((x) => !used.has(x.ep) && Math.abs(Date.parse(x.date) - t) <= tol * DAY);
+    if (!hit) continue;
+    used.add(hit.ep);
+    out.push({ ...r, ep: hit.ep });
+  }
+  return out.sort((a, b) => a.ep - b.ep);
+}

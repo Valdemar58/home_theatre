@@ -74,3 +74,26 @@ export function episodeDigest(eps: EpisodeInfo[], budget: number, perEpisode = 2
   }
   return lines.join("\n");
 }
+
+export type AirWindow = { start: string | null; end: string | null };
+
+/** Дата AniList (год, месяц, день) → YYYY-MM-DD; неполная — null. */
+export const fuzzyIso = (f: { year: number | null; month: number | null; day: number | null } | null | undefined) =>
+  f?.year && f.month && f.day ? `${f.year}-${String(f.month).padStart(2, "0")}-${String(f.day).padStart(2, "0")}` : null;
+
+const DAY = 86400_000;
+
+/**
+ * Сколько серий сезона вышло в период показа тайтла (±14 дней; без конца — по сегодня) и с какой серии
+ * сезона он начинается. Так видно, что anime-lists указали не тот сезон TMDB (серии прошлого года).
+ */
+export function seasonFit(eps: RawEpisode[], w: AirWindow, today = Date.now()): { inside: number; dated: number; offset: number } {
+  if (!w.start) return { inside: 0, dated: 0, offset: 0 };
+  const from = Date.parse(w.start) - 14 * DAY;
+  const to = (w.end ? Date.parse(w.end) : today) + 14 * DAY;
+  const dated = eps.filter((e) => e.airDate).sort((a, b) => a.number - b.number);
+  const inside = dated.filter((e) => Date.parse(e.airDate!) >= from && Date.parse(e.airDate!) <= to);
+  // Первая серия тайтла — первая вышедшая не раньше чем за 3 дня до начала показа
+  const first = dated.find((e) => Date.parse(e.airDate!) >= Date.parse(w.start!) - 3 * DAY);
+  return { inside: inside.length, dated: dated.length, offset: first ? first.number - 1 : 0 };
+}

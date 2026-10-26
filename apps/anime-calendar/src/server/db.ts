@@ -391,6 +391,8 @@ function migrate(db: Db) {
     );`);
   // Дата выхода серии по источнику (YYYY-MM-DD) — проверка сопоставления серий с AniList
   if (!columns("episode_text").has("aired")) db.exec("ALTER TABLE episode_text ADD COLUMN aired TEXT");
+  // Отозвано (чужой сезон, сдвинутая серия): строка остаётся в истории, но текущей не считается
+  if (!columns("episode_text").has("retracted_at")) db.exec("ALTER TABLE episode_text ADD COLUMN retracted_at INTEGER");
   // Уведомления: вкладка, тайтл (обложка), автор (аватар), подпись и действия
   const noticeCols = columns("notifications");
   if (!noticeCols.has("grp")) {

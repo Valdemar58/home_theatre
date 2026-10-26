@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { episodeCategory, infoboxInfo, parseDate, plotSections } from "./fandom-episodes";
+import { episodeCategory, infoboxInfo, parseDate, plotSections, wikiMatchScore } from "./fandom-episodes";
 
 const fixture = (name: string) => readFileSync(join(__dirname, "fixtures", name), "utf-8");
 const boxes = JSON.parse(fixture("fandom-infoboxes.json")) as Record<string, Record<string, string>>;
@@ -48,5 +48,19 @@ describe("plotSections", () => {
     expect(synopsis?.length).toBeGreaterThan(50);
     expect(plot?.length).toBeGreaterThan(3000);
     expect(plot).not.toMatch(/<|\[\d+\]|Sign in to edit/);
+  });
+});
+
+describe("wikiMatchScore", () => {
+  const prince = ["I Was Reincarnated as the 7th Prince so I Can Take My Time Perfecting My Magical Ability", "Tensei shitara Dainana Ouji Datta node, Kimama ni Majutsu wo Kiwamemasu"];
+
+  it("вика тайтла — по описанию и названию", () => {
+    expect(wikiMatchScore(prince, { name: "Tensei Shitara Dai Nana Ōji Wiki", description: 'Fandom Wiki for the "I Was Reincarnated as the 7th Prince so I Can Take My Time Perfecting My Magical Ability" Series', url: "https://reincarnated-as-the-7th-prince.fandom.com/" })).toBe(1);
+    expect(wikiMatchScore(["Tomodachi Game"], { name: "Tomodachi Game Wiki", url: "https://tomodachi-game.fandom.com/" })).toBe(1);
+  });
+
+  it("чужая вика с похожим словом — низкий балл", () => {
+    expect(wikiMatchScore(["Tomodachi Game"], { name: "Tomodachi Life Wiki", url: "https://tomodachi.fandom.com/" })).toBe(0.5);
+    expect(wikiMatchScore(["The Strongest Magician in the Demon Lord's Army was a Human"], { name: "Strongest Necromancer of Heaven's Gate Wiki", url: "https://strongest-necromancer-of-heavens-gate.fandom.com/" })).toBeLessThan(0.3);
   });
 });

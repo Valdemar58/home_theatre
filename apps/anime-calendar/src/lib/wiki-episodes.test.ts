@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { decodeEntities, htmlText, parseEpisodeTables, pickSeason } from "./wiki-episodes";
+import { alignToTimeline, decodeEntities, htmlText, jstDate, parseEpisodeTables, pickSeason } from "./wiki-episodes";
 
 const fixture = (name: string) => readFileSync(join(__dirname, "fixtures", name), "utf-8");
 
@@ -61,5 +61,30 @@ describe("htmlText", () => {
     expect(decodeEntities("A&#160;&amp;&#x2014;B &quot;x&quot;")).toBe("A &—B \"x\"");
     expect(decodeEntities("七崩賢&ldquo;断頭台のアウラ&rdquo;&hellip;")).toBe("七崩賢“断頭台のアウラ”…");
     expect(htmlText('<p>Hi <a href="#">there</a><sup class="reference"><a>[1]</a></sup>.</p>')).toBe("Hi there.");
+  });
+});
+
+describe("alignToTimeline", () => {
+  const timeline = [
+    { ep: 1, date: "2022-07-09" }, { ep: 2, date: "2022-07-16" }, { ep: 3, date: "2022-07-23" }, { ep: 4, date: "2022-07-30" },
+  ];
+
+  it("пропущенная серия в источнике не сдвигает остальные", () => {
+    const rows = [{ date: "2022-07-16", title: "Episode 2" }, { date: "2022-07-23", title: "Episode 3" }, { date: "2022-07-30", title: "Episode 4" }];
+    expect(alignToTimeline(rows, timeline).map((r) => [r.ep, r.title])).toEqual([[2, "Episode 2"], [3, "Episode 3"], [4, "Episode 4"]]);
+  });
+
+  it("дата ±1 день (показ после полуночи), серии одного дня — по порядку", () => {
+    const tl = [{ ep: 1, date: "2023-09-29" }, { ep: 2, date: "2023-09-29" }, { ep: 3, date: "2023-10-06" }];
+    const rows = [{ date: "2023-09-29", overall: "2" }, { date: "2023-09-30", overall: "1" }, { date: "2023-10-05", overall: "3" }];
+    expect(alignToTimeline(rows, tl).map((r) => [r.ep, r.overall])).toEqual([[1, "2"], [2, "1"], [3, "3"]]);
+  });
+
+  it("чужой сезон — пар нет", () => {
+    expect(alignToTimeline([{ date: "2023-01-11" }, { date: "2023-01-18" }], timeline)).toEqual([]);
+  });
+
+  it("jstDate: полночь по Японии — уже следующий день", () => {
+    expect(jstDate(Date.UTC(2024, 0, 5, 15, 30) / 1000)).toBe("2024-01-06");
   });
 });

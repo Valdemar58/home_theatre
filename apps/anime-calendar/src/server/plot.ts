@@ -1,5 +1,5 @@
 import "server-only";
-import { described, episodeDigest, fillEpisodes, isStubDescription, seasonEpisodes, type RawEpisode } from "@/lib/plot";
+import { described, episodeDigest, fillEpisodes, fuzzyIso, isStubDescription, seasonEpisodes, seasonFit, type AirWindow, type RawEpisode } from "@/lib/plot";
 import type { EpisodeInfo, MediaLite, PlotInfo } from "@/lib/types";
 import { getDetails, type AnilistDetails } from "./anilist";
 import { cached } from "./cache";
@@ -54,8 +54,11 @@ async function tmdbBoth(tv: number, season: number) {
 type SeasonText = { ru: string | null; en: string | null };
 type Episodes = { episodes: EpisodeInfo[]; overview: SeasonText | null };
 
-/** Серии тайтла AniList из TMDB: сезон из anime-lists, сдвиг частей сезона — по TVDB. */
-async function tmdbEpisodes(anilistId: number, count: number | null): Promise<Episodes> {
+/**
+ * Серии тайтла AniList из TMDB: сезон из anime-lists, сдвиг частей сезона — по TVDB. Если серии этого
+ * сезона вышли не в период показа тайтла (anime-lists ошиблись — серии прошлого года), сезон ищется по датам.
+ */
+async function tmdbEpisodes(anilistId: number, count: number | null, w: AirWindow): Promise<Episodes> {
   if (!seerrConfigured()) return { episodes: [], overview: null };
   const [ids, m] = await Promise.all([externalIds(anilistId), mappingForAnilist(anilistId)]);
   if (!ids.tmdbTv) return { episodes: [], overview: null };
@@ -82,8 +85,26 @@ async function tmdbEpisodes(anilistId: number, count: number | null): Promise<Ep
   // Сдвиг TVDB годится, если TVDB и TMDB режут сериал на сезоны одинаково
   let offset = m && m.season === season ? m.offset : 0;
   if (offset && b.ru.length <= offset) offset = 0;
+  const fit = seasonFit(seasonEpisodes(b.ru, b.en, offset, count), w);
+  if (fit.dated >= 3 && fit.inside * 2 < fit.dated) {
+    const other = await seasonByDates(ids.tmdbTv, season, count, w);
+    if (other) return other;
+  }
   // Описание сезона — только если тайтл и есть весь сезон (у второй части оно про обе)
   return { episodes: seasonEpisodes(b.ru, b.en, offset, count), overview: offset ? null : b.overview };
+}
+
+/** Сезон TMDB, чьи серии вышли в период показа тайтла (и с какой серии сезона он начинается). */
+async function seasonByDates(tv: number, skip: number, count: number | null, w: AirWindow): Promise<Episodes | null> {
+  const info = await seerr<{ seasons?: { seasonNumber: number }[] }>(`/api/v1/tv/${tv}`).catch(() => null);
+  let best: { b: Awaited<ReturnType<typeof tmdbBoth>>; offset: number; inside: number } | null = null;
+  for (const s of (info?.seasons ?? []).filter((x) => x.seasonNumber > 0 && x.seasonNumber !== skip)) {
+    const b = await tmdbBoth(tv, s.seasonNumber);
+    const f = seasonFit(b.ru, w);
+    if (f.inside > (best?.inside ?? 0)) best = { b, offset: f.offset, inside: f.inside };
+  }
+  if (!best) return null;
+  return { episodes: seasonEpisodes(best.b.ru, best.b.en, best.offset, count), overview: best.offset ? null : best.b.overview };
 }
 
 type KitsuEpisode = { attributes: { number: number | null; canonicalTitle: string | null; synopsis: string | null; airdate: string | null; thumbnail: { original?: string } | null } };
@@ -115,12 +136,15 @@ function episodeCount(d: Pick<MediaLite, "episodes" | "nextAiringEpisode">): num
 }
 
 /** Серии тайтла (кэш: у выходящих — полдня, у вышедших — неделя). */
-export function episodesOf(d: Pick<MediaLite, "id" | "format" | "status" | "episodes" | "nextAiringEpisode">): Promise<Episodes & { source: PlotInfo["source"] }> {
+export function episodesOf(
+  d: Pick<MediaLite, "id" | "format" | "status" | "episodes" | "nextAiringEpisode"> & Partial<Pick<MediaLite, "startDate" | "endDate">>,
+): Promise<Episodes & { source: PlotInfo["source"] }> {
   if (d.format === "MOVIE") return Promise.resolve({ episodes: [], overview: null, source: null });
   const ttl = d.status === "RELEASING" || d.status === "NOT_YET_RELEASED" ? 12 * 3600 : 7 * 86400;
-  return cached(`plot-eps:v2:${d.id}`, ttl, async () => {
+  return cached(`plot-eps:v3:${d.id}`, ttl, async () => {
     const count = episodeCount(d);
-    const { episodes: tmdb, overview } = await tmdbEpisodes(d.id, count).catch((): Episodes => ({ episodes: [], overview: null }));
+    const w: AirWindow = { start: fuzzyIso(d.startDate), end: d.status === "FINISHED" ? fuzzyIso(d.endDate) : null };
+    const { episodes: tmdb, overview } = await tmdbEpisodes(d.id, count, w).catch((): Episodes => ({ episodes: [], overview: null }));
     // Kitsu — если в TMDB серий нет или описано меньше половины
     if (tmdb.length && described(tmdb) * 2 >= tmdb.length) return { episodes: tmdb, overview, source: "TMDB" as const };
     const kitsu = await kitsuEpisodes(d.id, count).catch(() => [] as EpisodeInfo[]);

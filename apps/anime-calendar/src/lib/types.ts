@@ -298,6 +298,8 @@ export type CorpusProgress = {
   startedAt: number;
   updatedAt: number;
   finished: boolean;
+  /** Сколько примерно осталось, с (на момент updatedAt) */
+  etaSec: number | null;
   /** Серий с текстом по источникам */
   found: Record<string, number>;
   errors: string[];

@@ -288,7 +288,7 @@ function CorpusBar({ id }: { id: number }) {
   if (!admin || !st) return null;
   const p = st.progress;
   const elapsed = p ? (p.updatedAt - p.startedAt) / 1000 : 0;
-  const left = p && p.done > 0 && !p.finished ? (elapsed / p.done) * (p.total - p.done) : null;
+  const left = p && !p.finished && p.etaSec !== null ? p.etaSec : null;
   return (
     <div className="mt-3 rounded-xl bg-gray-800/40 px-4 py-3 text-sm ring-1 ring-gray-700">
       <div className="flex flex-wrap items-center gap-3">

@@ -1,10 +1,11 @@
 import "server-only";
-import { episodeCategory, infoboxInfo, plotSections } from "@/lib/fandom-episodes";
-import type { CorpusProgress, CorpusState, FuzzyDate } from "@/lib/types";
-import { decodeEntities, parseEpisodeTables, pickSeason, type SeasonWindow, type WikiEpisode } from "@/lib/wiki-episodes";
+import { episodeCategory, infoboxInfo, plotSections, wikiMatchScore } from "@/lib/fandom-episodes";
+import { fuzzyIso } from "@/lib/plot";
+import type { CorpusProgress, CorpusState } from "@/lib/types";
+import { alignToTimeline, decodeEntities, jstDate, parseEpisodeTables, pickSeason, type Dated, type SeasonWindow, type WikiEpisode } from "@/lib/wiki-episodes";
 import { getDetails, type AnilistDetails } from "./anilist";
 import { cached } from "./cache";
-import { corpusOf, deepestByEpisode, putTexts, type Depth, type Found } from "./corpus-store";
+import { corpusOf, deepestByEpisode, putTexts, retractSource, type Depth, type Found } from "./corpus-store";
 import { fetchWithRetry, RateLimiter } from "./http";
 import { episodesOf } from "./plot";
 import { latestTask, registerHandler } from "./tasks";
@@ -67,7 +68,6 @@ async function wdEntity(q: string): Promise<WdEntity | null> {
   return d ? Object.values(d.entities)[0] ?? null : null;
 }
 
-const fuzzyIso = (f: FuzzyDate) => (f.year && f.month && f.day ? `${f.year}-${String(f.month).padStart(2, "0")}-${String(f.day).padStart(2, "0")}` : null);
 const days = (a: string, b: string) => Math.abs(Date.parse(a) - Date.parse(b)) / 86400_000;
 
 /**
@@ -163,10 +163,28 @@ async function wikipediaCrawl(run: Run, queue: string[], seen: Set<string>, rows
 
 const slugWords = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter(Boolean);
 
-/** Вики Fandom тайтла: из Wikidata, иначе догадка по названию (вики должна называться похоже). */
-async function fandomWiki(run: Run, wd: WdInfo | null): Promise<string | null> {
-  if (wd?.fandom) return wd.fandom.split(":")[0];
+type FandomHit = { name: string; description: string | null; url: string };
+
+/**
+ * Вики Fandom, которые могут быть про тайтл, по убыванию уверенности: из Wikidata, из поиска Fandom
+ * (вики должна называться похоже — wikiMatchScore), догадка по названию. Какая из них верная, решают даты серий.
+ */
+async function fandomWikis(run: Run, wd: WdInfo | null): Promise<string[]> {
+  const out: string[] = [];
+  if (wd?.fandom) out.push(wd.fandom.split(":")[0]);
   const names = [run.d.title.english, run.d.title.romaji].filter((x): x is string => Boolean(x));
+  for (const n of names) {
+    run.signal.throwIfAborted();
+    const r = await getJson<{ results?: FandomHit[] }>(
+      `https://services.fandom.com/unified-search/community-search?lang=en&limit=10&query=${encodeURIComponent(n)}`, limits.fandom).catch(() => null);
+    run.tick();
+    for (const h of r?.results ?? []) {
+      const slug = h.url.match(/^https?:\/\/([a-z0-9-]+)\.fandom\.com\/?$/i)?.[1];
+      if (slug && wikiMatchScore(names, h) >= 0.6 && !out.includes(slug)) out.push(slug);
+    }
+  }
+  if (out.length) return out.slice(0, 3);
+  // Поиск ничего не дал — догадка по названию
   const cands = new Set<string>();
   for (const n of names) {
     const w = slugWords(n);
@@ -178,9 +196,9 @@ async function fandomWiki(run: Run, wd: WdInfo | null): Promise<string | null> {
     const info = await getJson<{ query?: { general?: { sitename?: string } } }>(
       `https://${slug}.fandom.com/api.php?format=json&action=query&meta=siteinfo`, limits.fandom).catch(() => null);
     const site = info?.query?.general?.sitename?.toLowerCase().replace(/[^a-z0-9]/g, "") ?? "";
-    if (site && key && site.includes(key)) return slug;
+    if (site && key && site.includes(key)) return [slug];
   }
-  return null;
+  return [];
 }
 
 type FandomQuery = {
@@ -193,8 +211,15 @@ type FandomQuery = {
 };
 
 async function fandomEpisodes(run: Run, wd: WdInfo | null): Promise<Found[]> {
-  const slug = await fandomWiki(run, wd);
-  if (!slug) return [];
+  for (const slug of await fandomWikis(run, wd)) {
+    const found = await fandomWikiEpisodes(run, slug).catch(() => [] as Found[]);
+    if (found.length) return found;
+  }
+  return [];
+}
+
+/** Серии тайтла в одной вики: категория серий → даты из инфобоксов → пересказы выбранных серий. */
+async function fandomWikiEpisodes(run: Run, slug: string): Promise<Found[]> {
   const api = `https://${slug}.fandom.com/api.php?format=json&formatversion=2&`;
   const cats = await getJson<FandomQuery>(`${api}action=query&list=allcategories&aclimit=500&acmin=3`, limits.fandom);
   const cat = episodeCategory((cats?.query?.allcategories ?? []).map((c) => c.category));
@@ -270,16 +295,43 @@ type Source = {
   fetch: (run: Run, wd: WdInfo | null) => Promise<Found[]>;
 };
 
+// Википедия первой: её таблица серий полная и с датами — эталон, к которому привязываются TMDB и Fandom
 const SOURCES: Source[] = [
+  { key: "wiki-en", label: "Википедия", lang: "en", depth: "full", license: "CC BY-SA 4.0", units: 3, fetch: wikipediaEpisodes },
   {
     key: "tmdb", label: "TMDB / Kitsu", lang: "", depth: "teaser", license: null, units: 1,
     fetch: async (run) => (await episodesOf(run.d)).episodes.filter((e) => e.overview)
       .map((e) => ({ ep: e.number, title: e.title, text: e.overview!, url: null, lang: e.lang ?? "en", aired: e.airDate })),
   },
-  { key: "wiki-en", label: "Википедия", lang: "en", depth: "full", license: "CC BY-SA 4.0", units: 3, fetch: wikipediaEpisodes },
   { key: "fandom", label: "Fandom", lang: "en", depth: "full", license: "CC BY-SA 3.0", units: 3, fetch: fandomEpisodes },
   { key: "danime", label: "dアニメストア", lang: "ja", depth: "teaser", license: "© правообладатель", units: 1, fetch: (run) => danimeEpisodes(run) },
 ];
+
+// Типичная длительность источника, с — уточняется по каждому сбору (скользящее среднее): у большинства
+// тайтлов нет вики Fandom и работы в dアニメ, у популярных — по секунде на серию; заранее не угадать
+const typicalSec: Record<string, number> = { tmdb: 3, "wiki-en": 8, fandom: 10, danime: 8 };
+
+type Timeline = { dates: Dated[]; tol: number; from: string };
+
+/**
+ * Номера серий источника — по эталонной шкале дат (alignToTimeline). TMDB, у которого с эталоном совпало
+ * меньше половины серий, — это другой сезон: его тексты не берём. Без эталона — номера как есть.
+ */
+function realign(key: string, found: Found[], tl: Timeline | null, window: SeasonWindow): { found: Found[]; note?: string } {
+  const dated = found.filter((f) => f.aired);
+  if (!tl) {
+    if (key !== "tmdb" || !window.start || !dated.length) return { found };
+    // Эталона нет — TMDB хотя бы должен попадать в период показа
+    const from = Date.parse(window.start) - 7 * 86400_000;
+    const to = window.end ? Date.parse(window.end) + 7 * 86400_000 : Date.now() + 86400_000;
+    const inside = dated.filter((f) => Date.parse(f.aired!) >= from && Date.parse(f.aired!) <= to).length;
+    return inside * 2 >= dated.length ? { found } : { found: [], note: "TMDB: серии другого сезона" };
+  }
+  const aligned = alignToTimeline(dated.map((f) => ({ ...f, date: f.aired! })), tl.dates, tl.tol)
+    .map(({ date: _date, ...f }) => f);
+  if (key === "tmdb" && aligned.length * 2 < dated.length) return { found: [], note: `TMDB: серии другого сезона (сверка с ${tl.from})` };
+  return { found: aligned };
+}
 
 /** Собрать корпус тайтла: все источники по очереди; ошибка источника не останавливает сбор. */
 export async function collectCorpus(anilistId: number, signal: AbortSignal): Promise<CorpusProgress> {
@@ -287,42 +339,69 @@ export async function collectCorpus(anilistId: number, signal: AbortSignal): Pro
   const count = d.episodes ?? (d.nextAiringEpisode ? d.nextAiringEpisode.episode - 1 : null);
   const p: CorpusProgress = {
     anilistId, step: "", done: 0, total: SOURCES.reduce((a, s) => a + s.units, 0),
-    startedAt: Date.now(), updatedAt: Date.now(), finished: false, found: {}, errors: [],
+    startedAt: Date.now(), updatedAt: Date.now(), finished: false, found: {}, errors: [], etaSec: null,
   };
   progress.set(anilistId, p);
   // Шаги источника: обязательные заранее, по сериям — когда нашлись; сделал больше — итог растёт, меньше — остаток засчитывается в конце
   let base = 0;
   let planned = 0;
   let used = 0;
+  let at = 0;
+  let current = 0;
+  // Осталось: текущий источник (по скорости, если известно число серий, иначе по типичному времени) + типичное у следующих
+  const eta = () => {
+    const s = SOURCES[current];
+    const spent = (Date.now() - at) / 1000;
+    const here = planned > s.units && used > 0 ? (planned - used) * (spent / used) : Math.max(1, typicalSec[s.key] - spent);
+    return Math.round(here + SOURCES.slice(current + 1).reduce((a, x) => a + typicalSec[x.key], 0));
+  };
   const tick = () => {
     used++;
     if (used > planned) grow(1);
-    touch(p, { done: base + used });
+    touch(p, { done: base + used, etaSec: eta() });
   };
   const grow = (k: number) => {
     planned += k;
-    touch(p, { total: p.total + k });
+    touch(p, { total: p.total + k, etaSec: eta() });
   };
   const run: Run = { d, window: { start: fuzzyIso(d.startDate), end: d.status === "FINISHED" ? fuzzyIso(d.endDate) : null, count }, count, signal, p, tick, grow };
   let wd: WdInfo | null = null;
-  for (const s of SOURCES) {
+  // Эталон дат: Википедия, покрывшая сезон, → TMDB в период показа → расписание AniList (у него бывает другой канал — допуск 3 дня)
+  let tl: Timeline | null = null;
+  const covers = (f: Found[]) => f.filter((x) => x.aired).length >= Math.max(1, Math.ceil((count ?? f.length) * 0.8));
+  const schedule: Dated[] = d.schedule.map((a) => ({ ep: a.episode, date: jstDate(a.airingAt) }));
+  for (const [i, s] of SOURCES.entries()) {
     signal.throwIfAborted();
     base = p.done;
     planned = s.units;
     used = 0;
-    touch(p, { step: s.label });
+    at = Date.now();
+    current = i;
+    touch(p, { step: s.label, etaSec: eta() });
     try {
       if (s.key === "wiki-en") wd = await wikidataOf(d).catch(() => null);
-      const found = await s.fetch(run, wd);
+      let found = await s.fetch(run, wd);
+      if (s.key === "tmdb" || s.key === "fandom") {
+        const r = realign(s.key, found, tl ?? (s.key === "fandom" && schedule.length ? { dates: schedule, tol: 3, from: "AniList" } : null), run.window);
+        found = r.found;
+        if (r.note) {
+          p.errors.push(r.note);
+          retractSource(anilistId, s.key);
+        }
+      }
+      if (!tl && (s.key === "wiki-en" || s.key === "tmdb") && found.length && covers(found)) {
+        tl = { dates: found.filter((f) => f.aired).map((f) => ({ ep: f.ep, date: f.aired! })), tol: 1, from: s.label };
+      }
       putTexts(anilistId, s.key, s.lang, s.depth, s.license, found);
       p.found[s.key] = new Set(found.map((f) => f.ep)).size;
     } catch (e) {
       if (signal.aborted) throw e;
       p.errors.push(`${s.label}: ${e instanceof Error ? e.message : String(e)}`);
     }
+    typicalSec[s.key] = Math.round(0.7 * typicalSec[s.key] + 0.3 * ((Date.now() - at) / 1000));
     touch(p, { done: base + Math.max(planned, used) });
   }
-  touch(p, { step: "готово", finished: true });
+  touch(p, { step: "готово", finished: true, etaSec: 0 });
   return p;
 }
 
