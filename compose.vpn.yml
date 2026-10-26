@@ -1,0 +1,45 @@
+# Опционально: весь трафик qBittorrent идёт через VPN (Gluetun, встроенный kill-switch).
+# Включение: добавить compose.vpn.yml в COMPOSE_FILE в .env и заполнить VPN_* переменные.
+# Список провайдеров и переменных: https://github.com/qdm12/gluetun-wiki
+#
+# Gluetun получает сетевой алиас "qbittorrent", поэтому Sonarr/Radarr/bootstrap
+# продолжают обращаться к qbittorrent:8080 без изменений.
+services:
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: gluetun
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      TZ: ${TZ}
+      VPN_SERVICE_PROVIDER: ${VPN_SERVICE_PROVIDER:-custom}
+      VPN_TYPE: wireguard
+      WIREGUARD_PRIVATE_KEY: ${WIREGUARD_PRIVATE_KEY:-}
+      WIREGUARD_ADDRESSES: ${WIREGUARD_ADDRESSES:-}
+      WIREGUARD_PUBLIC_KEY: ${WIREGUARD_PUBLIC_KEY:-}
+      VPN_ENDPOINT_IP: ${VPN_ENDPOINT_IP:-}
+      VPN_ENDPOINT_PORT: ${VPN_ENDPOINT_PORT:-}
+      SERVER_COUNTRIES: ${VPN_SERVER_COUNTRIES:-}
+      # Разрешить доступ к WebUI qBittorrent из локальной/docker-сети
+      FIREWALL_OUTBOUND_SUBNETS: ${LAN_SUBNET:-192.168.0.0/16},172.16.0.0/12
+      FIREWALL_VPN_INPUT_PORTS: ${TORRENT_PORT}
+    volumes:
+      - ${CONFIG_ROOT}/gluetun:/gluetun
+    ports:
+      - "${QBIT_WEBUI_PORT:-8090}:8080"
+      - "${TORRENT_PORT}:${TORRENT_PORT}"
+      - "${TORRENT_PORT}:${TORRENT_PORT}/udp"
+    networks:
+      default:
+        aliases:
+          - qbittorrent
+
+  qbittorrent:
+    network_mode: "service:gluetun"
+    ports: !reset []
+    depends_on:
+      gluetun:
+        condition: service_healthy

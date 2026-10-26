@@ -1,0 +1,39 @@
+# NVIDIA NVENC/NVDEC для транскодирования в Jellyfin.
+# Windows: работает через Docker Desktop + WSL2 из коробки.
+# Linux: нужен nvidia-container-toolkit (sudo apt install nvidia-container-toolkit
+#        && sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker).
+# Подключается через COMPOSE_FILE в .env.
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  jellyfin:
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ИИ-апскейл: Real-ESRGAN через Vulkan (нужна graphics-возможность драйвера)
+  upscaler:
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

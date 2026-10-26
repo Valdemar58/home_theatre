@@ -1,0 +1,3 @@
+# IPv4-адреса VPN-серверов (Endpoint из конфига Amnezia), по одному на строку.
+# После правки: sudo scripts/vpn-endpoint-route/vpn-endpoint-route.sh install
+151.243.180.26

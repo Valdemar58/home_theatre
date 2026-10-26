@@ -1,0 +1,8 @@
+# Intel QuickSync / VA-API (мини-ПК с iGPU: N100, i3/i5 и т.п.). Только Linux.
+# RENDER_GID: `getent group render | cut -d: -f3`
+services:
+  jellyfin:
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${RENDER_GID:-105}"

@@ -1,0 +1,117 @@
+# ============================================================
+#  Предпочтения по языкам и студиям озвучки.
+#  После правки: python scripts/bootstrap.py --only formats
+#
+#  bootstrap.py создаёт из этого файла Custom Formats в Sonarr/Radarr
+#  и проставляет баллы в профилях качества. Чем выше балл, тем
+#  охотнее выбирается релиз. Отрицательный балл = избегать.
+#  regex (.NET) проверяется по названию релиза, без учёта регистра.
+#  Строки в '...' — literal, обратные слэши не экранируются.
+#
+#  Масштаб: в фильмах/сериалах профили TRaSH дают релиз-группам
+#  +1500..1800, HDR/DV +500..1500. Чтобы русская дорожка реально
+#  влияла на выбор, её баллы того же порядка. Для аниме CF TRaSH
+#  не подключаются (они про англ. фансаб), там решают только эти баллы.
+# ============================================================
+
+# ---------- Фильмы и обычные сериалы (Radarr + Sonarr) ----------
+[[general]]
+name = "RU Dub"
+regex = '\b(DUB|Dubbed|Дубляж)\b'
+score = 1600
+
+[[general]]
+name = "RU MVO"
+regex = '\b(MVO|DVO|Многоголос\w*|Двухголос\w*)\b'
+score = 1200
+
+[[general]]
+# RuTracker-индексатор в Prowlarr дописывает RUS в конец названия
+name = "RU audio"
+regex = '\bRUS\b|[а-яё]'
+score = 800
+
+[[general]]
+name = "Original audio"
+regex = '\b(Original|Eng|Оригинал)\b'
+score = 400
+
+[[general]]
+name = "RU+EN subs"
+regex = '\bSubs?\b.*\b(Rus|Eng)\b'
+score = 100
+
+# ---------- Аниме (Sonarr, профиль аниме) ----------
+# Порядок не важен, важны баллы: они и задают приоритет студий.
+
+[[anime]]
+# Несколько озвучек в одном релизе: в плеере можно выбирать студию
+name = "Multi-voice"
+regex = '\b\d\s?x\s?(MVO|DVO|VO)\b|\bMulti\b|(MVO|DVO|VO).*\+.*(MVO|DVO|VO)'
+score = 500
+
+[[anime]]
+name = "RU audio embedded"
+regex = 'RUS\s?\(int\)'
+score = 150
+
+[[anime]]
+# Без regex: тот же формат, что в [[general]], но с другим баллом для аниме
+name = "RU audio"
+score = 100
+
+[[anime]]
+name = "JP audio"
+regex = '\b(JAP|JPN|Japanese)\b'
+score = 100
+
+[[anime]]
+name = "Studio AniLibria"
+# С 2025 года студия называется AniLiberty
+regex = '\bAni\s?Lib(ria|erty)\b'
+score = 400
+
+[[anime]]
+name = "Studio Dream Cast"
+regex = '\bDream\s?Cast\b'
+score = 350
+
+[[anime]]
+name = "Studio StudioBand"
+regex = '\bStudio\s?Band\b'
+score = 300
+
+[[anime]]
+name = "Studio AniDub"
+regex = '\bAni\s?Dub\b'
+score = 300
+
+[[anime]]
+name = "Studio JAM"
+regex = '\bJAM\b'
+score = 250
+
+[[anime]]
+name = "Studio AniStar"
+regex = '\bAni\s?Star\b'
+score = 200
+
+[[anime]]
+name = "Studio SHIZA"
+regex = '\bSHIZA\b'
+score = 200
+
+[[anime]]
+name = "Studio AnimeVost"
+regex = '\bAnime\s?Vost\b'
+score = 150
+
+# ---------- Воспроизведение в Jellyfin ----------
+[jellyfin]
+audio_language = "rus"        # ISO 639-2
+subtitle_language = "rus"
+subtitle_mode = "Smart"       # Default | Always | OnlyForced | None | Smart
+
+# ---------- Субтитры (Bazarr), ISO 639-1, по приоритету ----------
+[bazarr]
+languages = ["ru", "en", "ja"]

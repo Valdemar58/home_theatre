@@ -1,0 +1,43 @@
+# Домены, трафик к которым идёт МИМО VPN, напрямую через провайдера.
+# Поддомены покрываются автоматически: steamcontent.com = *.steamcontent.com.
+# После правки: sudo scripts/split-tunnel/split-tunnel.sh install
+
+# Steam
+steampowered.com
+steamcommunity.com
+steamcontent.com
+steamstatic.com
+steamserver.net
+steamgames.com
+steam-chat.com
+steamapi.com
+steamusercontent.com
+valvesoftware.com
+steamcdn-a.akamaihd.net
+steampipe.akamaized.net
+
+# Docker Hub — НЕ в обход: напрямую от провайдера заблокирован (проверено 2026-10-12, соединение рвётся),
+# ходит через VPN. ghcr.io, lscr.io и Ollama напрямую работают
+
+# Другие реестры образов из docker-compose.yml (linuxserver, flaresolverr, seerr, torrserver)
+ghcr.io
+lscr.io
+pkg-containers.githubusercontent.com
+
+# Ollama (реестр моделей) — блобы моделей отдаются из Cloudflare R2
+ollama.com
+ollama.ai
+r2.cloudflarestorage.com
+
+# Аниме-сайты с геоблоком (импорт списков в anime-calendar)
+# AnimeGo
+animego.me
+animego.org
+# Экосистема Lib: AniLib/MangaLib/RanobeLib, общий API, авторизация, картинки
+animelib.org
+anilib.me
+mangalib.me
+ranobelib.me
+cdnlibs.org
+lib.social
+imglib.info

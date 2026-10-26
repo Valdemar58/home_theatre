@@ -1,0 +1,187 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+}
+/* Палитра: семантические тона. Шкалы с одинаковой светлотой на каждой ступени (oklch) — поэтому
+ * тона сочетаются друг с другом; насыщенность умеренная, без «кислотных» цветов. Новые цвета не выдумываем:
+ * берём тон и вариант (soft / solid / outline / tone-text), состояния выводятся формулой (см. ниже).
+ * static — все ступени попадают в CSS, даже если класс с ними нигде не встречается (нужны формулам и превью). */
+@theme static {
+  /* акцент: основные действия, выбранное */
+  --color-accent-50: oklch(0.97 0.026 277);
+  --color-accent-100: oklch(0.93 0.051 277);
+  --color-accent-200: oklch(0.87 0.085 277);
+  --color-accent-300: oklch(0.80 0.119 277);
+  --color-accent-400: oklch(0.72 0.153 277);
+  --color-accent-500: oklch(0.64 0.170 277);
+  --color-accent-600: oklch(0.56 0.162 277);
+  --color-accent-700: oklch(0.48 0.145 277);
+  --color-accent-800: oklch(0.40 0.119 277);
+  --color-accent-900: oklch(0.32 0.094 277);
+  --color-accent-950: oklch(0.25 0.077 277);
+  /* особое: финалы, редкое */
+  --color-special-50: oklch(0.97 0.022 302);
+  --color-special-100: oklch(0.93 0.045 302);
+  --color-special-200: oklch(0.87 0.075 302);
+  --color-special-300: oklch(0.80 0.105 302);
+  --color-special-400: oklch(0.72 0.135 302);
+  --color-special-500: oklch(0.64 0.150 302);
+  --color-special-600: oklch(0.56 0.142 302);
+  --color-special-700: oklch(0.48 0.128 302);
+  --color-special-800: oklch(0.40 0.105 302);
+  --color-special-900: oklch(0.32 0.083 302);
+  --color-special-950: oklch(0.25 0.068 302);
+  /* успех: готово, рекомендую */
+  --color-positive-50: oklch(0.97 0.018 158);
+  --color-positive-100: oklch(0.93 0.036 158);
+  --color-positive-200: oklch(0.87 0.060 158);
+  --color-positive-300: oklch(0.80 0.084 158);
+  --color-positive-400: oklch(0.72 0.108 158);
+  --color-positive-500: oklch(0.64 0.120 158);
+  --color-positive-600: oklch(0.56 0.114 158);
+  --color-positive-700: oklch(0.48 0.102 158);
+  --color-positive-800: oklch(0.40 0.084 158);
+  --color-positive-900: oklch(0.32 0.066 158);
+  --color-positive-950: oklch(0.25 0.054 158);
+  /* опасность: удалить, не нравится */
+  --color-negative-50: oklch(0.97 0.019 18);
+  --color-negative-100: oklch(0.93 0.039 18);
+  --color-negative-200: oklch(0.87 0.065 18);
+  --color-negative-300: oklch(0.80 0.091 18);
+  --color-negative-400: oklch(0.72 0.117 18);
+  --color-negative-500: oklch(0.64 0.130 18);
+  --color-negative-600: oklch(0.56 0.123 18);
+  --color-negative-700: oklch(0.48 0.111 18);
+  --color-negative-800: oklch(0.40 0.091 18);
+  --color-negative-900: oklch(0.32 0.072 18);
+  --color-negative-950: oklch(0.25 0.059 18);
+  /* внимание: спойлер, ожидание */
+  --color-warning-50: oklch(0.97 0.018 78);
+  --color-warning-100: oklch(0.93 0.036 78);
+  --color-warning-200: oklch(0.87 0.060 78);
+  --color-warning-300: oklch(0.80 0.084 78);
+  --color-warning-400: oklch(0.72 0.108 78);
+  --color-warning-500: oklch(0.64 0.120 78);
+  --color-warning-600: oklch(0.56 0.114 78);
+  --color-warning-700: oklch(0.48 0.102 78);
+  --color-warning-800: oklch(0.40 0.084 78);
+  --color-warning-900: oklch(0.32 0.066 78);
+  --color-warning-950: oklch(0.25 0.054 78);
+  /* сведения: озвучки, подсказки */
+  --color-info-50: oklch(0.97 0.015 232);
+  --color-info-100: oklch(0.93 0.030 232);
+  --color-info-200: oklch(0.87 0.050 232);
+  --color-info-300: oklch(0.80 0.070 232);
+  --color-info-400: oklch(0.72 0.090 232);
+  --color-info-500: oklch(0.64 0.100 232);
+  --color-info-600: oklch(0.56 0.095 232);
+  --color-info-700: oklch(0.48 0.085 232);
+  --color-info-800: oklch(0.40 0.070 232);
+  --color-info-900: oklch(0.32 0.055 232);
+  --color-info-950: oklch(0.25 0.045 232);
+  /* нейтральный: служебное */
+  --color-neutral-50: oklch(0.97 0.003 262);
+  --color-neutral-100: oklch(0.93 0.005 262);
+  --color-neutral-200: oklch(0.87 0.009 262);
+  --color-neutral-300: oklch(0.80 0.013 262);
+  --color-neutral-400: oklch(0.72 0.016 262);
+  --color-neutral-500: oklch(0.64 0.018 262);
+  --color-neutral-600: oklch(0.56 0.017 262);
+  --color-neutral-700: oklch(0.48 0.015 262);
+  --color-neutral-800: oklch(0.40 0.013 262);
+  --color-neutral-900: oklch(0.32 0.010 262);
+  --color-neutral-950: oklch(0.25 0.008 262);
+}
+
+/* Тон элемента: tone-<имя> задаёт переменные --t-*, варианты ниже их используют.
+ * Состояния — формулой от тона, а не отдельными цветами: disabled смешивает тон с нейтральным
+ * (--t-sat), наведение у мягкого варианта усиливает подложку (--soft-a). */
+@utility tone-accent { --tb-200: var(--color-accent-200); --tb-300: var(--color-accent-300); --tb-400: var(--color-accent-400); --tb-500: var(--color-accent-500); --tb-600: var(--color-accent-600); --tb-700: var(--color-accent-700); }
+@utility tone-special { --tb-200: var(--color-special-200); --tb-300: var(--color-special-300); --tb-400: var(--color-special-400); --tb-500: var(--color-special-500); --tb-600: var(--color-special-600); --tb-700: var(--color-special-700); }
+@utility tone-positive { --tb-200: var(--color-positive-200); --tb-300: var(--color-positive-300); --tb-400: var(--color-positive-400); --tb-500: var(--color-positive-500); --tb-600: var(--color-positive-600); --tb-700: var(--color-positive-700); }
+@utility tone-negative { --tb-200: var(--color-negative-200); --tb-300: var(--color-negative-300); --tb-400: var(--color-negative-400); --tb-500: var(--color-negative-500); --tb-600: var(--color-negative-600); --tb-700: var(--color-negative-700); }
+@utility tone-warning { --tb-200: var(--color-warning-200); --tb-300: var(--color-warning-300); --tb-400: var(--color-warning-400); --tb-500: var(--color-warning-500); --tb-600: var(--color-warning-600); --tb-700: var(--color-warning-700); }
+@utility tone-info { --tb-200: var(--color-info-200); --tb-300: var(--color-info-300); --tb-400: var(--color-info-400); --tb-500: var(--color-info-500); --tb-600: var(--color-info-600); --tb-700: var(--color-info-700); }
+@utility tone-neutral { --tb-200: var(--color-neutral-200); --tb-300: var(--color-neutral-300); --tb-400: var(--color-neutral-400); --tb-500: var(--color-neutral-500); --tb-600: var(--color-neutral-600); --tb-700: var(--color-neutral-700); }
+
+/* Вычисляемые цвета тона (по умолчанию — нейтральный) */
+*, ::before, ::after {
+  --t-200: color-mix(in oklch, var(--tb-200, var(--color-neutral-200)) var(--t-sat, 100%), var(--color-neutral-200));
+  --t-300: color-mix(in oklch, var(--tb-300, var(--color-neutral-300)) var(--t-sat, 100%), var(--color-neutral-300));
+  --t-400: color-mix(in oklch, var(--tb-400, var(--color-neutral-400)) var(--t-sat, 100%), var(--color-neutral-400));
+  --t-500: color-mix(in oklch, var(--tb-500, var(--color-neutral-500)) var(--t-sat, 100%), var(--color-neutral-500));
+  --t-600: color-mix(in oklch, var(--tb-600, var(--color-neutral-600)) var(--t-sat, 100%), var(--color-neutral-600));
+  --t-700: color-mix(in oklch, var(--tb-700, var(--color-neutral-700)) var(--t-sat, 100%), var(--color-neutral-700));
+}
+
+:where(:disabled, [aria-disabled="true"], [data-disabled]) { --t-sat: 30%; cursor: not-allowed; }
+
+/* Мягкий: прозрачная подложка тона, светлый текст, тонкая обводка — для бейджей, меток, плашек */
+@utility soft {
+  --soft-a: 14%;
+  background-color: color-mix(in oklch, var(--t-500) var(--soft-a), transparent);
+  color: var(--t-200);
+  /* Обводка через цвет кольца Tailwind — совместима с ring-1 у кнопок */
+  --tw-ring-color: color-mix(in oklch, var(--t-400) 28%, transparent);
+  box-shadow: inset 0 0 0 1px var(--tw-ring-color);
+  &:where(button, a):not(:disabled):hover { --soft-a: 24%; }
+}
+/* Сплошной: насыщенная подложка — главное действие, выбранное */
+@utility solid {
+  background-color: var(--t-600);
+  color: white;
+  &:where(button, a):not(:disabled):hover { background-color: var(--t-500); }
+}
+/* Контур */
+@utility outline-tone {
+  color: var(--t-300);
+  --tw-ring-color: color-mix(in oklch, var(--t-400) 55%, transparent);
+  box-shadow: inset 0 0 0 1px var(--tw-ring-color);
+  &:where(button, a):not(:disabled):hover { background-color: color-mix(in oklch, var(--t-500) 12%, transparent); }
+}
+/* Только текст/значок тона */
+@utility tone-text { color: var(--t-300); }
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-gray-900 text-gray-100 antialiased;
+}
+
+/* Тонкий скроллбар как в Seerr */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-gray-700) transparent;
+}
+
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Тост «новый уровень награды»: появление с подскоком и мягкое свечение */
+@keyframes achievement-pop {
+  0% { transform: translateY(16px) scale(0.92); opacity: 0; }
+  60% { transform: translateY(-3px) scale(1.02); opacity: 1; }
+  100% { transform: none; }
+}
+@keyframes achievement-glow {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--color-warning-400) 0%, transparent); }
+  50% { box-shadow: 0 0 28px 2px color-mix(in oklch, var(--color-warning-400) 35%, transparent); }
+}
+.toast-achievement { animation: achievement-pop 0.5s ease-out, achievement-glow 2.4s ease-in-out 0.5s 2; }
+
+/* Карта: плавное появление и выезд панели тайтла */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes slide-in {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: none; }
+}

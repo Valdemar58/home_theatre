@@ -1,0 +1,324 @@
+# Домашний кинотеатр: Jellyfin + Sonarr/Radarr/Prowlarr + qBittorrent.
+# Все пути и ключи берутся из .env (создаётся `python scripts/init.py`).
+#
+# Схема каталогов (TRaSH Guides): один корень ${DATA_ROOT} смонтирован как /data
+# во всех контейнерах, которые трогают файлы. Тогда пути совпадают везде,
+# Remote Path Mapping не нужен, а импорт делается hardlink'ом (мгновенно, без копий).
+
+x-common: &common
+  restart: unless-stopped
+  environment: &common-env
+    PUID: ${PUID}
+    PGID: ${PGID}
+    TZ: ${TZ}
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  # ---------- Просмотр ----------
+  jellyfin:
+    <<: *common
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    user: "${PUID}:${PGID}"
+    environment:
+      TZ: ${TZ}
+      JELLYFIN_PublishedServerUrl: ${JELLYFIN_PUBLISHED_URL:-}
+    volumes:
+      - ${CONFIG_ROOT}/jellyfin:/config
+      - ${CONFIG_ROOT}/jellyfin-cache:/cache
+      - ${DATA_ROOT}/media:/data/media
+    ports:
+      - "8096:8096"
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8096/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Поиск и запросы (Seerr — преемник Overseerr/Jellyseerr)
+  seerr:
+    <<: *common
+    image: ghcr.io/seerr-team/seerr:v3
+    container_name: seerr
+    init: true
+    environment:
+      TZ: ${TZ}
+      LOG_LEVEL: info
+    volumes:
+      - ${CONFIG_ROOT}/seerr:/app/config
+    ports:
+      - "5055:5055"
+    depends_on:
+      - jellyfin
+      - sonarr
+      - radarr
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5055/api/v1/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Календарь выхода аниме, списки и синхронизация с Shikimori (apps/anime-calendar)
+  anime-calendar:
+    <<: *common
+    build: ./apps/anime-calendar
+    image: home-theater/anime-calendar:local
+    container_name: anime-calendar
+    user: "${PUID}:${PGID}"
+    environment:
+      TZ: ${TZ}
+      JELLYFIN_URL: http://jellyfin:8096
+      SEERR_URL: http://seerr:5055
+      SEERR_PUBLIC_URL: ${SEERR_PUBLIC_URL:-http://localhost:5055}
+      SEERR_API_KEY: ${SEERR_API_KEY:-}
+      SHIKIMORI_URL: ${SHIKIMORI_URL:-https://shikimori.io}
+      SHIKIMORI_CLIENT_ID: ${SHIKIMORI_CLIENT_ID:-}
+      SHIKIMORI_CLIENT_SECRET: ${SHIKIMORI_CLIENT_SECRET:-}
+      SHIKIMORI_APP_NAME: ${SHIKIMORI_APP_NAME:-}
+      SHIKIMORI_REDIRECT_URI: ${SHIKIMORI_REDIRECT_URI:-}
+      SESSION_SECRET: ${ANIME_CALENDAR_SECRET}
+      # RU-индексатор: Sonarr ищет русские раздачи через календарь, календарь — через Prowlarr
+      TORZNAB_API_KEY: ${ANIME_CALENDAR_TORZNAB_KEY}
+      SONARR_URL: http://sonarr:8989
+      SONARR_API_KEY: ${SONARR_API_KEY}
+      PROWLARR_URL: http://prowlarr:9696
+      PROWLARR_API_KEY: ${PROWLARR_API_KEY}
+      FLARESOLVERR_URL: http://flaresolverr:8191
+      # «Смотреть сейчас»: TorrServer + библиотека Jellyfin «Стрим»
+      TORRSERVER_URL: http://torrserver:8090
+      STREAM_DIR: /stream
+      JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:-}
+      JELLYFIN_PUBLIC_URL: ${JELLYFIN_PUBLISHED_URL:-http://localhost:8096}
+      # Ссылки на сервисы в меню «Сервисы» (localhost браузер заменяет на адрес, с которого открыт календарь)
+      SONARR_PUBLIC_URL: ${SONARR_PUBLIC_URL:-http://localhost:8989}
+      RADARR_PUBLIC_URL: ${RADARR_PUBLIC_URL:-http://localhost:7878}
+      PROWLARR_PUBLIC_URL: ${PROWLARR_PUBLIC_URL:-http://localhost:9696}
+      BAZARR_PUBLIC_URL: ${BAZARR_PUBLIC_URL:-http://localhost:6767}
+      QBIT_PUBLIC_URL: ${QBIT_PUBLIC_URL:-http://localhost:${QBIT_WEBUI_PORT:-8090}}
+      TORRSERVER_PUBLIC_URL: ${TORRSERVER_PUBLIC_URL:-http://localhost:8092}
+      # Рекомендации: локальная LLM и эмбеддинги
+      OLLAMA_URL: http://ollama:11434
+      # ИИ-апскейл картинок (контейнер upscaler; нет — картинки как есть)
+      UPSCALER_URL: http://upscaler:8000
+      IMG_UPSCALE_MODEL: ${IMG_UPSCALE_MODEL:-realesr-animevideov3}
+      IMG_UPSCALE_TARGET: ${IMG_UPSCALE_TARGET:-1000}
+      IMG_UPSCALE_MAX_SCALE: ${IMG_UPSCALE_MAX_SCALE:-4}
+      IMG_UPSCALE_MIN_SRC: ${IMG_UPSCALE_MIN_SRC:-150}
+      IMG_UPSCALE_TTL_MULT: ${IMG_UPSCALE_TTL_MULT:-4}
+      LLM_MODEL: ${LLM_MODEL:-qwen3.5:9b}
+      EMBED_MODEL: ${EMBED_MODEL:-bge-m3}
+    volumes:
+      - ${CONFIG_ROOT}/anime-calendar:/data
+      # Приоритеты озвучек для окна выбора раздачи (те же баллы, что у Sonarr)
+      - ./profiles.toml:/profiles.toml:ro
+      - ${DATA_ROOT}/media/stream:/stream
+    ports:
+      - "5056:5056"
+    depends_on:
+      - jellyfin
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:5056/login"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Стриминг серий прямо из торрента («Смотреть сейчас» в календаре):
+  # календарь кладёт .strm-ссылки на TorrServer в библиотеку Jellyfin «Стрим»
+  torrserver:
+    <<: *common
+    image: ghcr.io/yourok/torrserver:MatriX.145.1
+    container_name: torrserver
+    environment:
+      TZ: ${TZ}
+      TS_PORT: 8090
+    ports:
+      - "8092:8090"
+      # Входящие соединения пиров: без них поток набирает скорость намного медленнее
+      - "6882:6882"
+      - "6882:6882/udp"
+    networks:
+      default:
+        # мимо VPN (split-tunnel sources.txt): через VPN поток ~1,3 МБ/с и без входящих пиров
+        ipv4_address: 172.25.0.250
+    volumes:
+      - ${CONFIG_ROOT}/torrserver:/opt/ts/config
+      # Кэш раздач на диске: серию можно «подготовить» целиком заранее (в памяти — только 256 МБ)
+      - ${DATA_ROOT}/torrserver-cache:/cache
+
+  # ИИ-апскейл постеров и кадров (Real-ESRGAN): необязательный, включается профилем
+  # (COMPOSE_PROFILES=upscaler в .env). Без него календарь показывает лучший оригинал.
+  # GPU — compose.nvidia.yml; без GPU работает на CPU (медленно)
+  upscaler:
+    build: ./apps/upscaler
+    image: home-theater/upscaler:local
+    container_name: upscaler
+    restart: unless-stopped
+    profiles: ["upscaler"]
+
+  # Локальная LLM для рекомендаций: анализ тайтлов, портрет вкуса, объяснения.
+  # GPU подключается через compose.nvidia.yml; без GPU работает на CPU (медленнее)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+      OLLAMA_KEEP_ALIVE: 10m
+    volumes:
+      - ${CONFIG_ROOT}/ollama:/root/.ollama
+    ports:
+      - "11434:11434"
+
+  # ---------- Управление библиотекой ----------
+  sonarr:
+    <<: *common
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    environment:
+      <<: *common-env
+      SONARR__AUTH__APIKEY: ${SONARR_API_KEY}
+      SONARR__AUTH__METHOD: Forms
+      SONARR__AUTH__REQUIRED: DisabledForLocalAddresses
+    volumes:
+      - ${CONFIG_ROOT}/sonarr:/config
+      - ${DATA_ROOT}:/data
+      - ./scripts/sonarr:/scripts:ro
+    ports:
+      - "8989:8989"
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8989/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  radarr:
+    <<: *common
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    environment:
+      <<: *common-env
+      RADARR__AUTH__APIKEY: ${RADARR_API_KEY}
+      RADARR__AUTH__METHOD: Forms
+      RADARR__AUTH__REQUIRED: DisabledForLocalAddresses
+    volumes:
+      - ${CONFIG_ROOT}/radarr:/config
+      - ${DATA_ROOT}:/data
+    ports:
+      - "7878:7878"
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:7878/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  bazarr:
+    <<: *common
+    image: lscr.io/linuxserver/bazarr:latest
+    container_name: bazarr
+    volumes:
+      - ${CONFIG_ROOT}/bazarr:/config
+      - ${DATA_ROOT}/media:/data/media
+    ports:
+      - "6767:6767"
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:6767/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Профили качества и custom formats из TRaSH Guides (см. recyclarr/recyclarr.yml).
+  # Разовая утилита (не стартует с `up`), запускается из bootstrap.py:
+  #   python scripts/bootstrap.py --only recyclarr,formats
+  recyclarr:
+    image: ghcr.io/recyclarr/recyclarr:8
+    profiles: ["tools"]
+    user: "${PUID}:${PGID}"
+    environment:
+      TZ: ${TZ}
+      SONARR_API_KEY: ${SONARR_API_KEY}
+      RADARR_API_KEY: ${RADARR_API_KEY}
+    volumes:
+      - ./recyclarr:/config
+    depends_on:
+      - sonarr
+      - radarr
+
+  # ---------- Поиск и загрузка ----------
+  prowlarr:
+    <<: *common
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    environment:
+      <<: *common-env
+      PROWLARR__AUTH__APIKEY: ${PROWLARR_API_KEY}
+      PROWLARR__AUTH__METHOD: Forms
+      PROWLARR__AUTH__REQUIRED: DisabledForLocalAddresses
+    volumes:
+      - ${CONFIG_ROOT}/prowlarr:/config
+    ports:
+      - "9696:9696"
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:9696/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Решает Cloudflare-челленджи для публичных трекеров (1337x и др.)
+  flaresolverr:
+    <<: *common
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    environment:
+      TZ: ${TZ}
+      LOG_LEVEL: info
+    ports:
+      - "8191:8191"
+
+  qbittorrent:
+    <<: *common
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    environment:
+      <<: *common-env
+      WEBUI_PORT: 8080
+      TORRENTING_PORT: ${TORRENT_PORT}
+    volumes:
+      - ${CONFIG_ROOT}/qbittorrent:/config
+      - ${DATA_ROOT}:/data
+    ports:
+      - "${QBIT_WEBUI_PORT:-8090}:8080"
+      - "${TORRENT_PORT}:${TORRENT_PORT}"
+      - "${TORRENT_PORT}:${TORRENT_PORT}/udp"
+    networks:
+      default:
+        # мимо VPN (split-tunnel sources.txt)
+        ipv4_address: 172.25.0.251
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "-o", "/dev/null", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+networks:
+  default:
+    driver_opts:
+      # MTU ниже, чем у VPN-туннеля на хосте (AmneziaVPN amn0 = 1376): иначе крупные
+      # пакеты TLS (сертификаты Shikimori, RuTracker) теряются и fetch падает по таймауту
+      com.docker.network.driver.mtu: ${DOCKER_MTU:-1376}
+    # Подсеть закреплена: у торрент-контейнеров постоянные адреса, их трафик split-tunnel
+    # выпускает мимо VPN (scripts/split-tunnel/sources.txt — менять вместе)
+    ipam:
+      config:
+        - subnet: 172.25.0.0/16

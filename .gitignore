@@ -1,0 +1,8 @@
+.env
+.env.from-backup
+config/
+data/
+backups/
+__pycache__/
+recyclarr/*
+!recyclarr/recyclarr.yml
