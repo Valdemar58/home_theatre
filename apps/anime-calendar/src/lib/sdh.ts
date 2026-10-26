@@ -194,3 +194,30 @@ export function matchFiles<F extends { name: string }>(files: F[], titles: Map<n
   }
   return new Map([...best].sort((a, b) => a[0] - b[0]).map(([ep, { f }]) => [ep, f]));
 }
+
+/** Что прозвучало в серии вслух (реплики и голос из-за кадра) — по этому тексту решаем, какие имена зритель уже слышал. */
+export const spokenText = (p: ParsedSubs) =>
+  p.cues.flatMap((c) => c.lines.filter((l) => l.kind === "speech" || l.kind === "offscreen").map((l) => l.text)).join("\n");
+
+const nameParts = (n: string) => [n, ...n.split(/[・＝=\s]/)].map((x) => x.trim()).filter((x) => x.length >= 2);
+
+/**
+ * Метки говорящих, которые раскрывают имя раньше, чем его произнесли (SDH подписывает таинственного персонажа
+ * настоящим именем): имя персонажа (по справочнику), не звучавшее в репликах этой и прошлых серий, —
+ * «人物A», «人物B»… Роли («少女», «通行人») и уже прозвучавшие имена остаются.
+ */
+export function maskUnheard(p: ParsedSubs, heard: string, names: Set<string>): ParsedSubs {
+  const parts = new Set([...names].flatMap(nameParts));
+  const alias = new Map<string, string>();
+  const mask = (sp: string) => {
+    if (!parts.has(sp) || heard.includes(sp)) return sp;
+    if (!alias.has(sp)) alias.set(sp, `人物${String.fromCharCode(65 + alias.size)}`);
+    return alias.get(sp)!;
+  };
+  return { ...p, cues: p.cues.map((c) => ({ ...c, lines: c.lines.map((l) => ({ ...l, speakers: l.speakers.map(mask) })) })) };
+}
+
+/** Словарь имён — только персонажи, чьё японское имя (или его часть) уже прозвучало. */
+export function heardGlossary<E extends { names: string[] }>(entries: E[], heard: string): E[] {
+  return entries.filter((e) => e.names.some((n) => /[\p{Script=Han}\p{Script=Katakana}\p{Script=Hiragana}]/u.test(n) && nameParts(n).some((x) => heard.includes(x))));
+}

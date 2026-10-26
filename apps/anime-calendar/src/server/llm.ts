@@ -118,6 +118,7 @@ export async function runTask<T>(task: LlmTask, req: TaskRequest): Promise<LlmRe
   let lastError: unknown = null;
   for (const link of links) {
     let repair: ChatRequest["repair"];
+    let retried = false;
     // Две попытки на звено: вторая — «исправь» с перечнем ошибок, если ответ не по схеме
     for (let n = 0; n < 2; n++) {
       const started = Date.now();
@@ -144,8 +145,14 @@ export async function runTask<T>(task: LlmTask, req: TaskRequest): Promise<LlmRe
         errors = v && !v.ok ? v.errors : errors;
         logUsage({ ...base, ...out.usage, costUsd: cost, ms: Date.now() - started, ok: false, error: errors.join("; ") });
         lastError = new Error(`${task}: ${errors.join("; ")}`);
-        // Оборванный ответ «исправлять» бесполезно: промпт станет ещё длиннее — сразу к следующему звену
-        if (out.truncated) break;
+        // Оборванный ответ «исправлять» бесполезно: промпт станет ещё длиннее. Обрыв обычно — модель зациклилась
+        // в рассуждениях (случайно): один раз пробуем заново с чистого листа, второй обрыв — к следующему звену
+        if (out.truncated) {
+          if (n > 0 || retried) break;
+          retried = true;
+          repair = undefined;
+          continue;
+        }
         repair = { answer: out.text, errors };
       } catch (e) {
         logUsage({ ...base, prompt: 0, cacheHit: 0, completion: 0, costUsd: 0, ms: Date.now() - started, ok: false, error: String(e) });

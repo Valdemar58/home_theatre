@@ -202,7 +202,7 @@ export async function buildSeasonPlot(id: number, signal: AbortSignal, onBatch?:
     ].join("\n\n");
     // Внешний пул сорвался — не отдавать порцию локальной модели (до 30 тыс. символов ей не по силам):
     // лучше ошибка и повтор по кнопке, чем слабое звено в цепочке
-    const req = { schema: SCHEMA, system: SYSTEM, user, maxTokens: 12_000, timeoutMs: 600_000, minTier: localOnly ? 0 : TIER.cheap };
+    const req = { schema: SCHEMA, system: SYSTEM, user, maxTokens: 20_000, timeoutMs: 900_000, minTier: localOnly ? 0 : TIER.cheap };
     let res = await runTask<Answer>("plot_deep", req);
     calls++;
     // Краткое содержание пропустило серию или сдвинуло номер — ещё одна попытка, потом берём как есть

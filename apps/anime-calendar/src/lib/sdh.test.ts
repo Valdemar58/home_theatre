@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cueLines, episodeOfFile, isSoundLabel, matchFiles, parseAss, parseSrt, sdhRank } from "./sdh";
+import { cueLines, episodeOfFile, heardGlossary, isSoundLabel, maskUnheard, matchFiles, parseAss, parseSrt, sdhRank, spokenText } from "./sdh";
 
 // Короткие выдуманные реплики в формате ТВ/Netflix/Amazon SDH (настоящие субтитры в репозиторий не кладём)
 const SRT = `﻿1
@@ -136,5 +136,31 @@ describe("matchFiles", () => {
     const m = matchFiles([f("[Judas] x - S01E03.srt"), f("x.S01E03.第3話.t.WEBRip.Amazon.ja-jp[sdh].srt"), f("x.S01E03.t.WEBRip.Netflix.ja[cc].srt"), f("x - S01E30.srt")], new Map(), 24);
     expect(m.get(3)?.name).toContain("Netflix");
     expect(m.has(30)).toBe(false);
+  });
+});
+
+describe("maskUnheard / heardGlossary", () => {
+  const p = parseSrt(`1
+00:00:01,000 --> 00:00:02,000
+（レオン）静かにしろ
+
+2
+00:00:03,000 --> 00:00:04,000
+（リムル）なあ ヴェルドラ
+
+3
+00:00:05,000 --> 00:00:06,000
+（少女）お母さん
+`);
+  const names = new Set(["レオン・クロムウェル", "リムル＝テンペスト", "ヴェルドラ"]);
+
+  it("не прозвучавшее имя персонажа — псевдоним, роли и прозвучавшие — как есть", () => {
+    const m = maskUnheard(p, spokenText(p) + "\nリムル", names);
+    expect(m.cues.map((c) => c.lines[0].speakers[0])).toEqual(["人物A", "リムル", "少女"]);
+  });
+
+  it("словарь — только прозвучавшие", () => {
+    const g = heardGlossary([{ names: ["Leon Cromwell", "レオン・クロムウェル"], ru: "Леон" }, { names: ["Veldora", "ヴェルドラ"], ru: "Вельдора" }], spokenText(p));
+    expect(g.map((x) => x.ru)).toEqual(["Вельдора"]);
   });
 });

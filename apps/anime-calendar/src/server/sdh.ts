@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { JsonSchema } from "@/lib/json-lite";
 import { TIER } from "@/lib/llm-tier";
-import { matchFiles, parseSubs, type ParsedSubs } from "@/lib/sdh";
+import { heardGlossary, maskUnheard, matchFiles, parseSubs, spokenText, type ParsedSubs } from "@/lib/sdh";
 import type { CorpusProgress } from "@/lib/types";
 import { getDetails } from "./anilist";
 import { cached } from "./cache";
@@ -13,7 +13,7 @@ import { corpusOf, putTexts, type Found } from "./corpus-store";
 import { db, now } from "./db";
 import { env } from "./env";
 import { fetchWithRetry, RateLimiter } from "./http";
-import { bestOutput, recordOutput } from "./knowledge";
+import { bestOutput, hashOf, recordOutput } from "./knowledge";
 import { runTask } from "./llm";
 import { getLlmConfig } from "./llm-config";
 import { buildSeasonPlot } from "./plot-deep";
@@ -26,7 +26,8 @@ import { registerHandler } from "./tasks";
 const JIMAKU = "https://jimaku.cc";
 const UA = "home-theater/1.0 (personal media server)";
 const limiter = new RateLimiter(1500);
-const PROMPT_V = 1;
+// v2: метки с не прозвучавшими именами скрыты, словарь — только прозвучавшие (раньше имена утекали в конспект)
+const PROMPT_V = 2;
 
 const fetchText = async (url: string) => {
   const res = await fetchWithRetry(url, { headers: { "User-Agent": UA } }, limiter, { timeoutMs: 60_000 });
@@ -84,6 +85,11 @@ async function fetchFiles(anilistId: number, signal: AbortSignal, onFile: () => 
     await writeFile(path, buf);
     put.run(anilistId, ep, f.name, f.url, path, createHash("sha1").update(buf).digest("hex").slice(0, 16), now());
     onFile();
+  }
+  // Файлы, которые больше не сопоставлены ни с одной серией (спецвыпуск «24.5», серия вне сезона), — не разбираем
+  if (pick.size) {
+    const del = db.prepare("DELETE FROM sdh_file WHERE anilist_id = ? AND ep = ?");
+    for (const r of storedFiles(anilistId)) if (!pick.has(r.ep)) del.run(anilistId, r.ep);
   }
   return { rows: storedFiles(anilistId), note: pick.size ? null : "на Jimaku нет японских субтитров по сериям" };
 }
@@ -145,19 +151,19 @@ type Digest = { speakers: { label: string; name_ru: string }[]; scenes: { start:
 const subject = (id: number, ep: number) => `ep:${id}:${ep}`;
 const opts = (inputHash: string) => ({ inputHash, policy: "tier-first" as const, staleOk: false });
 
-/** Конспект серии (готовый — из журнала; вход — хэш файла субтитров). */
-async function digestEpisode(id: number, f: FileRow, names: Set<string>, glossary: string, prev: string | null): Promise<Digest> {
-  const ready = bestOutput<Digest>("sdh", subject(id, f.ep), opts(f.hash));
+/** Конспект серии (готовый — из журнала; вход — файл субтитров, словарь и версия промпта). */
+async function digestEpisode(id: number, f: FileRow, parsed: ParsedSubs, glossary: string, prev: string | null): Promise<Digest> {
+  const inputHash = hashOf([f.hash, PROMPT_V, glossary]);
+  const ready = bestOutput<Digest>("sdh", subject(id, f.ep), opts(inputHash));
   if (ready?.fresh) return ready.value;
-  const parsed = parseSubs(f.name, await readFile(f.path, "utf-8"), names);
   const user = [
     glossary,
     prev ? `Чем кончилась прошлая серия (для имён и контекста):\n${prev.slice(-1200)}` : "",
-    `Серия ${f.ep}. Субтитры:\n${scriptText(parsed)}`,
+    `Серия ${f.ep}. Субтитры («人物A» — персонаж, чьё имя зритель ещё не слышал):\n${scriptText(parsed)}`,
   ].filter(Boolean).join("\n\n");
   const localOnly = getLlmConfig().tasks.sdh === "local" || getLlmConfig().mode === "local";
   const res = await runTask<Digest>("sdh", { schema: SCHEMA, system: SYSTEM, user, maxTokens: 14_000, timeoutMs: 600_000, minTier: localOnly ? 0 : TIER.cheap });
-  recordOutput("sdh", subject(id, f.ep), res, res.value, { schemaV: 1, promptV: PROMPT_V, inputHash: f.hash });
+  recordOutput("sdh", subject(id, f.ep), res, res.value, { schemaV: 1, promptV: PROMPT_V, inputHash });
   return res.value;
 }
 
@@ -178,7 +184,8 @@ export async function deepDive(id: number, signal: AbortSignal): Promise<CorpusP
   const chars = await characterGlossary(d.idMal).catch(() => []);
   // Японские имена справочника — чтобы «（リムル）» не приняли за звук
   const names = new Set(chars.flatMap((c) => c.names).filter((n) => /[\p{Script=Han}\p{Script=Katakana}\p{Script=Hiragana}]/u.test(n)));
-  const glossary = chars.length ? `Словарь имён (Shikimori):\n${chars.slice(0, 60).map((c) => `${c.names.slice(0, 3).join(" / ")} → ${c.ru}`).join("\n")}` : "";
+  // Что зритель уже слышал (реплики этой и прошлых серий): имена вне этого — ни в метках, ни в словаре
+  let heard = "";
   touch(p, { step: "Конспекты серий", total: rows.length + 1 });
   const digests = new Map<number, Digest>();
   let prev: string | null = null;
@@ -186,7 +193,11 @@ export async function deepDive(id: number, signal: AbortSignal): Promise<CorpusP
   for (const [i, f] of rows.entries()) {
     signal.throwIfAborted();
     try {
-      const dg = await digestEpisode(id, f, names, glossary, prev);
+      const parsed = parseSubs(f.name, await readFile(f.path, "utf-8"), names);
+      heard += `\n${spokenText(parsed)}`;
+      const known = heardGlossary(chars, heard).slice(0, 60);
+      const glossary = known.length ? `Словарь имён (Shikimori):\n${known.map((c) => `${c.names.slice(0, 3).join(" / ")} → ${c.ru}`).join("\n")}` : "";
+      const dg = await digestEpisode(id, f, maskUnheard(parsed, heard, names), glossary, prev);
       digests.set(f.ep, dg);
       prev = dg.summary_ru;
     } catch (e) {

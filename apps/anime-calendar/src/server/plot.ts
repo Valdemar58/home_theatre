@@ -328,7 +328,8 @@ const RECAP_SYSTEM = `Ты напоминаешь зрителю, который
 Опирайся только на данные. О новой части ничего не говори: её событий в данных нет — не придумывай.
 Последний абзац — чем закончилась последняя часть и в каком положении герои. Имена — в принятой русской транскрипции.`;
 
-const RECAP_V = 2;
+// v3: финал предыстории — до пересказа, пересказ сезона почти без обрезки
+const RECAP_V = 3;
 const recapRuns = new Map<number, Promise<PlotInfo["recap"]>>();
 
 type RecapData = { points: string[]; prequels: { id: number; title: string }[]; thin?: boolean };
@@ -369,12 +370,14 @@ export function ensureRecap(d: AnilistDetails): Promise<PlotInfo["recap"]> {
         const s = sp.state;
         const text = [
           `Часть ${i + 1}: «${titleOf(p.title)}» (${p.format ?? "?"}, ${p.seasonYear ?? "?"}, серий: ${p.episodes ?? "?"})`,
-          `Пересказ (серии 1–${s.upTo}): ${s.retelling_ru}`,
-          s.arcs.length ? `Арки:\n${s.arcs.map((a) => `- ${a.name_ru} (${a.eps}): ${a.summary_ru}`).join("\n")}` : "",
+          // Чем кончилось — до длинного пересказа: при обрезке теряется середина, а не финал
           `На конец серии ${s.upTo}: ${s.ending_state_ru}`,
+          s.arcs.length ? `Арки:\n${s.arcs.map((a) => `- ${a.name_ru} (${a.eps}): ${a.summary_ru}`).join("\n")}` : "",
+          `Пересказ (серии 1–${s.upTo}): ${s.retelling_ru}`,
           s.characters.length ? `Персонажи: ${s.characters.slice(0, 15).map((c) => `${c.name_ru} — ${c.role_ru}`).join("; ")}` : "",
         ].filter(Boolean).join("\n");
-        return { text: text.slice(0, Math.max(budget, 3000)), thin: false };
+        // Пересказ сезона уже сжат по смыслу — режем только очень длинные (сезоны по 25+ серий)
+        return { text: text.slice(0, Math.max(budget, 12_000)), thin: false };
       }
       const episodes = withCorpusText(p.id, eps.episodes);
       const digest = episodeDigest(episodes, room, Math.max(260, Math.floor(room / Math.max(1, episodes.filter((e) => e.overview).length))));
