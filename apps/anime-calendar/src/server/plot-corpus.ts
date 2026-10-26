@@ -1,11 +1,12 @@
 import "server-only";
-import { episodeCategory, infoboxInfo, plotSections, wikiMatchScore } from "@/lib/fandom-episodes";
+import { episodeCategory, infoboxInfo, parseDate, plotSections, wikiMatchScore } from "@/lib/fandom-episodes";
 import { fuzzyIso } from "@/lib/plot";
 import type { CorpusProgress, CorpusState } from "@/lib/types";
 import { alignToTimeline, decodeEntities, jstDate, parseEpisodeTables, pickSeason, type Dated, type SeasonWindow, type WikiEpisode } from "@/lib/wiki-episodes";
 import { getDetails, type AnilistDetails } from "./anilist";
 import { cached } from "./cache";
-import { corpusOf, deepestByEpisode, putTexts, retractSource, type Depth, type Found } from "./corpus-store";
+import { corpusOf, deepestByEpisode, putMeta, putTexts, retractSource, type Depth, type Found } from "./corpus-store";
+import { db } from "./db";
 import { fetchWithRetry, RateLimiter } from "./http";
 import { episodesOf } from "./plot";
 import { latestTask, registerHandler } from "./tasks";
@@ -22,6 +23,7 @@ const limits = {
   wikipedia: new RateLimiter(400),
   fandom: new RateLimiter(700),
   danime: new RateLimiter(500),
+  mal: new RateLimiter(1000),
 };
 
 async function getJson<T>(url: string, limiter: RateLimiter, headers: Record<string, string> = {}): Promise<T | null> {
@@ -137,8 +139,9 @@ async function wikipediaEpisodes(run: Run, wd: WdInfo | null): Promise<Found[]> 
     run.tick();
     eps = await wikipediaCrawl(run, found, seen, rows);
   }
-  return eps.filter((r) => r.text)
-    .map((r) => ({ ep: r.ep, title: r.title, text: r.text, aired: r.date, url: `https://en.wikipedia.org/wiki/${encodeURIComponent(r.table.split("#")[0].replace(/ /g, "_"))}` }));
+  // И серии без пересказа: их даты и японские названия — эталон для сверки остальных источников (текст пустой — не записывается)
+  return eps
+    .map((r) => ({ ep: r.ep, title: r.title, titleJa: r.titleJa ?? null, text: r.text, aired: r.date, url: `https://en.wikipedia.org/wiki/${encodeURIComponent(r.table.split("#")[0].replace(/ /g, "_"))}` }));
 }
 
 /** Обойти страницы (и ссылки на списки серий и сезоны с них), до 8 страниц на тайтл; серии тайтла — по датам. */
@@ -239,7 +242,7 @@ async function fandomWikiEpisodes(run: Run, slug: string): Promise<Found[]> {
     const r = await getJson<FandomQuery>(`${api}action=query&prop=revisions&rvprop=content&rvslots=main&titles=${encodeURIComponent(titles.slice(i, i + 50).join("|"))}`, limits.fandom);
     for (const p of r?.query?.pages ?? []) {
       const info = infoboxInfo(p.revisions?.[0]?.slots.main.content ?? "");
-      if (info.date) rows.push({ table: info.season ?? "", overall: info.number, inSeason: null, title: p.title, date: info.date, text: "" });
+      if (info.date) rows.push({ table: info.season ?? "", overall: info.number, inSeason: null, title: p.title, titleJa: info.titleJa, date: info.date, text: "" });
     }
   }
   const eps = pickSeason(rows, run.window);
@@ -250,10 +253,51 @@ async function fandomWikiEpisodes(run: Run, slug: string): Promise<Found[]> {
     const r = await getJson<{ parse?: { text: string } }>(`${api}action=parse&prop=text&page=${encodeURIComponent(e.title!)}`, limits.fandom).catch(() => null);
     const { synopsis, plot } = plotSections(r?.parse?.text ?? "");
     const text = plot ?? synopsis;
-    if (text) out.push({ ep: e.ep, title: e.title, text, aired: e.date, url: `https://${slug}.fandom.com/wiki/${encodeURIComponent(e.title!.replace(/ /g, "_"))}` });
+    if (text) out.push({ ep: e.ep, title: e.title, titleJa: e.titleJa ?? null, text, aired: e.date, url: `https://${slug}.fandom.com/wiki/${encodeURIComponent(e.title!.replace(/ /g, "_"))}` });
     run.tick();
   }
   return out;
+}
+
+// ---------------------------------------------------------------- MyAnimeList (Tenrai, запасной — Jikan-Edge)
+
+// Jikan закрыт 2026-10-01; оба сервиса — неофициальный разбор публичных страниц MAL, без ключа.
+// У MAL у каждой серии есть дата и японское название (эталон для сверки) и часто — описание
+const TENRAI = "https://api.tenrai.org/v1";
+const JIKAN_EDGE = "https://jikan.lucashdo.com/v1";
+
+type TenraiEpisode = { mal_id: number; title: string | null; title_japanese: string | null; aired: string | null; synopsis?: string | null; recap?: boolean; filler?: boolean };
+type EdgeEpisode = { number: number; title: string | null; titleJapanese: string | null; aired: string | null; recap?: boolean; filler?: boolean };
+
+async function malEpisodes(run: Run): Promise<Found[]> {
+  const mal = run.d.idMal;
+  if (!mal) return [];
+  const url = (ep: number) => `https://myanimelist.net/anime/${mal}/x/episode/${ep}`;
+  try {
+    const eps: TenraiEpisode[] = [];
+    for (let page = 1; page <= 10; page++) {
+      run.signal.throwIfAborted();
+      const r = await getJson<{ data?: TenraiEpisode[]; pagination?: { has_next_page?: boolean } }>(`${TENRAI}/anime/${mal}/episodes?page=${page}`, limits.mal);
+      run.tick();
+      eps.push(...(r?.data ?? []));
+      if (!r?.pagination?.has_next_page) break;
+    }
+    // Рекапы не берём: в нумерации тайтла AniList их обычно нет
+    return eps.filter((e) => !e.recap).map((e) => {
+      const text = decodeEntities((e.synopsis ?? "").replace(/\s*\(Source:[^)]*\)\s*$/i, "").trim());
+      return {
+        ep: e.mal_id, title: e.title, titleJa: e.title_japanese, aired: e.aired?.slice(0, 10) ?? null, text, url: url(e.mal_id),
+        depth: text.length >= 400 ? ("full" as const) : ("teaser" as const), filler: Boolean(e.filler),
+      };
+    });
+  } catch (e) {
+    if (run.signal.aborted) throw e;
+    // Tenrai не ответил — даты и названия из Jikan-Edge (описаний там нет: серии только для сверки)
+    const r = await getJson<{ data?: EdgeEpisode[] }>(`${JIKAN_EDGE}/anime/${mal}/episodes`, limits.mal);
+    run.tick();
+    return (r?.data ?? []).filter((x) => !x.recap)
+      .map((x) => ({ ep: x.number, title: x.title, titleJa: x.titleJapanese, aired: x.aired ? parseDate(x.aired) : null, text: "", url: url(x.number), filler: Boolean(x.filler) }));
+  }
 }
 
 // ---------------------------------------------------------------- dアニメストア (японские анонсы и названия серий)
@@ -278,7 +322,7 @@ async function danimeEpisodes(run: Run): Promise<Found[]> {
     run.tick();
     if (!p) break;
     const n = p.partDispNumber?.normalize("NFKC").match(/^第(\d+)話$/)?.[1];
-    if (n && p.partExp) out.push({ ep: Number(n), title: p.partTitle ? decodeEntities(p.partTitle) : null, text: decodeEntities(p.partExp), url: `https://animestore.docomo.ne.jp/animestore/ci_pc?workId=${work.workId}` });
+    if (n && p.partExp) out.push({ ep: Number(n), title: p.partTitle ? decodeEntities(p.partTitle) : null, titleJa: p.partTitle ? decodeEntities(p.partTitle) : null, text: decodeEntities(p.partExp), url: `https://animestore.docomo.ne.jp/animestore/ci_pc?workId=${work.workId}` });
     partId = p.nextPartId || null;
   }
   // Своя нумерация (спецвыпуски среди серий) — сопоставить нельзя
@@ -298,6 +342,8 @@ type Source = {
 // Википедия первой: её таблица серий полная и с датами — эталон, к которому привязываются TMDB и Fandom
 const SOURCES: Source[] = [
   { key: "wiki-en", label: "Википедия", lang: "en", depth: "full", license: "CC BY-SA 4.0", units: 3, fetch: wikipediaEpisodes },
+  // Второй — MAL: если Википедия сезон не покрыла, эталон дат и японских названий — он
+  { key: "mal", label: "MyAnimeList", lang: "en", depth: "teaser", license: "© MyAnimeList", units: 1, fetch: (run) => malEpisodes(run) },
   {
     key: "tmdb", label: "TMDB / Kitsu", lang: "", depth: "teaser", license: null, units: 1,
     fetch: async (run) => (await episodesOf(run.d)).episodes.filter((e) => e.overview)
@@ -309,7 +355,7 @@ const SOURCES: Source[] = [
 
 // Типичная длительность источника, с — уточняется по каждому сбору (скользящее среднее): у большинства
 // тайтлов нет вики Fandom и работы в dアニメ, у популярных — по секунде на серию; заранее не угадать
-const typicalSec: Record<string, number> = { tmdb: 3, "wiki-en": 8, fandom: 10, danime: 8 };
+const typicalSec: Record<string, number> = { tmdb: 3, "wiki-en": 8, mal: 3, fandom: 10, danime: 8 };
 
 type Timeline = { dates: Dated[]; tol: number; from: string };
 
@@ -318,16 +364,16 @@ type Timeline = { dates: Dated[]; tol: number; from: string };
  * меньше половины серий, — это другой сезон: его тексты не берём. Без эталона — номера как есть.
  */
 function realign(key: string, found: Found[], tl: Timeline | null, window: SeasonWindow): { found: Found[]; note?: string } {
-  const dated = found.filter((f) => f.aired);
+  const dated = found.filter((f) => f.aired || f.titleJa);
   if (!tl) {
     if (key !== "tmdb" || !window.start || !dated.length) return { found };
     // Эталона нет — TMDB хотя бы должен попадать в период показа
     const from = Date.parse(window.start) - 7 * 86400_000;
     const to = window.end ? Date.parse(window.end) + 7 * 86400_000 : Date.now() + 86400_000;
-    const inside = dated.filter((f) => Date.parse(f.aired!) >= from && Date.parse(f.aired!) <= to).length;
+    const inside = dated.filter((f) => f.aired && Date.parse(f.aired) >= from && Date.parse(f.aired) <= to).length;
     return inside * 2 >= dated.length ? { found } : { found: [], note: "TMDB: серии другого сезона" };
   }
-  const aligned = alignToTimeline(dated.map((f) => ({ ...f, date: f.aired! })), tl.dates, tl.tol)
+  const aligned = alignToTimeline(dated.map((f) => ({ ...f, date: f.aired ?? null })), tl.dates, tl.tol)
     .map(({ date: _date, ...f }) => f);
   if (key === "tmdb" && aligned.length * 2 < dated.length) return { found: [], note: `TMDB: серии другого сезона (сверка с ${tl.from})` };
   return { found: aligned };
@@ -381,19 +427,21 @@ export async function collectCorpus(anilistId: number, signal: AbortSignal): Pro
     try {
       if (s.key === "wiki-en") wd = await wikidataOf(d).catch(() => null);
       let found = await s.fetch(run, wd);
-      if (s.key === "tmdb" || s.key === "fandom") {
+      if (s.key === "tmdb" || s.key === "fandom" || ((s.key === "danime" || s.key === "mal") && tl)) {
         const r = realign(s.key, found, tl ?? (s.key === "fandom" && schedule.length ? { dates: schedule, tol: 3, from: "AniList" } : null), run.window);
         found = r.found;
         if (r.note) {
           p.errors.push(r.note);
           retractSource(anilistId, s.key);
+          db.prepare("DELETE FROM episode_meta WHERE anilist_id = ? AND source = ?").run(anilistId, s.key);
         }
       }
-      if (!tl && (s.key === "wiki-en" || s.key === "tmdb") && found.length && covers(found)) {
-        tl = { dates: found.filter((f) => f.aired).map((f) => ({ ep: f.ep, date: f.aired! })), tol: 1, from: s.label };
+      if (!tl && (s.key === "wiki-en" || s.key === "mal" || s.key === "tmdb") && found.length && covers(found)) {
+        tl = { dates: found.filter((f) => f.aired).map((f) => ({ ep: f.ep, date: f.aired!, titleJa: f.titleJa ?? null })), tol: 1, from: s.label };
       }
       putTexts(anilistId, s.key, s.lang, s.depth, s.license, found);
-      p.found[s.key] = new Set(found.map((f) => f.ep)).size;
+      putMeta(anilistId, s.key, found);
+      p.found[s.key] = new Set(found.filter((f) => f.text.trim()).map((f) => f.ep)).size;
     } catch (e) {
       if (signal.aborted) throw e;
       p.errors.push(`${s.label}: ${e instanceof Error ? e.message : String(e)}`);

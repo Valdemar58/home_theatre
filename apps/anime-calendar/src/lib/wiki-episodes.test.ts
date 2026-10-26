@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { alignToTimeline, decodeEntities, htmlText, jstDate, parseEpisodeTables, pickSeason } from "./wiki-episodes";
+import { alignToTimeline, decodeEntities, htmlText, jstDate, normJaTitle, parseEpisodeTables, pickSeason } from "./wiki-episodes";
 
 const fixture = (name: string) => readFileSync(join(__dirname, "fixtures", name), "utf-8");
 
@@ -11,7 +11,7 @@ describe("parseEpisodeTables", () => {
   it("строка серии: номер, название, дата, пересказ", () => {
     expect(rows).toHaveLength(25);
     const first = rows[0];
-    expect(first).toMatchObject({ overall: "1", title: "The End of the Beginning and the Beginning of the End", date: "2016-04-04" });
+    expect(first).toMatchObject({ overall: "1", title: "The End of the Beginning and the Beginning of the End", titleJa: "始まりの終わりと終わりの始まり", date: "2016-04-04" });
     expect(first.text).toMatch(/^On the way home from a convenience store, Subaru Natsuki/);
     // без сносок и разметки
     expect(first.text).not.toMatch(/\[\d+\]|<|&#/);
@@ -86,5 +86,25 @@ describe("alignToTimeline", () => {
 
   it("jstDate: полночь по Японии — уже следующий день", () => {
     expect(jstDate(Date.UTC(2024, 0, 5, 15, 30) / 1000)).toBe("2024-01-06");
+  });
+});
+
+describe("сверка по японскому названию", () => {
+  it("normJaTitle: фуригана, пробелы, знаки, ширина символов", () => {
+    expect(normJaTitle("{{Ruby|冒|ぼう}}{{Ruby|険|けん}}の{{Ruby|終|お}}わり")).toBe("冒険の終わり");
+    expect(normJaTitle("別に魔法じゃなくたって…")).toBe(normJaTitle("別に魔法じゃなくたって..."));
+    expect(normJaTitle("オペレーション〈梟〉")).toBe("オペレーション梟");
+    expect(normJaTitle("ＡＢＣ　です！")).toBe("abcです");
+  });
+
+  it("название важнее даты: календари показа расходятся на неделю", () => {
+    const timeline = [{ ep: 1, date: "2022-07-09", titleJa: "記憶なき転生" }, { ep: 2, date: "2022-07-16", titleJa: "黒騎士" }];
+    const rows = [{ date: "2022-07-16", titleJa: "記憶なき転生" }, { date: "2022-07-23", titleJa: "黒騎士" }];
+    expect(alignToTimeline(rows, timeline).map((r) => r.ep)).toEqual([1, 2]);
+  });
+
+  it("строка без даты — только по названию (dアニメ)", () => {
+    const timeline = [{ ep: 24, date: "2019-03-19", titleJa: "外伝：黒と仮面" }];
+    expect(alignToTimeline([{ date: null, titleJa: "外伝:黒と仮面" }, { date: null, titleJa: "総集編" }], timeline).map((r) => r.ep)).toEqual([24]);
   });
 });

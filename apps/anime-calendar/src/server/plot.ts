@@ -153,6 +153,20 @@ export function episodesOf(
   });
 }
 
+/**
+ * Серии с самым подробным текстом корпуса сюжета (Википедия, Fandom, MAL) вместо анонсов TMDB — там,
+ * где корпус собран (кнопка «Собрать сюжет»). Для промптов ИИ: показ на странице не меняется.
+ */
+function withCorpusText(id: number, eps: EpisodeInfo[]): EpisodeInfo[] {
+  const best = deepestByEpisode(corpusOf(id));
+  if (!best.size) return eps;
+  const base = eps.length ? eps : [...best.values()].map((t): EpisodeInfo => ({ number: t.ep, title: t.title, overview: null, lang: null, airDate: null, still: null }));
+  return base.map((e) => {
+    const t = best.get(e.number);
+    return t && t.text.length > (e.overview?.length ?? 0) ? { ...e, overview: t.text, lang: t.lang === "ru" ? "ru" : "en" } : e;
+  });
+}
+
 // ---------------------------------------------------------------- хранилище
 
 // Текущее значение (быстрое чтение); все варианты от ИИ — в журнале llm_output (src — id строки, tier — ранг источника)
@@ -228,7 +242,7 @@ function runSynopsis(input: SynopsisInput): Promise<string | null> {
       putPlot(input.id, "synopsis", overview.ru, null, "tmdb", { src: null, tier: TIER.tmdb });
       return overview.ru;
     }
-    const first = episodeDigest(episodes.slice(0, 3), 1200, 400);
+    const first = episodeDigest(withCorpusText(input.id, episodes).slice(0, 3), 1200, 400);
     // Английское описание-заглушка («The third season of …») — не материал: модель начнёт сочинять
     const en = isStubDescription(input.en) ? "" : clean(input.en);
     const season = overview?.en && !isStubDescription(overview.en) ? overview.en : "";
@@ -323,7 +337,10 @@ export function ensureRecap(d: AnilistDetails): Promise<PlotInfo["recap"]> {
       ]);
       const desc = ru && !isStubDescription(ru) ? clean(ru) : isStubDescription(p.description) ? "" : clean(p.description);
       const season = [eps.overview?.ru, eps.overview?.en].find((x) => x && !isStubDescription(x)) ?? "";
-      const digest = episodeDigest(eps.episodes, Math.max(600, budget - Math.min(desc.length, 700) - Math.min(season.length, 700)));
+      // Подробные пересказы корпуса — длиннее анонсов: на серию даём долю бюджета части, но не меньше прежних 260 символов
+      const room = Math.max(600, budget - Math.min(desc.length, 700) - Math.min(season.length, 700));
+      const episodes = withCorpusText(p.id, eps.episodes);
+      const digest = episodeDigest(episodes, room, Math.max(260, Math.floor(room / Math.max(1, episodes.filter((e) => e.overview).length))));
       const text = [
         `Часть ${i + 1}: «${titleOf(p.title)}» (${p.format ?? "?"}, ${p.seasonYear ?? "?"}, серий: ${p.episodes ?? "?"})`,
         desc ? `Описание: ${desc.slice(0, 700)}` : "",

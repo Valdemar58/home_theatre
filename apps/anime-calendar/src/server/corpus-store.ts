@@ -8,24 +8,26 @@ import { hashOf } from "./knowledge";
 export type Depth = "teaser" | "full" | "script";
 export type CorpusText = { ep: number; source: string; lang: string; depth: Depth; title: string | null; text: string; url: string | null; fetchedAt: number };
 /** aired — дата выхода серии по источнику (YYYY-MM-DD): по ней проверяется сопоставление серий с AniList */
-export type Found = { ep: number; title: string | null; text: string; url: string | null; lang?: string; aired?: string | null };
+/** depth — своя у строки (у MAL описание бывает и анонсом, и пересказом); пустой text — серия только для сверки, не записывается */
+export type Found = { ep: number; title: string | null; text: string; url: string | null; lang?: string; aired?: string | null; titleJa?: string | null; depth?: Depth; filler?: boolean };
 
 /** Записать тексты источника; возвращает, сколько добавилось новых (тот же текст — не дублируется). */
 export function putTexts(anilistId: number, source: string, lang: string, depth: Depth, license: string | null, found: Found[]): number {
   // Тот же текст — не дублируется; у записанных раньше без даты дата дописывается
-  const ins = db.prepare(`INSERT INTO episode_text (anilist_id, ep, source, lang, depth, title, text, url, license, hash, fetched_at, aired)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT (anilist_id, ep, source, hash) DO UPDATE SET aired = excluded.aired WHERE episode_text.aired IS NULL AND excluded.aired IS NOT NULL`);
+  const ins = db.prepare(`INSERT INTO episode_text (anilist_id, ep, source, lang, depth, title, text, url, license, hash, fetched_at, aired, title_ja)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT (anilist_id, ep, source, hash) DO UPDATE SET aired = COALESCE(episode_text.aired, excluded.aired), title_ja = COALESCE(episode_text.title_ja, excluded.title_ja)
+      WHERE (episode_text.aired IS NULL AND excluded.aired IS NOT NULL) OR (episode_text.title_ja IS NULL AND excluded.title_ja IS NOT NULL)`);
   let added = 0;
   for (const f of found) {
     const text = f.text.trim();
     if (!text) continue;
-    added += Number(ins.run(anilistId, f.ep, source, f.lang ?? lang, depth, f.title, text, f.url, license, hashOf(text), now(), f.aired ?? null).changes);
+    added += Number(ins.run(anilistId, f.ep, source, f.lang ?? lang, f.depth ?? depth, f.title, text, f.url, license, hashOf(text), now(), f.aired ?? null, f.titleJa ?? null).changes);
   }
   // Свежий набор источника заменяет прежний: строки, которых в нём нет (другой номер серии, старый текст), — отозваны.
   // Снова пришедший текст возвращается в текущие
-  if (found.length) {
-    const keep = new Set(found.map((f) => `${f.ep}:${hashOf(f.text.trim())}`));
+  if (found.some((f) => f.text.trim())) {
+    const keep = new Set(found.filter((f) => f.text.trim()).map((f) => `${f.ep}:${hashOf(f.text.trim())}`));
     const rows = db.prepare<[number, string], { id: number; ep: number; hash: string; retracted_at: number | null }>(
       "SELECT id, ep, hash, retracted_at FROM episode_text WHERE anilist_id = ? AND source = ?").all(anilistId, source);
     const set = db.prepare("UPDATE episode_text SET retracted_at = ? WHERE id = ?");
@@ -36,6 +38,14 @@ export function putTexts(anilistId: number, source: string, lang: string, depth:
     }
   }
   return added;
+}
+
+/** Справочник серий источника (даты, названия) — заменяет прежний; пустой набор ничего не стирает (сбой сети). */
+export function putMeta(anilistId: number, source: string, found: Found[]) {
+  if (!found.length) return;
+  db.prepare("DELETE FROM episode_meta WHERE anilist_id = ? AND source = ?").run(anilistId, source);
+  const ins = db.prepare("INSERT OR REPLACE INTO episode_meta (anilist_id, ep, source, aired, title, title_ja, filler) VALUES (?, ?, ?, ?, ?, ?, ?)");
+  for (const f of found) ins.run(anilistId, f.ep, source, f.aired ?? null, f.title, f.titleJa ?? null, f.filler === undefined ? null : Number(f.filler));
 }
 
 /** Отозвать все тексты источника по тайтлу (TMDB оказался другим сезоном). */

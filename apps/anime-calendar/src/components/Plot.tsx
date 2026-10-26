@@ -192,7 +192,7 @@ export function Episodes({ media, entry, now }: { media: AnimeDetails; entry?: L
   );
 }
 
-const SOURCE_LABEL: Record<string, string> = { "wiki-en": "Википедия", fandom: "Fandom", danime: "dアニメストア", tmdb: "TMDB" };
+const SOURCE_LABEL: Record<string, string> = { "wiki-en": "Википедия", fandom: "Fandom", mal: "MyAnimeList", danime: "dアニメストア", tmdb: "TMDB" };
 const sourceLabel = (s: string) => SOURCE_LABEL[s] ?? s;
 
 /** Подробный пересказ серии из корпуса: по кнопке, вкладки по источникам. */

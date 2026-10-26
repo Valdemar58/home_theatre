@@ -19,6 +19,8 @@ describe("parseDate", () => {
   it("форматы дат", () => {
     expect(parseDate("October 2, 2018")).toBe("2018-10-02");
     expect(parseDate("2 October 2018")).toBe("2018-10-02");
+    expect(parseDate("Sep 29, 2023")).toBe("2023-09-29");
+    expect(parseDate("Sept. 5, 2024")).toBe("2024-09-05");
     expect(parseDate("2020-12-05")).toBe("2020-12-05");
     expect(parseDate("{{Start date|2018|10|2}}")).toBe("2018-10-02");
     expect(parseDate("TBA")).toBeNull();
@@ -28,7 +30,8 @@ describe("parseDate", () => {
 describe("infoboxInfo", () => {
   it("поле даты называют по-разному", () => {
     expect(infoboxInfo(boxes.tensura["A Day in a Swimsuit"])).toMatchObject({ date: "2021-04-27", season: "The Slime Diaries", number: "4" });
-    expect(infoboxInfo(boxes.frieren["Episode 1"]).date).toBe("2023-09-29");
+    expect(infoboxInfo(boxes.frieren["Episode 1"])).toMatchObject({ date: "2023-09-29", titleJa: "{{Ruby|冒|ぼう}}{{Ruby|険|けん}}の{{Ruby|終|お}}わり" });
+    expect(infoboxInfo(boxes.rezero["Episode 1"]).titleJa).toBe("始まりの終わりと終わりの始まり");
     expect(infoboxInfo(boxes.vinlandsaga["Episode 1"]).date).toBe("2019-07-07");
   });
 

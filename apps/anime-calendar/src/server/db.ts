@@ -393,6 +393,21 @@ function migrate(db: Db) {
   if (!columns("episode_text").has("aired")) db.exec("ALTER TABLE episode_text ADD COLUMN aired TEXT");
   // Отозвано (чужой сезон, сдвинутая серия): строка остаётся в истории, но текущей не считается
   if (!columns("episode_text").has("retracted_at")) db.exec("ALTER TABLE episode_text ADD COLUMN retracted_at INTEGER");
+  // Японское название серии по источнику: сверка источников между собой и словарь для перевода
+  if (!columns("episode_text").has("title_ja")) db.exec("ALTER TABLE episode_text ADD COLUMN title_ja TEXT");
+  // Справочник серий по источникам — и тех, о которых текста нет: дата и названия (эталон, сверка, словарь названий).
+  // Производные данные: при новом сборе источника перезаписываются
+  db.exec(`CREATE TABLE IF NOT EXISTS episode_meta (
+    anilist_id INTEGER NOT NULL,
+    ep INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    aired TEXT,
+    title TEXT,
+    title_ja TEXT,
+    PRIMARY KEY (anilist_id, ep, source)
+  )`);
+  // Филлер (не по первоисточнику) — по данным MAL: пересказу сезона он не важен
+  if (!columns("episode_meta").has("filler")) db.exec("ALTER TABLE episode_meta ADD COLUMN filler INTEGER");
   // Уведомления: вкладка, тайтл (обложка), автор (аватар), подпись и действия
   const noticeCols = columns("notifications");
   if (!noticeCols.has("grp")) {
