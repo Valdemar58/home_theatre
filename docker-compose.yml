@@ -145,7 +145,7 @@ services:
       - "6882:6882/udp"
     networks:
       default:
-        # мимо VPN (split-tunnel sources.txt): через VPN поток ~1,3 МБ/с и без входящих пиров
+        # постоянный адрес — для правила «мимо VPN» в VPN-клиенте: через VPN поток ~1,3 МБ/с и без входящих пиров
         ipv4_address: 172.25.0.250
     volumes:
       - ${CONFIG_ROOT}/torrserver:/opt/ts/config
@@ -302,7 +302,7 @@ services:
       - "${TORRENT_PORT}:${TORRENT_PORT}/udp"
     networks:
       default:
-        # мимо VPN (split-tunnel sources.txt)
+        # постоянный адрес — для правила «мимо VPN» в VPN-клиенте
         ipv4_address: 172.25.0.251
     healthcheck:
       test: ["CMD", "curl", "-fs", "-o", "/dev/null", "http://localhost:8080/"]
@@ -314,11 +314,11 @@ services:
 networks:
   default:
     driver_opts:
-      # MTU ниже, чем у VPN-туннеля на хосте (AmneziaVPN amn0 = 1376): иначе крупные
-      # пакеты TLS (сертификаты Shikimori, RuTracker) теряются и fetch падает по таймауту
+      # MTU не выше, чем у VPN-туннеля на хосте: иначе крупные пакеты TLS
+      # (сертификаты Shikimori, RuTracker) теряются и fetch падает по таймауту
       com.docker.network.driver.mtu: ${DOCKER_MTU:-1376}
-    # Подсеть закреплена: у торрент-контейнеров постоянные адреса, их трафик split-tunnel
-    # выпускает мимо VPN (scripts/split-tunnel/sources.txt — менять вместе)
+    # Подсеть закреплена: у торрент-контейнеров постоянные адреса, по ним VPN-клиент
+    # выпускает их трафик мимо VPN (правила менять вместе с адресами)
     ipam:
       config:
         - subnet: 172.25.0.0/16

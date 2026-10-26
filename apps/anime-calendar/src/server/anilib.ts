@@ -32,7 +32,7 @@ async function libGet<T>(path: string): Promise<T> {
 /** Ошибка AniLib → понятная пользователю. */
 function explain(err: unknown): string {
   if (err instanceof HttpError && err.status === 403) {
-    return "AniLib не пускает сервер (геоблок): нужен доступ мимо VPN — scripts/split-tunnel";
+    return "AniLib не пускает сервер (геоблок): нужен доступ мимо VPN";
   }
   if (err instanceof HttpError && err.status === 404) return "Профиль AniLib не найден";
   const cause = (err as { cause?: { code?: string } })?.cause?.code;

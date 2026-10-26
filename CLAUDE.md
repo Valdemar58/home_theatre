@@ -25,8 +25,6 @@
 - `init.py` — создаёт каталоги `config/*`, `data/*` (включая `media/stream`), генерирует ключи в `.env`;
 - `bootstrap.py` — настраивает всё через API: `--only <шаг>`; шаги: qbittorrent, sonarr, radarr, prowlarr, recyclarr, formats, jellyfin, bazarr, seerr, torrserver, ollama, anime-calendar;
 - `backup.py` — архив конфигов (без `Definitions`, `ollama`, сокетов).
-- `split-tunnel/` — раздельное туннелирование (хост): домены из `domains.txt` и трафик контейнеров из `sources.txt` (torrserver 172.25.0.250, qbittorrent .251 — адреса закреплены в compose) идут мимо VPN (подробности — «Сеть и VPN»). Ставит пользователь: `sudo ./split-tunnel.sh install`; `split-tunnel status`, `split-tunnel check <домен>`.
-- `vpn-endpoint-route/` — обход бага AmneziaVPN 5.0.3 (Linux): служба ищет шлюз по дампу всех маршрутов в буфер 8 КБ; при большом числе Docker-интерфейсов (IPv6-маршруты veth) дамп > 8 КБ → «No default gateway available, skipping exclusion route» → петля в туннеле («sendmmsg: message too long»). Скрипт: `ip rule to <сервер> lookup 1518` + шлюз провайдера в таблице 1518, хук NM обновляет шлюз. Серверы — `endpoints.txt`.
 
 `.env`: `CONFIG_ROOT=./config`, `DATA_ROOT=./data`, `PUID/PGID=1000`, `TZ=Europe/Moscow`, ключи сервисов, `JELLYFIN_ADMIN_USER/PASSWORD`, `RUTRACKER_USER/PASSWORD`, `JELLYFIN_API_KEY`, `ANIME_CALENDAR_TORZNAB_KEY`, `LLM_MODEL`, `EMBED_MODEL`.
 
@@ -78,7 +76,7 @@ Docker: `NODE_OPTIONS="--dns-result-order=ipv4first --no-network-family-autosele
 - Правки с обратным слешем (`\b`, `\p{L}`) — только через Edit, не через heredoc/python (портит `\b` → backspace). В JS `\b` не работает с кириллицей — использовать `\p{L}`-lookaround.
 - Prowlarr обрезает названия — полное название берём со страницы темы.
 - Индексатор Sonarr блокируется после рестарта контейнеров — лечится тестом индексатора.
-- MTU: docker-сеть проекта с MTU `${DOCKER_MTU:-1376}` (≤ MTU AmneziaVPN `amn0`); при 1500 TLS из контейнеров виснет (`UND_ERR_CONNECT_TIMEOUT` к Shikimori, 429/блок индексаторов). Менять MTU — только `docker compose down && up -d`.
+- MTU: docker-сеть проекта с MTU `${DOCKER_MTU:-1376}` (подбиралось под прежний VPN-туннель, под v2rayN/nekoray не перепроверялось); при 1500 TLS из контейнеров виснет (`UND_ERR_CONNECT_TIMEOUT` к Shikimori, 429/блок индексаторов). Менять MTU — только `docker compose down && up -d`.
 - Bazarr новых версий требует `audio_only_include` в элементах языкового профиля (иначе HTTP 500) — учтено в `bootstrap.py`.
 - На Windows: SQLite-ошибки «locking protocol» у Jellyfin на NTFS-маунте, Docker-диск WSL (`ext4.vhdx`) только растёт — главная причина переезда на Linux.
 
@@ -87,6 +85,7 @@ Docker: `NODE_OPTIONS="--dns-result-order=ipv4first --no-network-family-autosele
 Работа идёт заходами по **`TASKS.md`** (мой список: задачи, статусы, очередь) из **`IDEAS.md`** (список пользователя: новые замечания вписывать туда же со следующим номером, под каждым пунктом — строка статуса `→ ✅/🔄/📋 … (TASKS N.N)`). Перед каждым заходом — уточнения у пользователя.
 
 - Переезд на Linux завершён (стек с GPU, `DATA_ROOT=./data`, Windows-раздел read-only в `/mnt/windows`).
+- 2026-10-26: разработка продолжается на Windows. Код и база календаря перенесены с Linux-раздела (подключение из WSL: `wsl --mount \\.\PHYSICALDRIVE1 --partition 3 --type ext4 --options ro`, при пустой точке монтирования — `wsl -u root mount -o ro /dev/sdX3 <каталог>`), проект в git. На Windows нет `node_modules`, `data/`, моделей Ollama и `img-cache`.
 - **Заход 1 закрыт**, кроме 1.11 (Shikimori: OAuth-приложение можно создать только через сутки после регистрации — ждём ключи `SHIKIMORI_CLIENT_ID/SECRET/APP_NAME`).
 - Список admin импортирован из AniLib (100 тайтлов), синхронизация AniLib — карточка в Настройках, раз в 30 мин.
 - Звёзды оценки — вариант 4 (временный, пользователь вернётся к дизайну; вариант 1 в `RatingStarsV1.tsx`).
@@ -95,9 +94,17 @@ Docker: `NODE_OPTIONS="--dns-result-order=ipv4first --no-network-family-autosele
 
 ## Сеть и VPN
 
-- VPN на хосте — AmneziaVPN (сейчас протокол WireGuard, интерфейс `vpn0`; целевой — AmneziaWG, на сервере `awg-quick`). Он ставит свои `ip rule` раньше чужих и подменяет DNS (`/opt/AmneziaVPN/bin/update-resolv-conf.sh`).
-- `scripts/split-tunnel/`: трафик к доменам из `domains.txt` и с адресов из `sources.txt` (торрент-контейнеры; адресаты в локальных/docker-сетях не трогаются) помечается fwmark WireGuard `0xca6c` (VPN сам пропускает его мимо туннеля) + своё правило на таблицу 1515; DNS хоста перехватывается в dnsmasq NetworkManager (он ходит к 1.1.1.1 через VPN). **После `install` — `docker compose up -d --force-recreate`**, иначе в контейнерах `EAI_AGAIN`.
-- Почему торренты мимо VPN: через VPN ~1,3 МБ/с (серия стрима требует ~1 МБ/с — остановки), напрямую ~31 МБ/с. Подсеть docker закреплена (`172.25.0.0/16`) — смена подсети/адресов требует `docker compose down && up -d`.
-- Docker Hub напрямую от провайдера заблокирован — только через VPN (не добавлять в обход). AniLib/AnimeGo — геоблок, только мимо VPN; AnimeGo недоступен вообще.
+- VPN-клиент на хосте: Windows — **v2rayN**, Linux — **nekoray** (окончательный выбор не сделан). Сервер — VLESS + Reality.
+- Правила маршрутизации **пользователь добавляет сам** в интерфейсе клиента; от Claude — готовые данные (в v2rayN поля Domain / IP / Process — через запятую, домен без префикса = совпадение по подстроке, `domain:` = домен и поддомены). После — проверить.
+- v2rayN (`C:\Users\Valde\Desktop\v2rayN-windows-64`): настройки в `guiConfigs\guiNConfig.json` и SQLite `guiConfigs\guiNDB.db` (`ProfileItem` — серверы, `SubItem` — подписки, `RoutingItem` — наборы правил, `RuleSet` — JSON). `binConfigs\*` генерируются при подключении, править бесполезно. Базу читать только `mode=ro`; менять — лишь при закрытом v2rayN. Ключи серверов и ссылки подписок не выводить.
+- Устройство v2rayN: TUN (sing-box, `configPre.json`) ловит весь трафик, его выход `proxy` → xray (`127.0.0.1:10808`, `config.json`) → сервер. Системный прокси тоже `127.0.0.1:10808`: через него Docker Desktop отправляет 80/443 контейнеров, минуя TUN. Правила v2rayN пишет в оба ядра. Трафик контейнеров в TUN виден как процесс `com.docker.backend.exe` (адрес контейнера не виден).
+- Активный набор — «V4-全局(Global)»: всё через прокси, кроме исключений. Правила проекта (выше финального `proxy 0-65535`):
+  1. `direct`, процесс `com.docker.backend.exe`, порты `1024-65535` — торренты из Docker; веб-запросы контейнеров (80/443) остаются в VPN;
+  2. `direct`, домены `ghcr.io, lscr.io, pkg-containers.githubusercontent.com, ollama.com, ollama.ai, r2.cloudflarestorage.com, animego.me, animego.org, animelib.org, anilib.me, mangalib.me, ranobelib.me, cdnlibs.org, lib.social, imglib.info`.
+- Проверка маршрута: clash API sing-box `http://127.0.0.1:10814/connections` (процесс, сработавшее правило, выход); для xray — куда `xray.exe` открывает TCP (`Get-NetTCPConnection -OwningProcess`): на IP сайта = `direct`. Мимо VPN с хоста — `curl.exe --interface <IP Wi-Fi>`. Пробный контейнер — `curlimages/curl`.
+- Доступность напрямую (проверено 2026-10-26): Docker Hub, RuTracker, TMDB — обрыв TLS, AniList — 11 с вместо 1 с; всё это только через VPN (не добавлять в обход). Напрямую работают ghcr.io, lscr.io, Ollama, Shikimori. AniLib/AnimeGo — геоблок, только мимо VPN; AnimeGo недоступен вообще.
+- Почему торренты мимо VPN: через VPN ~1,3 МБ/с (серия стрима требует ~1 МБ/с — остановки), напрямую ~31 МБ/с.
+- Адреса торрент-контейнеров закреплены (torrserver `172.25.0.250`, qbittorrent `.251`, подсеть `172.25.0.0/16`) — для правил по адресу источника на Linux. Смена подсети/адресов требует `docker compose down && up -d`.
+- nekoray (Linux): правила под проект не настраивались.
 - Lib-API (`api.cdnlibs.org`) требует браузерные `Referer`/`Origin` (иначе 403), `Site-Id: 5` — AniLib. AniList отклоняет стандартный User-Agent urllib.
 - zsh: не называть переменную `path` (связана с `PATH`).
