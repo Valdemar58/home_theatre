@@ -130,7 +130,12 @@ async function build(): Promise<void> {
   }
   phase("Эмбеддинги", ids.length);
   for (let i = 0; i < ids.length; i += 64) {
-    await quickEmbed(ids.slice(i, i + 64));
+    // Без модели эмбеддингов (или при сбое) карта строится по связям и тегам — не обрываем сборку
+    const ok = await quickEmbed(ids.slice(i, i + 64)).then(() => true, (e) => {
+      console.warn(`[atlas] эмбеддинги: ${String(e)} — дальше без них`);
+      return false;
+    });
+    if (!ok) break;
     status.done = Math.min(ids.length, i + 64);
   }
   const profiles = [...getProfiles(ids).values()].filter((p) => !p.data.isAdult || own.includes(p.data.id));

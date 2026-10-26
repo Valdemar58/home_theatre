@@ -6,7 +6,8 @@ import { cached } from "./cache";
 import { db, now } from "./db";
 import { env, seerrConfigured } from "./env";
 import { externalIds, mappingForAnilist } from "./idmap";
-import { chatJSON, llmAvailable } from "./llm";
+import { runTask, taskAvailable } from "./llm";
+import type { JsonSchema } from "@/lib/json-lite";
 import { withShikimori } from "./lists";
 import { ruDescription } from "./shikimori";
 
@@ -150,7 +151,7 @@ export type SynopsisInput = {
   prequels: string[];
 };
 
-const SYNOPSIS_SCHEMA = {
+const SYNOPSIS_SCHEMA: JsonSchema = {
   type: "object",
   properties: { synopsis_ru: { type: "string", description: "3–5 предложений: завязка сезона, герои, атмосфера; без спойлеров дальше первых серий" } },
   required: ["synopsis_ru"],
@@ -191,7 +192,7 @@ export function ensureSynopsis(input: SynopsisInput): Promise<string | null> {
       putPlot(input.id, "synopsis", "", null, "");
       return null;
     }
-    if (!(await llmAvailable())) return null;
+    if (!(await taskAvailable("synopsis"))) return null;
     const prompt = [
       `Название: ${titleOf(input.title)}${input.title.romaji ? ` (${input.title.romaji})` : ""}`,
       `Формат: ${input.format ?? "?"}, год: ${input.year ?? "?"}, серий: ${input.episodes ?? "?"}`,
@@ -201,7 +202,7 @@ export function ensureSynopsis(input: SynopsisInput): Promise<string | null> {
       season ? `Описание сезона (англ.): ${season.slice(0, 1200)}` : "",
       first ? `Первые серии:\n${first}` : "",
     ].filter(Boolean).join("\n");
-    const r = await chatJSON<{ synopsis_ru: string }>(SYNOPSIS_SCHEMA, SYNOPSIS_SYSTEM, prompt);
+    const { value: r } = await runTask<{ synopsis_ru: string }>("synopsis", { schema: SYNOPSIS_SCHEMA, system: SYNOPSIS_SYSTEM, user: prompt });
     const text = r.synopsis_ru.trim();
     putPlot(input.id, "synopsis", text, null, ["ai", en ? "anilist" : "", season ? "tmdb-season" : "", first ? "episodes" : ""].filter(Boolean).join(","));
     // Анализ для рекомендаций делался по заглушке — пусть пересчитается по новому описанию
@@ -231,7 +232,7 @@ async function prequelChain(d: AnilistDetails): Promise<AnilistDetails[]> {
   return chain;
 }
 
-const RECAP_SCHEMA = {
+const RECAP_SCHEMA: JsonSchema = {
   type: "object",
   properties: {
     recap_ru: { type: "string", description: "8–14 предложений: что произошло в предыдущих частях по порядку и на чём всё остановилось" },
@@ -265,7 +266,7 @@ export function ensureRecap(d: AnilistDetails): Promise<PlotInfo["recap"]> {
     const sources = chain.map((p) => p.id).join(",");
     const ready = readRecap(d.id, sources);
     if (ready) return ready;
-    if (!(await llmAvailable())) throw new Error("Локальная LLM недоступна");
+    if (!(await taskAvailable("recap"))) throw new Error("ИИ недоступен: нет ни ключа внешнего API, ни локальной модели");
     const budget = Math.floor(6500 / chain.length);
     const parts = await Promise.all(chain.map(async (p, i) => {
       const [ru, eps] = await Promise.all([
@@ -288,7 +289,7 @@ export function ensureRecap(d: AnilistDetails): Promise<PlotInfo["recap"]> {
     const prompt = `Новая часть: «${titleOf(d.title)}». Перескажи всё, что было до неё.` +
       (thin ? " О последней из прошлых частей известна только завязка — так и скажи в конце, чем она кончилась, не додумывай." : "") +
       `\n\n${parts.map((x) => x.text).join("\n\n")}`;
-    const r = await chatJSON<{ recap_ru: string; points: string[] }>(RECAP_SCHEMA, RECAP_SYSTEM, prompt);
+    const { value: r } = await runTask<{ recap_ru: string; points: string[] }>("recap", { schema: RECAP_SCHEMA, system: RECAP_SYSTEM, user: prompt });
     const prequels = chain.map((p) => ({ id: p.id, title: titleOf(p.title) }));
     const data: RecapData = { points: r.points.map((x) => x.trim()).filter(Boolean).slice(0, 6), prequels, thin };
     putPlot(d.id, "recap", r.recap_ru.trim(), data, sources);

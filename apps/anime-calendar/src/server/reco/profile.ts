@@ -1,7 +1,8 @@
 import "server-only";
 import { gql } from "../anilist";
 import { db, now, stmt } from "../db";
-import { chatJSON, embed, EMBED_MODEL, LLM_MODEL, llmAvailable } from "../llm";
+import { embed, embedAvailable, EMBED_MODEL, LLM_MODEL, runTask, taskAvailable, taskRoute } from "../llm";
+import type { JsonSchema } from "@/lib/json-lite";
 import { isStubDescription } from "@/lib/plot";
 import { ensureSynopsis } from "../plot";
 import { shikiInfo, ruDescription } from "../shikimori";
@@ -187,7 +188,7 @@ export async function ensureProfileData(ids: number[]): Promise<void> {
 
 // ---------------------------------------------------------------- анализ LLM
 
-const ANALYSIS_SCHEMA = {
+const ANALYSIS_SCHEMA: JsonSchema = {
   type: "object",
   properties: {
     summary_ru: { type: "string", description: "2–3 предложения: о чём и какое ощущение оставляет" },
@@ -254,12 +255,12 @@ export async function processProfile(id: number, withLLM: boolean): Promise<void
       }
       if (ru) data.synopsis = `${ru.slice(0, 1200)}\n\n${data.synopsis ?? ""}`.slice(0, 2000);
     }
-    analysis = await chatJSON<Analysis>(ANALYSIS_SCHEMA, SYSTEM, analysisPrompt(data));
+    analysis = (await runTask<Analysis>("analysis", { schema: ANALYSIS_SCHEMA, system: SYSTEM, user: analysisPrompt(data) })).value;
     db.prepare("UPDATE anime_profile SET analysis = ?, analysis_v = ? WHERE anilist_id = ?").run(JSON.stringify(analysis), ANALYSIS_V, id);
   }
   // Эмбеддинг пересчитываем, когда появился анализ: текст профиля стал полнее
   const wanted = analysis ? EMBED_V() : EMBED_DATA_V();
-  if (r.embed_v !== wanted) {
+  if (r.embed_v !== wanted && (await embedAvailable())) {
     const [vec] = await embed([embedText(data, analysis)]);
     db.prepare("UPDATE anime_profile SET embedding = ?, embed_v = ? WHERE anilist_id = ?").run(fromVector(vec), wanted, id);
   }
@@ -274,7 +275,8 @@ let running = false;
 export type QueueStatus = { pending: number; running: boolean; model: string; llm: boolean };
 
 export async function queueStatus(): Promise<QueueStatus> {
-  return { pending: queue.length, running, model: LLM_MODEL, llm: await llmAvailable() };
+  const route = await taskRoute("analysis");
+  return { pending: queue.length, running, model: route[0]?.model ?? LLM_MODEL, llm: route.length > 0 };
 }
 
 /** Поставить тайтлы в очередь анализа. priority — в начало (мои списки). */
@@ -291,7 +293,7 @@ async function drain() {
   running = true;
   try {
     while (queue.length) {
-      if (!(await llmAvailable())) break; // Ollama ещё не готова — продолжим позже
+      if (!(await taskAvailable("analysis"))) break; // ИИ ещё не готов — продолжим позже
       const id = queue.shift()!;
       queued.delete(id);
       await processProfile(id, true).catch((e) => console.warn(`[reco] профиль ${id}: ${String(e)}`));
@@ -303,6 +305,7 @@ async function drain() {
 
 /** Эмбеддинги без LLM-анализа (быстро): нужны, чтобы рекомендации работали сразу. */
 export async function quickEmbed(ids: number[]): Promise<void> {
+  if (!(await embedAvailable())) return; // без модели эмбеддингов работает «только по тегам»
   const need = ids.filter((id) => {
     const r = getRowStmt().get(id);
     return r && !usableEmbedding(r.embed_v);

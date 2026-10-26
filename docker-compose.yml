@@ -113,6 +113,15 @@ services:
       IMG_UPSCALE_TTL_MULT: ${IMG_UPSCALE_TTL_MULT:-4}
       LLM_MODEL: ${LLM_MODEL:-qwen3.5:9b}
       EMBED_MODEL: ${EMBED_MODEL:-bge-m3}
+      # Внешняя LLM (DeepSeek) для тяжёлых задач; без ключа всё локально. Правится в «Настройках»
+      LLM_MODE: ${LLM_MODE:-auto}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_URL: ${DEEPSEEK_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL_CHEAP: ${DEEPSEEK_MODEL_CHEAP:-deepseek-flash}
+      DEEPSEEK_MODEL_SMART: ${DEEPSEEK_MODEL_SMART:-deepseek-v4-pro}
+      LLM_EXTERNAL_TASKS: ${LLM_EXTERNAL_TASKS:-recap:smart,plot_deep:smart,rerank:cheap}
+      LLM_BUDGET_USD: ${LLM_BUDGET_USD:-3}
+      LLM_PRICES: ${LLM_PRICES:-}
     volumes:
       - ${CONFIG_ROOT}/anime-calendar:/data
       # Приоритеты озвучек для окна выбора раздачи (те же баллы, что у Sonarr)

@@ -1,7 +1,8 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { db, now } from "../db";
-import { chatJSON, llmAvailable } from "../llm";
+import { embedAvailable, runTask, taskAvailable } from "../llm";
+import type { JsonSchema } from "@/lib/json-lite";
 import { getRows, parseTags, type EntryRow } from "../lists";
 import {
   cosine, entryWeight, hybridScore, meanScore, sharedTraits, tagAffinity, tagScore, tasteVector, type SharedTraits, type TasteEntry,
@@ -83,7 +84,7 @@ const titleOf = (d: ProfileData) => d.titleRu ?? d.title;
 
 // ---------------------------------------------------------------- портрет вкуса
 
-const PORTRAIT_SCHEMA = {
+const PORTRAIT_SCHEMA: JsonSchema = {
   type: "object",
   properties: {
     portrait_ru: { type: "string", description: "3–5 предложений о вкусе: что нравится, за что, что раздражает" },
@@ -136,12 +137,12 @@ async function buildPortrait(t: Taste): Promise<Portrait | null> {
     ...(disliked.length ? disliked.map((r) => describeEntry(r, t.profiles.get(r.anilist_id), t.weights.get(r.anilist_id)!)) : ["(нет данных)"]),
   ].join("\n");
   const facts = voiceFacts(t.rows);
-  const res = await chatJSON<Pick<Portrait, "portrait_ru" | "likes" | "dislikes">>(PORTRAIT_SCHEMA,
+  const { value: res } = await runTask<Pick<Portrait, "portrait_ru" | "likes" | "dislikes">>("portrait", { schema: PORTRAIT_SCHEMA, system:
     `Ты помогаешь рекомендательной системе аниме. По оценкам, личным тегам и заметкам опиши вкус зрителя
 на русском — не жанрами, а тем, ЗА ЧТО ему нравится. Опирайся только на данные ниже, ничего не додумывай.
 Пиши обычным текстом без markdown (без звёздочек, решёток, списков).` +
     (facts.ironic ? `\nУчитывай иронию: низкая оценка с тегом «так плохо, что смешно» означает удовольствие от нелепости, а не неприязнь.` : ""),
-    user);
+    user });
   return {
     portrait_ru: plain(res.portrait_ru),
     likes: res.likes.map(plain),
@@ -240,7 +241,7 @@ function score(t: Taste, cands: Map<number, Candidate>): Recommendation[] {
 
 // ---------------------------------------------------------------- переранжирование LLM
 
-const RERANK_SCHEMA = {
+const RERANK_SCHEMA: JsonSchema = {
   type: "object",
   properties: {
     items: {
@@ -273,15 +274,15 @@ async function rerank(portrait: Portrait, items: Recommendation[]): Promise<Reco
       about +
       (i.basedOn.length ? ` | основания: ${i.basedOn.map((b) => b.title).join(", ")}` : "");
   });
-  const res = await chatJSON<{ items: { id: number; fit: number; reason_ru: string }[] }>(RERANK_SCHEMA,
+  const { value: res } = await runTask<{ items: { id: number; fit: number; reason_ru: string }[] }>("rerank", { schema: RERANK_SCHEMA, system:
     `Ты подбираешь аниме конкретному зрителю. Оцени каждого кандидата по портрету вкуса (fit 0–100)
 и объясни одним живым предложением на русском, почему ему зайдёт или нет, ссылаясь на основания.
 Пиши обычным текстом без markdown.
 `+ (portrait.ironic_enjoyment || portrait.voice_matters
       ? `Учитывай прямо: ${[portrait.ironic_enjoyment && "зрителю нравится «так плохо, что смешно»", portrait.voice_matters && "для зрителя важна озвучка"].filter(Boolean).join("; ")}.\n` : "") + `Описывай кандидата только по его собственной строке. Основания — другие тайтлы: упоминай их как сравнение
-(«как в …»), но не приписывай кандидату их сюжет или героев.`,
+(«как в …»), но не приписывай кандидату их сюжет или героев.`, user:
     `Портрет вкуса: ${portrait.portrait_ru}\nНравится: ${portrait.likes.join("; ")}\nНе нравится: ${portrait.dislikes.join("; ")}` +
-    `${portrait.preferred_voices.length ? `\nЛюбимые озвучки: ${portrait.preferred_voices.join(", ")}` : ""}\n\nКандидаты:\n${lines.join("\n")}`);
+    `${portrait.preferred_voices.length ? `\nЛюбимые озвучки: ${portrait.preferred_voices.join(", ")}` : ""}\n\nКандидаты:\n${lines.join("\n")}`, maxTokens: 6000 });
   const fit = new Map(res.items.map((x) => [x.id, x]));
   const merged = top.map((i) => {
     const f = fit.get(i.id);
@@ -296,7 +297,10 @@ type Cached = { list_hash: string; portrait: string | null; recs: string | null;
 
 export async function recommendations(userId: number, force = false): Promise<RecoResponse> {
   const t = await loadTaste(userId);
-  const llm = await llmAvailable();
+  const embedOk = await embedAvailable();
+  const portraitOk = await taskAvailable("portrait");
+  const rerankOk = await taskAvailable("rerank");
+  const llm = portraitOk || rerankOk;
   const cached = db.prepare<[number], Cached>("SELECT list_hash, portrait, recs, updated_at FROM user_taste WHERE user_id = ?").get(userId);
   const fresh = cached && cached.list_hash === t.hash && now() - cached.updated_at < 12 * 3600;
   if (fresh && !force && cached.recs) return JSON.parse(cached.recs) as RecoResponse;
@@ -305,7 +309,7 @@ export async function recommendations(userId: number, force = false): Promise<Re
   enqueueProfiles(t.rows.map((r) => r.anilist_id), true);
   const cands = collectCandidates(t);
   await ensureProfileData([...cands.keys()].slice(0, 300));
-  if (llm) {
+  if (embedOk) {
     await quickEmbed([...t.profiles.keys(), ...cands.keys()].slice(0, 400)).catch((e) => console.warn(`[reco] эмбеддинги: ${e}`));
     t.profiles = getProfiles(t.rows.map((r) => r.anilist_id));
   }
@@ -315,8 +319,8 @@ export async function recommendations(userId: number, force = false): Promise<Re
   let portrait: Portrait | null = cached?.list_hash === t.hash && cached.portrait ? (JSON.parse(cached.portrait) as Portrait) : null;
   if (llm) {
     try {
-      portrait ??= await buildPortrait(t);
-      if (portrait) items = await rerank(portrait, items);
+      if (portraitOk) portrait ??= await buildPortrait(t);
+      if (portrait && rerankOk) items = await rerank(portrait, items);
     } catch (e) {
       console.warn(`[reco] LLM: ${String(e)}`);
     }

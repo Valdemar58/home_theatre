@@ -1,7 +1,8 @@
 import "server-only";
 import { gql } from "./anilist";
 import { getCached, setCached } from "./cache";
-import { chatJSON, llmAvailable } from "./llm";
+import { runTask, taskAvailable } from "./llm";
+import type { JsonSchema } from "@/lib/json-lite";
 import { TAGS_RU } from "./tags-ru-dict";
 
 // Русские названия тегов AniList: основной словарь переведён вручную (tags-ru-dict.ts),
@@ -18,7 +19,7 @@ export const tagsRu = (): Record<string, string> => {
   return { ...Object.fromEntries(Object.entries(llm).map(([k, v]) => [k, cap(v)])), ...TAGS_RU };
 };
 
-const SCHEMA = {
+const SCHEMA: JsonSchema = {
   type: "object",
   properties: {
     items: {
@@ -38,7 +39,7 @@ let running = false;
 
 /** Перевести недостающие теги (фоновая задача из jobs.ts). */
 export async function translateTags(): Promise<void> {
-  if (running || !(await llmAvailable())) return;
+  if (running || !(await taskAvailable("tags"))) return;
   running = true;
   try {
     const all = (await gql<{ MediaTagCollection: { name: string; description: string | null; isAdult: boolean }[] }>(
@@ -48,7 +49,7 @@ export async function translateTags(): Promise<void> {
     for (let i = 0; i < missing.length; i += CHUNK) {
       const chunk = missing.slice(i, i + CHUNK);
       const prompt = chunk.map((t) => `${t.name} — ${(t.description ?? "").replace(/\s+/g, " ").slice(0, 140)}`).join("\n");
-      const res = await chatJSON<{ items: { en: string; ru: string }[] }>(SCHEMA, SYSTEM, `Теги (название — описание):\n${prompt}`);
+      const { value: res } = await runTask<{ items: { en: string; ru: string }[] }>("tags", { schema: SCHEMA, system: SYSTEM, user: `Теги (название — описание):\n${prompt}` });
       const names = new Set(chunk.map((t) => t.name));
       for (const it of res.items) {
         const ru = it.ru?.trim();

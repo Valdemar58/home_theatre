@@ -31,6 +31,11 @@ export function authed<P = Record<string, string>>(
   };
 }
 
+/** Служебные маршруты — только для админа (Jellyfin-администратор). */
+export function adminOnly(user: User) {
+  if (!user.is_admin) throw new ApiError(403, "Только для админа");
+}
+
 export function intParam(value: string | null | undefined, name: string): number {
   const n = Number(value);
   if (!Number.isInteger(n) || n <= 0) throw new ApiError(400, `Некорректный параметр ${name}`);

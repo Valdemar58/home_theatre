@@ -6,7 +6,7 @@ import { FA2_SETTINGS, layoutWeight } from "@/lib/graph-layout";
 import { gql } from "../anilist";
 import { cached } from "../cache";
 import { db } from "../db";
-import { chatJSON, llmAvailable } from "../llm";
+import { runTask, taskAvailable } from "../llm";
 import { cosine } from "./math";
 import { loadTaste } from "./engine";
 import { ensureProfileData, getProfiles, type Profile } from "./profile";
@@ -80,19 +80,19 @@ async function clusterName(members: Profile[], globalFreq: Map<string, number>, 
     .slice(0, 6)
     .map(([t]) => t);
   const fallback = tags.slice(0, 2).join(" · ") || top[0]?.data.genres.slice(0, 2).join(" · ") || "Разное";
-  if (!(await llmAvailable())) return fallback;
+  if (!(await taskAvailable("cluster"))) return fallback;
   // Занятые названия входят в ключ: они сами закэшированы, так что ключ стабилен между пересчётами
   const key = `graph-cluster:v3:${top.map((m) => m.data.id).sort().join(",")}|${used.join("|")}`;
   return cached(key, 30 * 86400, async () => {
-    const res = await chatJSON<{ name: string }>(
-      { type: "object", properties: { name: { type: "string", description: "2–4 слова по-русски" } }, required: ["name"] },
-      "Ты называешь подборки похожих аниме — как разделы каталога на стриминговом сервисе: понятно с первого взгляда, " +
+    const res = await runTask<{ name: string }>("cluster", {
+      schema: { type: "object", properties: { name: { type: "string", description: "2–4 слова по-русски" } }, required: ["name"] },
+      system: "Ты называешь подборки похожих аниме — как разделы каталога на стриминговом сервисе: понятно с первого взгляда, " +
         "по сути и настроению, без вычурных метафор и игры слов. Примеры хороших названий: «Попаданцы в фэнтези-мир», " +
         "«Спортивные команды», «Мрачные психологические триллеры», «Повседневность и уют», «Меха и космос».",
-      `Тайтлы: ${top.map(titleOf).join("; ")}\nЧастые теги: ${tags.join(", ")}` +
+      user: `Тайтлы: ${top.map(titleOf).join("; ")}\nЧастые теги: ${tags.join(", ")}` +
         (used.length ? `\nУже заняты другими группами (не повторяй): ${used.join("; ")}` : "") +
         "\nНазвание группы:",
-    ).catch(() => ({ name: fallback }));
+    }).then((r) => r.value).catch(() => ({ name: fallback }));
     return res.name.trim() || fallback;
   });
 }

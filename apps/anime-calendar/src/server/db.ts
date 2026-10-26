@@ -331,6 +331,28 @@ function migrate(db: Db) {
       position INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL
     );
+    -- Системные настройки, которые меняются в интерфейсе без перезапуска (JSON по ключу, напр. 'llm')
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    -- Каждый вызов LLM (и локальной — с нулевой ценой): расход токенов и денег по задачам
+    CREATE TABLE IF NOT EXISTS llm_usage (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      at INTEGER NOT NULL,
+      task TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      prompt_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_hit_tokens INTEGER NOT NULL DEFAULT 0,
+      completion_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL NOT NULL DEFAULT 0,
+      ms INTEGER NOT NULL,
+      ok INTEGER NOT NULL,
+      error TEXT
+    );
+    CREATE INDEX IF NOT EXISTS llm_usage_at ON llm_usage (at);
     -- Тайтлы, по которым пользователь выключил уведомления о сериях
     CREATE TABLE IF NOT EXISTS notice_mutes (
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

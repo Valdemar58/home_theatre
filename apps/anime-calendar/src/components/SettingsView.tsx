@@ -6,6 +6,7 @@ import { api, useMe } from "@/lib/client";
 import { formatDateTime } from "@/lib/time";
 import { AnilibCard } from "./AnilibCard";
 import { ADMIN_NAV } from "./AppShell";
+import { LlmCard } from "./LlmCard";
 import { Badge, Button, ErrorBox, Spinner } from "./ui";
 
 type SyncStats = { pushed: number; pulled: number; imported: number; removed: number; skipped: number };
@@ -143,6 +144,12 @@ export function SettingsView() {
       <Card title="AniLib">
         <AnilibCard />
       </Card>
+
+      {me.isAdmin && (
+        <Card title="ИИ">
+          <LlmCard />
+        </Card>
+      )}
 
       <Card title="Seerr">
         {me.seerr.configured ? (
