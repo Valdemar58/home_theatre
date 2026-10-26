@@ -6,7 +6,10 @@ import { cached } from "./cache";
 import { db, now } from "./db";
 import { env, seerrConfigured } from "./env";
 import { externalIds, mappingForAnilist } from "./idmap";
-import { runTask, taskAvailable } from "./llm";
+import { bestRouteTier, runTask, taskAvailable } from "./llm";
+import { getLlmConfig } from "./llm-config";
+import { hashOf, recordOutput } from "./knowledge";
+import { TIER } from "@/lib/llm-tier";
 import type { JsonSchema } from "@/lib/json-lite";
 import { withShikimori } from "./lists";
 import { ruDescription } from "./shikimori";
@@ -127,13 +130,15 @@ export function episodesOf(d: Pick<MediaLite, "id" | "format" | "status" | "epis
 
 // ---------------------------------------------------------------- хранилище
 
-type PlotRow = { text: string; data: string | null; sources: string | null; updated_at: number };
+// Текущее значение (быстрое чтение); все варианты от ИИ — в журнале llm_output (src — id строки, tier — ранг источника)
+type PlotRow = { text: string; data: string | null; sources: string | null; updated_at: number; src: number | null; tier: number | null };
 const getPlot = (id: number, kind: "synopsis" | "recap") =>
-  db.prepare<[number, string], PlotRow>("SELECT text, data, sources, updated_at FROM anime_plot WHERE anilist_id = ? AND kind = ?").get(id, kind);
-function putPlot(id: number, kind: "synopsis" | "recap", text: string, data: unknown, sources: string) {
-  db.prepare(`INSERT INTO anime_plot (anilist_id, kind, text, data, sources, updated_at) VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT(anilist_id, kind) DO UPDATE SET text = excluded.text, data = excluded.data, sources = excluded.sources, updated_at = excluded.updated_at`)
-    .run(id, kind, text, data === null ? null : JSON.stringify(data), sources, now());
+  db.prepare<[number, string], PlotRow>("SELECT text, data, sources, updated_at, src, tier FROM anime_plot WHERE anilist_id = ? AND kind = ?").get(id, kind);
+function putPlot(id: number, kind: "synopsis" | "recap", text: string, data: unknown, sources: string, prov: { src: number | null; tier: number | null } = { src: null, tier: null }) {
+  db.prepare(`INSERT INTO anime_plot (anilist_id, kind, text, data, sources, updated_at, src, tier) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(anilist_id, kind) DO UPDATE SET text = excluded.text, data = excluded.data, sources = excluded.sources,
+      updated_at = excluded.updated_at, src = excluded.src, tier = excluded.tier`)
+    .run(id, kind, text, data === null ? null : JSON.stringify(data), sources, now(), prov.src, prov.tier);
 }
 
 const titleOf = (t: MediaLite["title"]) => t.ru ?? t.english ?? t.romaji ?? "?";
@@ -173,15 +178,29 @@ export function storedSynopsis(id: number): { text: string; by: "tmdb" | "ai" } 
 /** Составить синопсис, если его ещё нет (одновременные запросы ждут один и тот же). */
 export function ensureSynopsis(input: SynopsisInput): Promise<string | null> {
   const row = getPlot(input.id, "synopsis");
-  if (row?.text) return Promise.resolve(row.text);
+  if (row?.text) {
+    void upgradeSynopsis(input, row.tier ?? TIER.local);
+    return Promise.resolve(row.text);
+  }
   if (row && row.updated_at > now() - RETRY_EMPTY) return Promise.resolve(null);
+  return runSynopsis(input);
+}
+
+/** Улучшить синопсис ИИ более сильной моделью (в фоне; описание TMDB не трогаем). */
+async function upgradeSynopsis(input: SynopsisInput, tier: number) {
+  if (tier >= TIER.tmdb || synopsisRuns.has(input.id) || !getLlmConfig().upgrade.synopsis) return;
+  if ((await bestRouteTier("synopsis")) <= tier) return;
+  await runSynopsis(input).catch((e) => console.warn(`[plot] улучшение синопсиса ${input.id}: ${String(e)}`));
+}
+
+function runSynopsis(input: SynopsisInput): Promise<string | null> {
   const running = synopsisRuns.get(input.id);
   if (running) return running;
   const run = (async () => {
     const { episodes, overview } = await episodesOf({ id: input.id, format: input.format, status: input.status, episodes: input.episodes, nextAiringEpisode: input.nextAiringEpisode });
     // Готовое русское описание сезона в TMDB — лучше любого пересказа
     if (overview?.ru && !isStubDescription(overview.ru)) {
-      putPlot(input.id, "synopsis", overview.ru, null, "tmdb");
+      putPlot(input.id, "synopsis", overview.ru, null, "tmdb", { src: null, tier: TIER.tmdb });
       return overview.ru;
     }
     const first = episodeDigest(episodes.slice(0, 3), 1200, 400);
@@ -202,12 +221,16 @@ export function ensureSynopsis(input: SynopsisInput): Promise<string | null> {
       season ? `Описание сезона (англ.): ${season.slice(0, 1200)}` : "",
       first ? `Первые серии:\n${first}` : "",
     ].filter(Boolean).join("\n");
-    const { value: r } = await runTask<{ synopsis_ru: string }>("synopsis", { schema: SYNOPSIS_SCHEMA, system: SYNOPSIS_SYSTEM, user: prompt });
-    const text = r.synopsis_ru.trim();
-    putPlot(input.id, "synopsis", text, null, ["ai", en ? "anilist" : "", season ? "tmdb-season" : "", first ? "episodes" : ""].filter(Boolean).join(","));
-    // Анализ для рекомендаций делался по заглушке — пусть пересчитается по новому описанию
-    db.prepare("UPDATE anime_profile SET analysis = NULL WHERE anilist_id = ?").run(input.id);
-    return text;
+    const res = await runTask<{ synopsis_ru: string }>("synopsis", { schema: SYNOPSIS_SCHEMA, system: SYNOPSIS_SYSTEM, user: prompt });
+    const text = res.value.synopsis_ru.trim();
+    const src = recordOutput("synopsis", `anime:${input.id}`, res, { synopsis_ru: text }, { schemaV: 1, promptV: 1, inputHash: hashOf(prompt) });
+    // Худший результат остаётся только в журнале: текущим не становится
+    const cur = getPlot(input.id, "synopsis");
+    if (!cur?.text || res.tier >= (cur.tier ?? TIER.local)) {
+      putPlot(input.id, "synopsis", text, null, ["ai", en ? "anilist" : "", season ? "tmdb-season" : "", first ? "episodes" : ""].filter(Boolean).join(","), { src, tier: res.tier });
+    }
+    // Разбор для рекомендаций сам станет «несвежим»: синопсис входит в хэш его входа
+    return getPlot(input.id, "synopsis")?.text || text;
   })().finally(() => synopsisRuns.delete(input.id));
   synopsisRuns.set(input.id, run);
   return run;
@@ -289,10 +312,12 @@ export function ensureRecap(d: AnilistDetails): Promise<PlotInfo["recap"]> {
     const prompt = `Новая часть: «${titleOf(d.title)}». Перескажи всё, что было до неё.` +
       (thin ? " О последней из прошлых частей известна только завязка — так и скажи в конце, чем она кончилась, не додумывай." : "") +
       `\n\n${parts.map((x) => x.text).join("\n\n")}`;
-    const { value: r } = await runTask<{ recap_ru: string; points: string[] }>("recap", { schema: RECAP_SCHEMA, system: RECAP_SYSTEM, user: prompt });
+    const res = await runTask<{ recap_ru: string; points: string[] }>("recap", { schema: RECAP_SCHEMA, system: RECAP_SYSTEM, user: prompt, maxTokens: 3000 });
+    const r = res.value;
     const prequels = chain.map((p) => ({ id: p.id, title: titleOf(p.title) }));
     const data: RecapData = { points: r.points.map((x) => x.trim()).filter(Boolean).slice(0, 6), prequels, thin };
-    putPlot(d.id, "recap", r.recap_ru.trim(), data, sources);
+    const src = recordOutput("recap", `anime:${d.id}`, res, { recap_ru: r.recap_ru.trim(), ...data, sources }, { schemaV: 1, promptV: 1, inputHash: hashOf(sources) });
+    putPlot(d.id, "recap", r.recap_ru.trim(), data, sources, { src, tier: res.tier });
     return readRecap(d.id);
   })().finally(() => recapRuns.delete(d.id));
   recapRuns.set(d.id, run);

@@ -3,12 +3,14 @@ import type { MatchInfo, SimilarItem, TasteMatch } from "@/lib/types";
 import { gql, mediaByIds } from "../anilist";
 import { cached, getCached } from "../cache";
 import { getMedia, saveMedia, withShikimori } from "../lists";
-import { loadTaste } from "./engine";
+import { ironicTaste, loadTaste, vibeOf } from "./engine";
+import { featuresOf, featuresOfAnalysis, userFeatureAffinity } from "./features";
+import { topTraits, vibeLift, vibeSimilarity } from "@/lib/analysis-features";
 import {
   communityScore, cosine, genreVector, hybridScore, sparseCosine, tagAffinity, tagScore, tagVector,
   tasteVector, titleSimilarity, type Vector,
 } from "./math";
-import { allEmbedded, allProfileData, ensureProfileData, idfSpace, getProfile, getProfiles, quickEmbed, type Profile, type ProfileData } from "./profile";
+import { allAnalyses, allEmbedded, allProfileData, ensureProfileData, idfSpace, getProfile, getProfiles, quickEmbed, type Profile, type ProfileData } from "./profile";
 
 // Персональное для карточки тайтла: «насколько мне понравится» и «похожее».
 // Без LLM: вектор вкуса, теги и рекомендации сообщества — те же составляющие, что у подборки «Для тебя».
@@ -68,6 +70,8 @@ export async function warmReference(): Promise<void> {
 type Model = {
   taste: Vector | null;
   aff: Map<string, number>;
+  /** Склонности по признакам разборов LLM */
+  faff: Map<string, number>;
   weights: Map<number, number>;
   profiles: Map<number, Profile>;
   status: Map<number, { status: string; score: number }>;
@@ -94,6 +98,7 @@ async function modelFor(userId: number): Promise<Model> {
   const model: Model = {
     taste: tasteVector(items.map(([id, weight]) => ({ weight, embedding: centeredOf(s, id, t.profiles.get(id)) ?? [] }))),
     aff: tagAffinity(items.map(([id, weight]) => ({ weight, tags: t.profiles.get(id)?.data.tags ?? [] }))),
+    faff: userFeatureAffinity(t.weights, t.profiles, ironicTaste(t.rows)),
     weights: t.weights,
     profiles: t.profiles,
     status: new Map(t.rows.map((r) => [r.anilist_id, { status: r.status, score: r.score }])),
@@ -119,6 +124,7 @@ function raw(m: Model, s: Space, id: number, p: Profile): number {
     tags: (tagScore(p.data.tags, m.aff) + 1) / 2,
     community: c / (c + 3),
     quality: p.data.score ? clamp01((p.data.score - 6) / 3) : 0.3,
+    vibe: vibeOf(p, m.faff),
   });
 }
 
@@ -167,6 +173,7 @@ export async function matchFor(userId: number, id: number): Promise<MatchInfo> {
     .slice(0, 3)
     .map(({ other }) => ({ id: other, title: titleOf(m.profiles.get(other)!.data) }));
   const tags = p.data.tags.filter((t) => t.rank >= 50);
+  const f = featuresOf(p);
   return {
     percent,
     verdict: VERDICTS.find(([min]) => percent >= min)![1],
@@ -174,6 +181,8 @@ export async function matchFor(userId: number, id: number): Promise<MatchInfo> {
     dislikedSimilar: near(false),
     likedTags: tags.filter((t) => (m.aff.get(t.name) ?? 0) > 0.25).slice(0, 4).map((t) => t.name),
     dislikedTags: tags.filter((t) => (m.aff.get(t.name) ?? 0) < -0.25).slice(0, 3).map((t) => t.name),
+    likedTraits: f ? topTraits(f, m.faff, 4, 1) : [],
+    dislikedTraits: f ? topTraits(f, m.faff, 3, -1) : [],
     lowConfidence: m.liked < 5,
   };
 }
@@ -217,7 +226,8 @@ type SimilarCand = { id: number; similarity: number };
  * похожесть — теги, жанры и голоса сообщества в обе стороны (math.ts titleSimilarity).
  */
 function similarCandidates(id: number): Promise<SimilarCand[]> {
-  return cached(`similar:v4:${id}`, 86400, async () => {
+  // v6 — с ощущением по разбору LLM (тон, юмор, темп), если оба тайтла разобраны
+  return cached(`similar:v6:${id}`, 86400, async () => {
     await ensureProfileData([id]);
     const p = getProfile(id);
     if (!p) return [];
@@ -228,12 +238,15 @@ function similarCandidates(id: number): Promise<SimilarCand[]> {
     const related = new Set([id, ...p.data.relations.map((r) => r.id)]);
     const tags = tagVector(p.data.tags, s);
     const genres = genreVector(p.data.genres, s);
+    const analyses = allAnalyses();
+    const vibe = featuresOf(p);
     const scored = [...all.values()].filter((o) => !related.has(o.id)).map((o) => ({
       id: o.id,
       similarity: titleSimilarity({
         tags: sparseCosine(tags, tagVector(o.tags, s)),
         genres: sparseCosine(genres, genreVector(o.genres, s)),
         community: communityScore(p.data.recs, id, o.recs, o.id),
+        vibe: vibe && analyses.has(o.id) ? vibeLift(vibeSimilarity(vibe, featuresOfAnalysis(analyses.get(o.id)!))) : undefined,
       }),
     })).filter((c) => c.similarity >= MIN_SIMILARITY).sort((a, b) => b.similarity - a.similarity).slice(0, 60);
     // Франшизы: свою исключаем целиком, чужие схлопываем в первый сезон (с лучшей похожестью из частей)

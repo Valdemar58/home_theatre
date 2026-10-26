@@ -398,6 +398,97 @@ function migrate(db: Db) {
       error ? `${m[1]} — не получилось` : (r.body ?? m[1]), error ? r.body : null,
       JSON.stringify({ ...(r.data ? JSON.parse(r.data) : {}), subject: m[2], error }), r.id);
   }
+  migrateLlmOutputs(db);
+}
+
+/** Результаты LLM без срока жизни: журнал (строки не удаляются) + провенанс текущего значения. */
+export function migrateLlmOutputs(db: Db) {
+  const columns = (table: string) =>
+    new Set(db.prepare<[], { name: string }>(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+  db.exec(`
+    -- Все результаты LLM: задача, о чём (anime:1 | tag:X | user:1 | user:1:anime:2 | cluster:<ids>),
+    -- версии схемы/промпта, хэш смыслового входа, кто сделал (провайдер, модель, ранг качества)
+    CREATE TABLE IF NOT EXISTS llm_output (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      schema_v INTEGER NOT NULL,
+      prompt_v INTEGER NOT NULL,
+      input_hash TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      tier INTEGER NOT NULL,
+      value TEXT NOT NULL,
+      usage_id INTEGER,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS llm_output_subject ON llm_output (task, subject, created_at);
+    -- Темы из разборов, склеенные по смыслу (эмбеддинги bge-m3): «дружба» и «сила дружбы» → одна тема
+    CREATE TABLE IF NOT EXISTS theme_canon (
+      theme TEXT PRIMARY KEY,
+      canon TEXT NOT NULL,
+      embedding BLOB
+    );`);
+  const profCols = columns("anime_profile");
+  if (!profCols.has("analysis_src")) {
+    db.exec("ALTER TABLE anime_profile ADD COLUMN analysis_src INTEGER");
+    db.exec("ALTER TABLE anime_profile ADD COLUMN analysis_tier INTEGER");
+    db.exec("ALTER TABLE anime_profile ADD COLUMN analysis_hash TEXT");
+  }
+  if (!columns("anime_plot").has("tier")) {
+    db.exec("ALTER TABLE anime_plot ADD COLUMN src INTEGER");
+    db.exec("ALTER TABLE anime_plot ADD COLUMN tier INTEGER");
+  }
+  if (!columns("user_taste").has("portrait_hash")) db.exec("ALTER TABLE user_taste ADD COLUMN portrait_hash TEXT");
+
+  // Перенос того, что сделано до журнала: модель неизвестна — «legacy», ранг как у локальной, хэш входа пустой
+  // (пустой хэш считается совпадающим: старые результаты остаются в работе, а не пересчитываются)
+  const has = (task: string) => Boolean(db.prepare("SELECT 1 FROM llm_output WHERE task = ? LIMIT 1").get(task));
+  const legacyModel = process.env.LLM_MODEL ?? "qwen3.5:9b";
+  const put = db.prepare<[string, string, number, string, number]>(
+    `INSERT INTO llm_output (task, subject, schema_v, prompt_v, input_hash, provider, model, tier, value, created_at)
+     VALUES (?, ?, ?, 1, '', 'legacy', '${legacyModel.replace(/'/g, "")}', 1, ?, ?)`);
+  db.transaction(() => {
+    if (!has("analysis")) {
+      const rows = db.prepare<[], { anilist_id: number; analysis: string; analysis_v: number | null; updated_at: number }>(
+        "SELECT anilist_id, analysis, analysis_v, updated_at FROM anime_profile WHERE analysis IS NOT NULL").all();
+      for (const r of rows) {
+        const id = Number(put.run("analysis", `anime:${r.anilist_id}`, r.analysis_v ?? 1, r.analysis, r.updated_at).lastInsertRowid);
+        db.prepare("UPDATE anime_profile SET analysis_src = ?, analysis_tier = 1, analysis_hash = '' WHERE anilist_id = ?").run(id, r.anilist_id);
+      }
+      // Полный эмбеддинг «<модель>:1» → «<модель>:a<id анализа>»: не пересчитывать векторы
+      db.exec(`UPDATE anime_profile SET embed_v = substr(embed_v, 1, length(embed_v) - 2) || ':a' || analysis_src
+        WHERE embed_v LIKE '%:1' AND analysis_src IS NOT NULL`);
+    }
+    if (!has("synopsis") && !has("recap")) {
+      const rows = db.prepare<[], { anilist_id: number; kind: string; text: string; data: string | null; sources: string | null; updated_at: number }>(
+        "SELECT anilist_id, kind, text, data, sources, updated_at FROM anime_plot WHERE text != ''").all();
+      for (const r of rows) {
+        if (r.kind === "synopsis" && r.sources === "tmdb") {
+          db.prepare("UPDATE anime_plot SET tier = 4 WHERE anilist_id = ? AND kind = 'synopsis'").run(r.anilist_id);
+          continue;
+        }
+        const value = r.kind === "recap"
+          ? JSON.stringify({ recap_ru: r.text, ...(r.data ? JSON.parse(r.data) : {}), sources: r.sources })
+          : JSON.stringify({ synopsis_ru: r.text });
+        const id = Number(put.run(r.kind, `anime:${r.anilist_id}`, 1, value, r.updated_at).lastInsertRowid);
+        db.prepare("UPDATE anime_plot SET src = ?, tier = 1 WHERE anilist_id = ? AND kind = ?").run(id, r.anilist_id, r.kind);
+      }
+    }
+    if (!has("portrait")) {
+      const rows = db.prepare<[], { user_id: number; list_hash: string; portrait: string | null; updated_at: number }>(
+        "SELECT user_id, list_hash, portrait, updated_at FROM user_taste WHERE portrait IS NOT NULL").all();
+      for (const r of rows) {
+        put.run("portrait", `user:${r.user_id}`, 1, r.portrait!, r.updated_at);
+        db.prepare("UPDATE user_taste SET portrait_hash = list_hash WHERE user_id = ?").run(r.user_id);
+      }
+    }
+    if (!has("tags")) {
+      const row = db.prepare<[], { value: string }>("SELECT value FROM cache WHERE key = 'tags-ru:v1'").get();
+      const map = row ? (JSON.parse(row.value) as Record<string, string>) : {};
+      for (const [en, ru] of Object.entries(map)) put.run("tags", `tag:${en}`, 1, JSON.stringify({ ru }), Math.floor(Date.now() / 1000));
+    }
+  })();
 }
 
 // Один экземпляр на процесс (и переживает HMR в dev). Открывается лениво:

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { api } from "@/lib/client";
 import { FORMAT_LABELS, GENRE_LABELS, label } from "@/lib/labels";
+import { formatDate } from "@/lib/time";
 import type { RecoResponse, Recommendation } from "@/server/reco/engine";
 import type { QueueStatus } from "@/server/reco/profile";
 import { Badge, Button, cx, EmptyState, ErrorBox, matchTone, Spinner, TONE_CLASS } from "./ui";
@@ -137,6 +138,9 @@ export function RecommendationsView() {
           {data.portrait ? (
             <section className="rounded-xl bg-linear-to-br from-indigo-600/15 to-purple-600/10 p-5 ring-1 ring-indigo-500/30">
               <h2 className="mb-2 text-sm font-semibold uppercase tracking-wider text-indigo-300">Твой вкус глазами модели</h2>
+              {data.portraitStale && data.portraitAt && (
+                <p className="mb-2 text-xs text-gray-400">Портрет от {formatDate(data.portraitAt)} — по прошлой версии списка: ИИ сейчас недоступен.</p>
+              )}
               <p className="leading-relaxed text-gray-200">{data.portrait.portrait_ru}</p>
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {data.portrait.likes.map((l) => <Badge key={l} tone="positive">{l}</Badge>)}
@@ -149,7 +153,7 @@ export function RecommendationsView() {
             <div className="rounded-xl bg-gray-800/50 p-4 text-sm text-gray-400 ring-1 ring-gray-700">
               {data.stats.rated < 2
                 ? "Оцени хотя бы несколько тайтлов (звёзды и теги на странице аниме) — тогда появится портрет вкуса и точнее рекомендации."
-                : data.stats.llm ? "Портрет вкуса строится…" : "Портрет вкуса появится, когда заработает локальная LLM (Ollama)."}
+                : data.stats.llm ? "Портрет вкуса строится…" : "Портрет вкуса появится, когда заработает ИИ: локальная модель (Ollama) или внешний API."}
             </div>
           )}
 

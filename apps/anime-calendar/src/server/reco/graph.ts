@@ -7,6 +7,7 @@ import { gql } from "../anilist";
 import { cached } from "../cache";
 import { db } from "../db";
 import { runTask, taskAvailable } from "../llm";
+import { allOutputs, hashOf, recordOutput } from "../knowledge";
 import { cosine } from "./math";
 import { loadTaste } from "./engine";
 import { ensureProfileData, getProfiles, type Profile } from "./profile";
@@ -80,21 +81,40 @@ async function clusterName(members: Profile[], globalFreq: Map<string, number>, 
     .slice(0, 6)
     .map(([t]) => t);
   const fallback = tags.slice(0, 2).join(" · ") || top[0]?.data.genres.slice(0, 2).join(" · ") || "Разное";
+  // Названия хранятся без срока жизни по составу кластера (самые заметные тайтлы); берём лучшее незанятое
+  const subject = `cluster:${top.map((m) => m.data.id).sort((a, b) => a - b).join(",")}`;
+  const taken = new Set(used.map((u) => u.toLowerCase()));
+  const stored = allOutputs<{ name: string }>("cluster", subject, { policy: "tier-first", staleOk: true })
+    .find((k) => k.value.name && !taken.has(k.value.name.toLowerCase()));
+  if (stored) return stored.value.name;
   if (!(await taskAvailable("cluster"))) return fallback;
-  // Занятые названия входят в ключ: они сами закэшированы, так что ключ стабилен между пересчётами
-  const key = `graph-cluster:v3:${top.map((m) => m.data.id).sort().join(",")}|${used.join("|")}`;
-  return cached(key, 30 * 86400, async () => {
+  {
+    // Преобладающий тон и темы участников (из разборов) — точнее называют группу даже малой модели
+    const tones = topCounts(members.flatMap((m) => (m.analysis ? [m.analysis.tone] : [])), 2);
+    const themes = topCounts(members.flatMap((m) => m.analysis?.themes.map((t) => t.toLowerCase()) ?? []), 5);
     const res = await runTask<{ name: string }>("cluster", {
       schema: { type: "object", properties: { name: { type: "string", description: "2–4 слова по-русски" } }, required: ["name"] },
       system: "Ты называешь подборки похожих аниме — как разделы каталога на стриминговом сервисе: понятно с первого взгляда, " +
         "по сути и настроению, без вычурных метафор и игры слов. Примеры хороших названий: «Попаданцы в фэнтези-мир», " +
         "«Спортивные команды», «Мрачные психологические триллеры», «Повседневность и уют», «Меха и космос».",
       user: `Тайтлы: ${top.map(titleOf).join("; ")}\nЧастые теги: ${tags.join(", ")}` +
+        (tones.length ? `\nТон: ${tones.join(", ")}` : "") + (themes.length ? `\nОбщие темы: ${themes.join(", ")}` : "") +
         (used.length ? `\nУже заняты другими группами (не повторяй): ${used.join("; ")}` : "") +
         "\nНазвание группы:",
-    }).then((r) => r.value).catch(() => ({ name: fallback }));
-    return res.name.trim() || fallback;
-  });
+    }).catch(() => null);
+    const name = res?.value.name.trim();
+    if (!res || !name) return fallback;
+    // Запасное имя по тегам не сохраняем — только ответ модели
+    recordOutput("cluster", subject, res, { name }, { schemaV: 1, promptV: 2, inputHash: hashOf(tags) });
+    return name;
+  }
+}
+
+/** Самые частые значения. */
+function topCounts(values: string[], n: number): string[] {
+  const c = new Map<string, number>();
+  for (const v of values) c.set(v, (c.get(v) ?? 0) + 1);
+  return [...c].filter(([, k]) => k >= 2).sort((a, b) => b[1] - a[1]).slice(0, n).map(([v]) => v);
 }
 
 /** Название, не совпадающее с уже выданными: при повторе добавляем самый известный тайтл кластера. */

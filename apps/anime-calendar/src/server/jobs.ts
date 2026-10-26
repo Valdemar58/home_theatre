@@ -12,6 +12,7 @@ import { syncAllLib } from "./anilib";
 import { cleanupImages } from "./img-cache";
 import { maybeRebuildAtlas } from "./reco/atlas";
 import { warmReference } from "./reco/card";
+import { updateThemeCanon } from "./reco/features";
 import { scheduleVoices } from "./tasks";
 import { prefetchWhileWatching } from "./prebuffer";
 import { syncJellyfinPlays } from "./jellyfin-sync";
@@ -81,9 +82,12 @@ export function startJobs() {
   // Карта тайтлов: собрать, если её нет; пересобрать раз в неделю или когда в списках много новых тайтлов
   setTimeout(() => void safe("atlas", async () => maybeRebuildAtlas()), 5 * MINUTE);
   setInterval(() => void safe("atlas", async () => maybeRebuildAtlas()), 6 * 60 * MINUTE);
+  // Темы из разборов LLM → канонические (синонимы склеиваются) — для признаков «похожего» и «понравится»
+  setTimeout(() => void safe("theme-canon", updateThemeCanon), 4 * MINUTE);
   setInterval(() => {
     void safe("tags-ru", translateTags);
     void safe("idmap", ensureIdMap);
+    void safe("theme-canon", updateThemeCanon);
     purgeExpired();
   }, 24 * 60 * MINUTE);
 }

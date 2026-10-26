@@ -1,10 +1,11 @@
 import "server-only";
 import { gql } from "../anilist";
 import { db, now, stmt } from "../db";
-import { embed, embedAvailable, EMBED_MODEL, LLM_MODEL, runTask, taskAvailable, taskRoute } from "../llm";
+import { embed, embedAvailable, EMBED_MODEL, LLM_MODEL, taskAvailable, taskRoute } from "../llm";
+import { bestOutput, hashOf, produce, type Known } from "../knowledge";
 import type { JsonSchema } from "@/lib/json-lite";
 import { isStubDescription } from "@/lib/plot";
-import { ensureSynopsis } from "../plot";
+import { ensureSynopsis, storedSynopsis } from "../plot";
 import { shikiInfo, ruDescription } from "../shikimori";
 import { similarityIdf, type SimilarityIdf } from "./math";
 
@@ -48,19 +49,48 @@ export type Analysis = {
   so_bad_its_good: number;
   voice_dependence: number;
   vibes: string[];
+  // v2: у разборов v1 этих полей нет (undefined) — они не выбрасываются, а улучшаются по желанию
+  audience?: string;
+  ending_type?: string;
+  content_flags?: string[];
+  pacing_arc?: string;
+  rewatch?: number;
+  commitment?: number;
 };
 
 export type Profile = { data: ProfileData; analysis: Analysis | null; embedding: number[] | null };
 
-// Версии: при смене промпта или модели профили пересчитываются
-const ANALYSIS_V = 1;
-/** Эмбеддинг по полному профилю (с анализом LLM) */
-const EMBED_V = () => `${EMBED_MODEL}:${ANALYSIS_V}`;
+// Версии формы ответа и промпта — только провенанс: старые разборы остаются в работе (adaptAnalysis)
+const ANALYSIS_SCHEMA_V = 2;
+const ANALYSIS_PROMPT_V = 2;
+/** Эмбеддинг по полному профилю: привязан к id текущего разбора — сменился разбор, пересчитали вектор */
+const embedV = (analysisSrc: number) => `${EMBED_MODEL}:a${analysisSrc}`;
 /** Эмбеддинг только по данным AniList (пока анализа нет) */
 const EMBED_DATA_V = () => `${EMBED_MODEL}:data`;
-/** Оба варианта в одном пространстве модели, поэтому сравнимы между собой */
-const usableEmbedding = (v: string | null) => v === EMBED_V() || v === EMBED_DATA_V();
+/** Все варианты одной модели — в одном пространстве, поэтому сравнимы между собой */
+const usableEmbedding = (v: string | null) => Boolean(v?.startsWith(`${EMBED_MODEL}:`));
 const DATA_TTL = 14 * 86400;
+
+/** Старый или неполный разбор → текущая форма (null — непригоден). */
+export function adaptAnalysis(raw: unknown): Analysis | null {
+  const a = raw as Partial<Analysis> | null;
+  if (!a || typeof a.summary_ru !== "string" || typeof a.tone !== "string") return null;
+  return {
+    ...a,
+    summary_ru: a.summary_ru,
+    tone: a.tone,
+    themes: a.themes ?? [],
+    humor: a.humor ?? [],
+    pacing: a.pacing ?? "средний",
+    setting: a.setting ?? "",
+    protagonist: a.protagonist ?? "",
+    emotional_intensity: a.emotional_intensity ?? 3,
+    complexity: a.complexity ?? 3,
+    so_bad_its_good: a.so_bad_its_good ?? 1,
+    voice_dependence: a.voice_dependence ?? 2,
+    vibes: a.vibes ?? [],
+  };
+}
 
 const PROFILE_QUERY = `
 query ($ids: [Int], $page: Int) {
@@ -91,7 +121,10 @@ type RawProfile = {
   relations: { edges: { relationType: string; node: { id: number; type: string } }[] };
 };
 
-type Row = { anilist_id: number; data: string; analysis: string | null; analysis_v: number | null; embedding: Buffer | null; embed_v: string | null; updated_at: number };
+type Row = {
+  anilist_id: number; data: string; analysis: string | null; analysis_v: number | null; embedding: Buffer | null; embed_v: string | null;
+  updated_at: number; analysis_src: number | null; analysis_tier: number | null; analysis_hash: string | null;
+};
 
 const getRowStmt = stmt<[number], Row>("SELECT * FROM anime_profile WHERE anilist_id = ?");
 
@@ -103,7 +136,7 @@ export function getProfile(id: number): Profile | null {
   if (!r) return null;
   return {
     data: JSON.parse(r.data) as ProfileData,
-    analysis: r.analysis && r.analysis_v === ANALYSIS_V ? (JSON.parse(r.analysis) as Analysis) : null,
+    analysis: r.analysis ? adaptAnalysis(JSON.parse(r.analysis)) : null,
     embedding: usableEmbedding(r.embed_v) ? toVector(r.embedding) : null,
   };
 }
@@ -130,11 +163,22 @@ export function allProfileData(): ProfileData[] {
   return db.prepare<[], { data: string }>("SELECT data FROM anime_profile").all().map((r) => JSON.parse(r.data) as ProfileData);
 }
 
+/** Разборы всех тайтлов (для похожести по ощущению и склейки тем). */
+export function allAnalyses(): Map<number, Analysis> {
+  const rows = db.prepare<[], { anilist_id: number; analysis: string }>("SELECT anilist_id, analysis FROM anime_profile WHERE analysis IS NOT NULL").all();
+  const out = new Map<number, Analysis>();
+  for (const r of rows) {
+    const a = adaptAnalysis(JSON.parse(r.analysis));
+    if (a) out.set(r.anilist_id, a);
+  }
+  return out;
+}
+
 /** Все профили с эмбеддингами (для kNN и графа). */
 export function allEmbedded(): { id: number; data: ProfileData; embedding: number[] }[] {
   return db
-    .prepare<[string, string], Row>("SELECT * FROM anime_profile WHERE embed_v IN (?, ?) AND embedding IS NOT NULL")
-    .all(EMBED_V(), EMBED_DATA_V())
+    .prepare<[string], Row>("SELECT * FROM anime_profile WHERE embed_v LIKE ? AND embedding IS NOT NULL")
+    .all(`${EMBED_MODEL}:%`)
     .map((r) => ({ id: r.anilist_id, data: JSON.parse(r.data) as ProfileData, embedding: toVector(r.embedding)! }));
 }
 
@@ -188,12 +232,19 @@ export async function ensureProfileData(ids: number[]): Promise<void> {
 
 // ---------------------------------------------------------------- анализ LLM
 
+// Синонимы — варианты, которыми разные модели называют одно и то же значение
+const TONE_SYN = {
+  "комедия": "комедийный", "драма": "серьёзный", "драматичный": "серьёзный", "мрачно": "мрачный", "тёмный": "мрачный",
+  "трэш": "трэш/абсурд", "абсурд": "трэш/абсурд", "абсурдный": "трэш/абсурд", "романтика": "романтичный", "напряженный": "напряжённый",
+  "триллер": "напряжённый", "легкий": "лёгкий", "светлый": "лёгкий", "ирония": "ироничный",
+};
+
 const ANALYSIS_SCHEMA: JsonSchema = {
   type: "object",
   properties: {
     summary_ru: { type: "string", description: "2–3 предложения: о чём и какое ощущение оставляет" },
-    themes: { type: "array", items: { type: "string" }, description: "3–8 коротких тем по-русски" },
-    tone: { type: "string", enum: ["серьёзный", "мрачный", "лёгкий", "комедийный", "ироничный", "трэш/абсурд", "романтичный", "напряжённый"] },
+    themes: { type: "array", items: { type: "string" }, maxItems: 8, description: "3–8 коротких тем по-русски, 1–3 слова каждая" },
+    tone: { type: "string", enum: ["серьёзный", "мрачный", "лёгкий", "комедийный", "ироничный", "трэш/абсурд", "романтичный", "напряжённый"], synonyms: TONE_SYN },
     humor: { type: "array", items: { type: "string", enum: ["нет", "ситуационный", "абсурдный", "пародия", "чёрный", "этти", "словесный", "кринж"] } },
     pacing: { type: "string", enum: ["медленный", "средний", "быстрый"] },
     setting: { type: "string" },
@@ -202,14 +253,26 @@ const ANALYSIS_SCHEMA: JsonSchema = {
     complexity: { type: "integer", minimum: 1, maximum: 5 },
     so_bad_its_good: { type: "integer", minimum: 1, maximum: 5, description: "насколько тайтл смешон своей нелепостью" },
     voice_dependence: { type: "integer", minimum: 1, maximum: 5, description: "насколько впечатление зависит от озвучки и подачи" },
-    vibes: { type: "array", items: { type: "string" }, description: "3 короткие фразы про атмосферу" },
+    vibes: { type: "array", items: { type: "string" }, maxItems: 3, description: "3 короткие фразы про атмосферу" },
+    audience: { type: "string", enum: ["детская", "подростковая", "взрослая", "для всех"] },
+    ending_type: {
+      type: "string", enum: ["закрытая", "открытая", "клиффхэнгер", "незавершённая адаптация", "трагичная", "счастливая", "ещё выходит"],
+      description: "чем заканчивается этот сезон/фильм (без спойлеров — только тип)",
+    },
+    content_flags: { type: "array", items: { type: "string", enum: ["нет", "жестокость", "кровь", "фансервис", "этти", "психологическое давление", "смерть персонажей"] } },
+    pacing_arc: { type: "string", enum: ["ровный", "медленный старт", "провисает в середине", "ускоряется к финалу"] },
+    rewatch: { type: "integer", minimum: 1, maximum: 5, description: "насколько интересно пересматривать" },
+    commitment: { type: "integer", minimum: 1, maximum: 5, description: "сколько внимания требует: 1 — можно фоном, 5 — полное погружение" },
   },
-  required: ["summary_ru", "themes", "tone", "humor", "pacing", "setting", "protagonist", "emotional_intensity", "complexity", "so_bad_its_good", "voice_dependence", "vibes"],
+  required: [
+    "summary_ru", "themes", "tone", "humor", "pacing", "setting", "protagonist", "emotional_intensity", "complexity", "so_bad_its_good",
+    "voice_dependence", "vibes", "audience", "ending_type", "content_flags", "pacing_arc", "rewatch", "commitment",
+  ],
 };
 
 const SYSTEM = `Ты эксперт по аниме. По данным о тайтле делаешь короткий содержательный разбор на русском языке
 для системы рекомендаций. Пиши конкретно, без воды и без спойлеров. Если тайтл известен своей нелепостью
-(«так плохо, что смешно»), отметь это в so_bad_its_good и тоне.`;
+(«так плохо, что смешно»), отметь это в so_bad_its_good и тоне. Шкалы 1–5 ставь честно: середина — 3.`;
 
 function analysisPrompt(p: ProfileData): string {
   const tags = p.tags.filter((t) => t.rank >= 50).slice(0, 15).map((t) => `${t.name} (${t.rank})`).join(", ");
@@ -224,6 +287,40 @@ function analysisPrompt(p: ProfileData): string {
   ].join("\n");
 }
 
+/**
+ * Хэш смыслового входа разбора: без оценки и популярности (меняются постоянно); с синопсисом от ИИ/TMDB,
+ * если он есть, — появился синопсис вместо заглушки, разбор станет «несвежим» и переделается.
+ */
+function analysisHash(p: ProfileData): string {
+  return hashOf({
+    t: p.title, ru: p.titleRu, f: p.format, e: p.episodes, y: p.year, s: p.source, g: p.genres, st: p.studios, syn: p.synopsis,
+    tags: p.tags.filter((t) => t.rank >= 50).map((t) => `${t.name}:${Math.round(t.rank / 10)}`),
+    plot: storedSynopsis(p.id)?.text ?? null,
+  });
+}
+
+/** Русское описание (Shikimori, а вместо заглушки — синопсис от ИИ) — для промпта разбора. */
+async function enrich(p: ProfileData): Promise<ProfileData> {
+  const data = { ...p };
+  if (data.idMal && !data.synopsis?.match(/[а-яё]/i)) {
+    let ru = await ruDescription(data.idMal).catch(() => null);
+    if (isStubDescription(ru)) {
+      ru = await ensureSynopsis({
+        id: p.id, title: { ru: data.titleRu, english: data.title, romaji: null, native: null }, format: data.format, year: data.year,
+        episodes: data.episodes, status: null, nextAiringEpisode: null, en: data.synopsis, stub: ru, prequels: [],
+      }).catch(() => null) ?? ru;
+    }
+    if (ru) data.synopsis = `${ru.slice(0, 1200)}\n\n${data.synopsis ?? ""}`.slice(0, 2000);
+  }
+  return data;
+}
+
+/** Текущий разбор → колонка anime_profile (быстрое чтение без журнала). */
+function promoteAnalysis(id: number, k: Known<Analysis>) {
+  db.prepare("UPDATE anime_profile SET analysis = ?, analysis_v = ?, analysis_src = ?, analysis_tier = ?, analysis_hash = ? WHERE anilist_id = ?")
+    .run(JSON.stringify(k.value), k.prov.schemaV, k.prov.id, k.prov.tier, k.prov.inputHash, id);
+}
+
 /** Текст для эмбеддинга: суть тайтла словами (анализ, если есть, + теги и синопсис). */
 function embedText(p: ProfileData, a: Analysis | null): string {
   const tags = p.tags.filter((t) => t.rank >= 40).map((t) => t.name).join(", ");
@@ -236,32 +333,26 @@ function embedText(p: ProfileData, a: Analysis | null): string {
   ].filter(Boolean).join("\n").slice(0, 3000);
 }
 
-/** Проанализировать и/или посчитать эмбеддинг одного тайтла. */
+/**
+ * Разбор и/или эмбеддинг одного тайтла. Модель зовётся, только если разбора нет, вход изменился
+ * или включено улучшение более сильной моделью (produce); иначе берётся лучший из журнала.
+ */
 export async function processProfile(id: number, withLLM: boolean): Promise<void> {
   const r = getRowStmt().get(id);
   if (!r) return;
   const data = JSON.parse(r.data) as ProfileData;
-  let analysis = r.analysis && r.analysis_v === ANALYSIS_V ? (JSON.parse(r.analysis) as Analysis) : null;
-  if (!analysis && withLLM) {
-    // Русское описание с Shikimori подробнее и точнее для анализа
-    if (data.idMal && !data.synopsis?.match(/[а-яё]/i)) {
-      let ru = await ruDescription(data.idMal).catch(() => null);
-      // Заглушка («Второй сезон …») — синопсис от ИИ по описанию AniList и первым сериям
-      if (isStubDescription(ru)) {
-        ru = await ensureSynopsis({
-          id, title: { ru: data.titleRu, english: data.title, romaji: null, native: null }, format: data.format, year: data.year,
-          episodes: data.episodes, status: null, nextAiringEpisode: null, en: data.synopsis, stub: ru, prequels: [],
-        }).catch(() => null) ?? ru;
-      }
-      if (ru) data.synopsis = `${ru.slice(0, 1200)}\n\n${data.synopsis ?? ""}`.slice(0, 2000);
-    }
-    analysis = (await runTask<Analysis>("analysis", { schema: ANALYSIS_SCHEMA, system: SYSTEM, user: analysisPrompt(data) })).value;
-    db.prepare("UPDATE anime_profile SET analysis = ?, analysis_v = ? WHERE anilist_id = ?").run(JSON.stringify(analysis), ANALYSIS_V, id);
-  }
-  // Эмбеддинг пересчитываем, когда появился анализ: текст профиля стал полнее
-  const wanted = analysis ? EMBED_V() : EMBED_DATA_V();
+  const opts = { inputHash: analysisHash(data), policy: "tier-first" as const, staleOk: true, adapt: adaptAnalysis };
+  const known = withLLM
+    ? await produce<Analysis>("analysis", `anime:${id}`, {
+        ...opts, schemaV: ANALYSIS_SCHEMA_V, promptV: ANALYSIS_PROMPT_V, schema: ANALYSIS_SCHEMA, system: SYSTEM,
+        user: async () => analysisPrompt(await enrich(data)), maxTokens: 1500,
+      })
+    : bestOutput<Analysis>("analysis", `anime:${id}`, opts);
+  if (known && known.prov.id !== r.analysis_src) promoteAnalysis(id, known);
+  // Эмбеддинг пересчитываем, когда сменился разбор: текст профиля стал другим
+  const wanted = known ? embedV(known.prov.id) : EMBED_DATA_V();
   if (r.embed_v !== wanted && (await embedAvailable())) {
-    const [vec] = await embed([embedText(data, analysis)]);
+    const [vec] = await embed([embedText(data, known?.value ?? null)]);
     db.prepare("UPDATE anime_profile SET embedding = ?, embed_v = ? WHERE anilist_id = ?").run(fromVector(vec), wanted, id);
   }
 }

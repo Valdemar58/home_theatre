@@ -109,11 +109,14 @@ export function tagScore(tags: { name: string; rank: number }[], aff: Map<string
   return w ? s / w : 0;
 }
 
-export type HybridParts = { similarity: number; tags: number; community: number; quality: number };
+/** vibe — совпадение со вкусом по разбору LLM (тон, юмор, темп, шкалы); нет разбора — undefined. */
+export type HybridParts = { similarity: number; tags: number; community: number; quality: number; vibe?: number };
 
 /** Итоговый балл кандидата 0–100 из составляющих (каждая примерно в [0, 1]). */
 export function hybridScore(p: HybridParts): number {
-  const s = 0.45 * p.similarity + 0.25 * p.tags + 0.2 * p.community + 0.1 * p.quality;
+  const s = p.vibe === undefined
+    ? 0.45 * p.similarity + 0.25 * p.tags + 0.2 * p.community + 0.1 * p.quality
+    : 0.4 * p.similarity + 0.2 * p.tags + 0.15 * p.vibe + 0.15 * p.community + 0.1 * p.quality;
   return Math.round(Math.max(0, Math.min(1, s)) * 100);
 }
 
@@ -175,9 +178,14 @@ export function communityScore(recsA: { id: number; rating: number }[], idA: num
 /** Сумма весов, при которой похожесть считается 100% (лучшие пары в базе дают ~0.55–0.6). */
 const SIMILARITY_FULL = 0.6;
 
-/** Похожесть 0–100: теги 50%, сообщество 35%, жанры 15%. */
-export function titleSimilarity(p: { tags: number; genres: number; community: number }): number {
-  const s = 0.5 * p.tags + 0.35 * p.community + 0.15 * p.genres;
+/**
+ * Похожесть 0–100: теги 50%, сообщество 35%, жанры 15%. Если оба тайтла разобраны LLM —
+ * ещё и ощущение (тон, юмор, темп): теги 40%, сообщество 30%, ощущение 20%, жанры 10%.
+ */
+export function titleSimilarity(p: { tags: number; genres: number; community: number; vibe?: number }): number {
+  const s = p.vibe === undefined
+    ? 0.5 * p.tags + 0.35 * p.community + 0.15 * p.genres
+    : 0.4 * p.tags + 0.3 * p.community + 0.1 * p.genres + 0.2 * p.vibe;
   return Math.round(Math.min(1, s / SIMILARITY_FULL) * 100);
 }
 

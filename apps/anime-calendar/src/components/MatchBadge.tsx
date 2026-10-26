@@ -33,8 +33,10 @@ export function MatchBadge({ id }: { id: number }) {
           <p className="text-gray-400">Подходит вам лучше, чем {m.percent}% популярных аниме — по вашему списку, оценкам и «рекомендую».</p>
           {m.similarTo.length > 0 && <p>Похоже на ваши любимые: <Links items={m.similarTo} /></p>}
           {m.likedTags.length > 0 && <p>Темы, которые вам нравятся: <TagList names={m.likedTags} /></p>}
+          {m.likedTraits?.length ? <p>По ощущению в вашем вкусе: {m.likedTraits.join(", ")}</p> : null}
           {m.dislikedSimilar.length > 0 && <p className="text-warning-200">Похоже на то, что не зашло: <Links items={m.dislikedSimilar} /></p>}
           {m.dislikedTags.length > 0 && <p className="text-warning-200">Темы, которые вам не нравятся: <TagList names={m.dislikedTags} /></p>}
+          {m.dislikedTraits?.length ? <p className="text-warning-200">По ощущению не ваше: {m.dislikedTraits.join(", ")}</p> : null}
           {m.lowConfidence && <p className="text-xs text-gray-500">Оценок пока мало — прогноз приблизительный.</p>}
         </div>
       )}

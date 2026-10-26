@@ -35,6 +35,7 @@ const repairMessages = (r: ChatRequest) =>
 
 // ---------------------------------------------------------------- Ollama
 
+const OLLAMA_NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 16384;
 const ollamaQueue = new RateLimiter(0);
 // Сколько запросов к Ollama ждёт или выполняется: ИИ-апскейл картинок в это время уступает видеокарту
 let pending = 0;
@@ -58,7 +59,8 @@ export function ollamaChat(r: ChatRequest): Promise<ChatResponse> {
         // Без «размышлений»: ответ нужен структурированный и быстрый
         think: false,
         format: r.schema,
-        options: { temperature: 0.3, num_ctx: 8192, ...(r.maxTokens ? { num_predict: r.maxTokens } : {}) },
+        // Контекст — на промпт и ответ вместе: переранжирование 30 тайтлов (~5k + ~3k) в 8k не влезало
+        options: { temperature: 0.3, num_ctx: OLLAMA_NUM_CTX },
         messages: [{ role: "system", content: r.system }, { role: "user", content: r.user }, ...repairMessages(r)],
       }),
       signal: AbortSignal.timeout(r.timeoutMs),

@@ -216,6 +216,9 @@ export type MatchInfo = {
   dislikedSimilar: { id: number; title: string }[];
   likedTags: string[];
   dislikedTags: string[];
+  /** По разбору ИИ: что в тайтле совпадает со вкусом («мрачный тон», «юмор: пародия») и что против него */
+  likedTraits?: string[];
+  dislikedTraits?: string[];
   /** Мало понравившегося в списке — прогноз неуверенный */
   lowConfidence: boolean;
 };

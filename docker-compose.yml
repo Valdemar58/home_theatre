@@ -104,6 +104,7 @@ services:
       TORRSERVER_PUBLIC_URL: ${TORRSERVER_PUBLIC_URL:-http://localhost:8092}
       # Рекомендации: локальная LLM и эмбеддинги
       OLLAMA_URL: http://ollama:11434
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-16384}
       # ИИ-апскейл картинок (контейнер upscaler; нет — картинки как есть)
       UPSCALER_URL: http://upscaler:8000
       IMG_UPSCALE_MODEL: ${IMG_UPSCALE_MODEL:-realesr-animevideov3}

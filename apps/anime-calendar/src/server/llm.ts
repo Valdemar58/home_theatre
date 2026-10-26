@@ -125,7 +125,7 @@ export async function runTask<T>(task: LlmTask, req: TaskRequest): Promise<LlmRe
       try {
         const out = await attempt(link, {
           model: link.model, schema: req.schema, system: req.system, user: req.user, repair,
-          timeoutMs: req.timeoutMs ?? 300_000, maxTokens: n && repair ? (req.maxTokens ?? 4096) * 2 : req.maxTokens,
+          timeoutMs: req.timeoutMs ?? 300_000, maxTokens: req.maxTokens,
         });
         const cost = link.provider === "external" ? costUsd(link.model, out.usage, new Date(), prices) : 0;
         let parsed: unknown;
@@ -143,8 +143,10 @@ export async function runTask<T>(task: LlmTask, req: TaskRequest): Promise<LlmRe
         }
         errors = v && !v.ok ? v.errors : errors;
         logUsage({ ...base, ...out.usage, costUsd: cost, ms: Date.now() - started, ok: false, error: errors.join("; ") });
-        repair = { answer: out.text, errors };
         lastError = new Error(`${task}: ${errors.join("; ")}`);
+        // Оборванный ответ «исправлять» бесполезно: промпт станет ещё длиннее — сразу к следующему звену
+        if (out.truncated) break;
+        repair = { answer: out.text, errors };
       } catch (e) {
         logUsage({ ...base, prompt: 0, cacheHit: 0, completion: 0, costUsd: 0, ms: Date.now() - started, ok: false, error: String(e) });
         if (link.provider === "external") tripOn(e);
