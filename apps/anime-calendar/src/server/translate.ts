@@ -1,13 +1,13 @@
 import "server-only";
 import type { JsonSchema } from "@/lib/json-lite";
-import { chunkText, glossaryFor, type GlossaryEntry } from "@/lib/translate-text";
+import { chunkText, glossaryFor } from "@/lib/translate-text";
 import { getDetails } from "./anilist";
-import { cached } from "./cache";
+import { characterGlossary } from "./characters";
 import { corpusOf } from "./corpus-store";
-import { env } from "./env";
-import { fetchWithRetry, RateLimiter } from "./http";
 import { bestOutput, hashOf, recordOutput, type Known } from "./knowledge";
 import { runTask } from "./llm";
+import { seasonPlot } from "./plot-deep";
+import { deepGlossary } from "@/lib/plot-deep";
 
 // Перевод пересказов серий из корпуса (EN/JA → язык пользователя, пока русский).
 // Один раз на текст: перевод хранится в журнале llm_output без срока жизни и переиспользуется всеми.
@@ -25,30 +25,6 @@ const toTranslation = (k: Known<Stored>): Translation => ({ text: k.value.text, 
 export function storedTranslation(anilistId: number, ep: number, source: string, text: string, lang = "ru"): Translation | null {
   const k = bestOutput<Stored>("translate", subject(anilistId, ep, source, lang), opts(hashOf(text)));
   return k?.fresh ? toTranslation(k) : null;
-}
-
-// ---------------------------------------------------------------- словарь имён
-
-const shikiLimiter = new RateLimiter(700);
-
-/** Персонажи тайтла из Shikimori: английское и японское имя, синонимы → русское. */
-function characterGlossary(malId: number | null): Promise<GlossaryEntry[]> {
-  if (!malId) return Promise.resolve([]);
-  return cached(`shiki-chars:${malId}`, 30 * 86400, async () => {
-    type Role = { rolesEn: string[]; character: { name: string; russian: string | null; japanese: string | null; synonyms: string[] } };
-    const res = await fetchWithRetry(`${env.shikiUrl}/api/graphql`, {
-      method: "POST",
-      headers: { "User-Agent": env.shikiAppName, "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ query: `{ animes(ids: "${malId}", limit: 1) { characterRoles { rolesEn character { name russian japanese synonyms } } } }` }),
-    }, shikiLimiter);
-    if (!res.ok) return [];
-    const data = (await res.json()) as { data?: { animes?: { characterRoles?: Role[] }[] } };
-    const roles = data.data?.animes?.[0]?.characterRoles ?? [];
-    // Главные — первыми: при обрезке словаря они важнее
-    return roles.sort((a, b) => Number(b.rolesEn.includes("Main")) - Number(a.rolesEn.includes("Main")))
-      .filter((r) => r.character.russian)
-      .map((r) => ({ names: [r.character.name, r.character.japanese ?? "", ...r.character.synonyms].map((n) => n.trim()).filter(Boolean), ru: r.character.russian! }));
-  });
 }
 
 // ---------------------------------------------------------------- перевод
@@ -79,7 +55,9 @@ export function translateEpisode(anilistId: number, ep: number, source: string, 
     const ready = storedTranslation(anilistId, ep, source, src.text, lang);
     if (ready) return ready;
     const d = await getDetails(anilistId);
-    const chars = await characterGlossary(d.idMal).catch(() => []);
+    // Имена Shikimori первыми (их варианты главнее), дальше имена и термины пересказа сезона до этой серии
+    const deep = seasonPlot(anilistId, ep)?.state;
+    const chars = [...await characterGlossary(d.idMal).catch(() => []), ...(deep ? deepGlossary(deep) : [])];
     // Русское название серии (TMDB) — подсказка для названий и терминов
     const ruTitle = texts.find((t) => t.lang === "ru" && t.title)?.title;
     const head = [

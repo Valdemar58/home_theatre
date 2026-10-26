@@ -9,6 +9,7 @@ import { corpusOf, deepestByEpisode, putMeta, putTexts, retractSource, type Dept
 import { db } from "./db";
 import { fetchWithRetry, RateLimiter } from "./http";
 import { episodesOf } from "./plot";
+import { buildSeasonPlot } from "./plot-deep";
 import { latestTask, registerHandler } from "./tasks";
 
 // Корпус сюжета: тексты о каждой серии из всех источников (docs/plot-analysis-design.md, TASKS 7.12).
@@ -449,8 +450,24 @@ export async function collectCorpus(anilistId: number, signal: AbortSignal): Pro
     typicalSec[s.key] = Math.round(0.7 * typicalSec[s.key] + 0.3 * ((Date.now() - at) / 1000));
     touch(p, { done: base + Math.max(planned, used) });
   }
-  touch(p, { step: "готово", finished: true, etaSec: 0 });
   return p;
+}
+
+// Порция пересказа сезона умной моделью — около 40 с
+const DEEP_SEC = 40;
+
+/** Пересказ сезона по собранному корпусу — следом за сбором, в том же статусе. */
+async function deepStep(p: CorpusProgress, signal: AbortSignal) {
+  const base = p.done;
+  touch(p, { step: "Пересказ сезона" });
+  try {
+    await buildSeasonPlot(p.anilistId, signal, (done, total) => {
+      touch(p, { done: base + done, total: base + total, etaSec: (total - done) * DEEP_SEC });
+    });
+  } catch (e) {
+    if (signal.aborted) throw e;
+    p.errors.push(`Пересказ сезона: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 const pluralRu = (n: number, one: string, few: string, many: string) => {
@@ -469,6 +486,8 @@ registerHandler("corpus", {
   href: (key) => `/anime/${key}`,
   run: async (key, signal) => {
     const p = await collectCorpus(Number(key), signal);
+    await deepStep(p, signal);
+    touch(p, { step: "готово", finished: true, etaSec: 0 });
     const full = deepestByEpisode(corpusOf(Number(key)));
     const deep = [...full.values()].filter((t) => t.depth !== "teaser").length;
     const summary = `Подробных пересказов: ${deep} ${pluralRu(deep, "серия", "серии", "серий")} из ${full.size}` + (p.errors.length ? ` (ошибки: ${p.errors.length})` : "");

@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api, useMe, usePlot } from "@/lib/client";
+import { stateAt } from "@/lib/plot-deep";
 import type { AnimeDetails, CorpusState, EpisodeInfo, EpisodeTexts, ListEntry, PlotInfo } from "@/lib/types";
 import { formatDate, formatTime, relative } from "@/lib/time";
 import { Img } from "./Img";
@@ -125,7 +126,9 @@ export function Episodes({ media, entry, now }: { media: AnimeDetails; entry?: L
   const start = Math.max(0, Math.min(seen - 2, total - 10));
   const shown = showAll ? rows : rows.slice(start, start + 10);
   const upcoming = rows.find((r) => r.airingAt && r.airingAt * 1000 > now);
-  const hasText = eps.some((e) => e.overview);
+  // Краткое содержание серий по-русски из пересказа сезона ИИ (каждая — только по своей серии)
+  const beats = plot?.season ? stateAt(plot.season.states, Infinity).beats : {};
+  const hasText = eps.some((e) => e.overview) || Object.keys(beats).length > 0;
 
   return (
     <section>
@@ -166,14 +169,16 @@ export function Episodes({ media, entry, now }: { media: AnimeDetails; entry?: L
                     {date}{!past && r.airingAt && <span className="ml-2 text-accent-300">{relative(r.airingAt, now)}</span>}
                   </span>
                 </div>
-                {r.info?.overview && (hidden ? (
+                {(beats[r.number] || r.info?.overview) && (hidden ? (
                   <button onClick={() => setOpened((s) => new Set(s).add(r.number))}
                     className="mt-1 block text-left text-sm text-gray-500 hover:text-gray-300" title="Описание может раскрыть сюжет">
-                    <span className="select-none blur-[3px]">{r.info.overview.slice(0, 120)}</span>
+                    <span className="select-none blur-[3px]">{(beats[r.number] ?? r.info!.overview!).slice(0, 120)}</span>
                     <span className="ml-1 whitespace-nowrap text-xs">— спойлер, показать</span>
                   </button>
+                ) : beats[r.number] ? (
+                  <Overview text={beats[r.number]} en={false} ai />
                 ) : (
-                  <Overview text={r.info.overview} en={r.info.lang === "en"} />
+                  <Overview text={r.info!.overview!} en={r.info!.lang === "en"} />
                 ))}
                 {r.info?.detail && !hidden && <EpisodeDetail id={media.id} ep={r.number} detail={r.info.detail} />}
               </div>
@@ -187,6 +192,7 @@ export function Episodes({ media, entry, now }: { media: AnimeDetails; entry?: L
         )}
         {plot?.source && <span className="ml-auto">{hasText ? "Названия и описания" : eps.some((e) => e.title) ? "Названия и кадры" : "Кадры"} — {plot.source}</span>}
       </div>
+      {plot?.season && <SeasonRetelling season={plot.season} seen={spoilers ? Infinity : seen} total={total} />}
       <CorpusBar id={media.id} />
     </section>
   );
@@ -327,10 +333,49 @@ function CorpusBar({ id }: { id: number }) {
   );
 }
 
-function Overview({ text, en }: { text: string; en: boolean }) {
+/**
+ * Пересказ сезона ИИ на момент досмотренной серии: состояние последней порции, целиком просмотренной
+ * (модель шла слепо по порядку — дальше этой серии она ничего не знала).
+ */
+function SeasonRetelling({ season, seen, total }: { season: NonNullable<PlotInfo["season"]>; seen: number; total: number }) {
+  const [open, setOpen] = useState(false);
+  const { state } = stateAt(season.states, seen);
+  const last = season.states.at(-1)!.upTo;
+  return (
+    <div className="mt-3 rounded-xl bg-gray-800/40 ring-1 ring-gray-700">
+      <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-3 px-4 py-3 text-left">
+        <BookOpenIcon className="h-5 w-5 shrink-0 text-gray-400" />
+        <span className="mr-auto font-semibold">Пересказ сезона</span>
+        <span className="text-xs text-gray-500">
+          {!state ? `появится, когда досмотрите до серии ${season.states[0].upTo}` : state.upTo >= Math.min(last, total) ? "весь сезон" : `по серию ${state.upTo} — без спойлеров дальше`}
+        </span>
+      </button>
+      {open && state && (
+        <div className="space-y-3 border-t border-gray-700/60 px-4 py-4 text-sm">
+          <p className="whitespace-pre-line leading-relaxed text-gray-300">{state.retelling_ru}</p>
+          <p className="text-gray-400"><span className="text-gray-500">На конец серии {state.upTo}: </span>{state.ending_state_ru}</p>
+          {state.characters.length > 0 && (
+            <div>
+              <p className="mb-1.5 text-xs uppercase tracking-wider text-gray-500">Персонажи</p>
+              <ul className="grid gap-1 text-gray-300 sm:grid-cols-2">
+                {state.characters.map((c) => <li key={c.name_en || c.name_ru}><span className="font-medium">{c.name_ru}</span> <span className="text-gray-500">— {c.role_ru}</span></li>)}
+              </ul>
+            </div>
+          )}
+          <p className="flex items-center gap-1.5 text-xs text-gray-500">
+            <SparklesIcon className="h-3.5 w-3.5" /> Пересказ ИИ ({season.model}) по описаниям серий Википедии, Fandom, MyAnimeList — возможны неточности
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Overview({ text, en, ai }: { text: string; en: boolean; ai?: boolean }) {
   const [full, setFull] = useState(false);
   return (
     <p onClick={() => setFull((v) => !v)} className={cx("mt-1 cursor-pointer whitespace-pre-line text-sm text-gray-400", !full && "line-clamp-2")}>
+      {ai && <SparklesIcon className="mr-1.5 inline h-3.5 w-3.5 align-[-2px] text-gray-500" />}
       {en && <span className="mr-1.5 rounded bg-gray-700 px-1 py-px align-middle text-[10px] font-medium text-gray-300">EN</span>}
       {text}
     </p>

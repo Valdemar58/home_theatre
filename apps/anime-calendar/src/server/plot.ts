@@ -13,6 +13,7 @@ import { hashOf, recordOutput } from "./knowledge";
 import { TIER } from "@/lib/llm-tier";
 import type { JsonSchema } from "@/lib/json-lite";
 import { withShikimori } from "./lists";
+import { seasonForPage, seasonPlot } from "./plot-deep";
 import { ruDescription } from "./shikimori";
 
 // Сюжет тайтла: серии (TMDB через Seerr — по-русски, иначе по-английски; запасной источник — Kitsu),
@@ -325,7 +326,9 @@ export function ensureRecap(d: AnilistDetails): Promise<PlotInfo["recap"]> {
   const run = (async () => {
     const chain = await prequelChain(d);
     if (!chain.length) return null;
-    const sources = chain.map((p) => p.id).join(",");
+    // Готовый пересказ сезона (plot_deep) — вход лучше анонсов; появился или дописался — пересказ «раньше» составляется заново
+    const deep = new Map(chain.map((p) => [p.id, seasonPlot(p.id)] as const));
+    const sources = chain.map((p) => { const x = deep.get(p.id); return x?.state ? `${p.id}@${x.state.upTo}` : String(p.id); }).join(",");
     const ready = readRecap(d.id, sources);
     if (ready) return ready;
     if (!(await taskAvailable("recap"))) throw new Error("ИИ недоступен: нет ни ключа внешнего API, ни локальной модели");
@@ -339,6 +342,17 @@ export function ensureRecap(d: AnilistDetails): Promise<PlotInfo["recap"]> {
       const season = [eps.overview?.ru, eps.overview?.en].find((x) => x && !isStubDescription(x)) ?? "";
       // Подробные пересказы корпуса — длиннее анонсов: на серию даём долю бюджета части, но не меньше прежних 260 символов
       const room = Math.max(600, budget - Math.min(desc.length, 700) - Math.min(season.length, 700));
+      const sp = deep.get(p.id);
+      if (sp?.state) {
+        const s = sp.state;
+        const text = [
+          `Часть ${i + 1}: «${titleOf(p.title)}» (${p.format ?? "?"}, ${p.seasonYear ?? "?"}, серий: ${p.episodes ?? "?"})`,
+          `Пересказ (серии 1–${s.upTo}): ${s.retelling_ru}`,
+          `На конец серии ${s.upTo}: ${s.ending_state_ru}`,
+          s.characters.length ? `Персонажи: ${s.characters.slice(0, 15).map((c) => `${c.name_ru} — ${c.role_ru}`).join("; ")}` : "",
+        ].filter(Boolean).join("\n");
+        return { text: text.slice(0, Math.max(budget, 3000)), thin: false };
+      }
       const episodes = withCorpusText(p.id, eps.episodes);
       const digest = episodeDigest(episodes, room, Math.max(260, Math.floor(room / Math.max(1, episodes.filter((e) => e.overview).length))));
       const text = [
@@ -410,6 +424,6 @@ export async function plotOf(d: AnilistDetails): Promise<PlotInfo> {
   const hasPrequels = d.relations.some((r) => r.relationType === "PREQUEL");
   return {
     episodes: withDetails(d.id, eps.episodes), source: eps.source, stub, synopsis: synopsis?.text ?? null, synopsisBy: synopsis?.by ?? null,
-    pending, hasPrequels, recap: hasPrequels ? readRecap(d.id) : null,
+    pending, hasPrequels, recap: hasPrequels ? readRecap(d.id) : null, season: seasonForPage(d.id),
   };
 }

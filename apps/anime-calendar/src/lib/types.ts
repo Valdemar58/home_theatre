@@ -1,4 +1,5 @@
 // Общие типы для сервера и клиента.
+import type { DeepState } from "./plot-deep";
 
 export type FuzzyDate = { year: number | null; month: number | null; day: number | null };
 
@@ -138,6 +139,8 @@ export type PlotInfo = {
   hasPrequels: boolean;
   /** thin — о последней из прошлых частей известна только завязка (нет описаний серий) */
   recap: { text: string; points: string[]; prequels: { id: number; title: string }[]; thin: boolean } | null;
+  /** Пересказ сезона ИИ по порциям серий (слепо по порядку): что показать — решает курсор зрителя (stateAt) */
+  season: { states: DeepState[]; total: number; model: string | null } | null;
 };
 
 export type SeerrStatus = {
