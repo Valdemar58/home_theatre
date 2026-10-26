@@ -146,7 +146,7 @@ services:
     networks:
       default:
         # постоянный адрес — для правила «мимо VPN» в VPN-клиенте: через VPN поток ~1,3 МБ/с и без входящих пиров
-        ipv4_address: 172.25.0.250
+        ipv4_address: ${DOCKER_NET:-172.25}.0.250
     volumes:
       - ${CONFIG_ROOT}/torrserver:/opt/ts/config
       # Кэш раздач на диске: серию можно «подготовить» целиком заранее (в памяти — только 256 МБ)
@@ -303,7 +303,7 @@ services:
     networks:
       default:
         # постоянный адрес — для правила «мимо VPN» в VPN-клиенте
-        ipv4_address: 172.25.0.251
+        ipv4_address: ${DOCKER_NET:-172.25}.0.251
     healthcheck:
       test: ["CMD", "curl", "-fs", "-o", "/dev/null", "http://localhost:8080/"]
       interval: 30s
@@ -321,4 +321,4 @@ networks:
     # выпускает их трафик мимо VPN (правила менять вместе с адресами)
     ipam:
       config:
-        - subnet: 172.25.0.0/16
+        - subnet: ${DOCKER_NET:-172.25}.0.0/16

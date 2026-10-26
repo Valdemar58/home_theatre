@@ -104,7 +104,7 @@ Docker: `NODE_OPTIONS="--dns-result-order=ipv4first --no-network-family-autosele
 - Проверка маршрута: clash API sing-box `http://127.0.0.1:10814/connections` (процесс, сработавшее правило, выход); для xray — куда `xray.exe` открывает TCP (`Get-NetTCPConnection -OwningProcess`): на IP сайта = `direct`. Мимо VPN с хоста — `curl.exe --interface <IP Wi-Fi>`. Пробный контейнер — `curlimages/curl`.
 - Доступность напрямую (проверено 2026-10-26): Docker Hub, RuTracker, TMDB — обрыв TLS, AniList — 11 с вместо 1 с; всё это только через VPN (не добавлять в обход). Напрямую работают ghcr.io, lscr.io, Ollama, Shikimori. AniLib/AnimeGo — геоблок, только мимо VPN; AnimeGo недоступен вообще.
 - Почему торренты мимо VPN: через VPN ~1,3 МБ/с (серия стрима требует ~1 МБ/с — остановки), напрямую ~31 МБ/с.
-- Адреса торрент-контейнеров закреплены (torrserver `172.25.0.250`, qbittorrent `.251`, подсеть `172.25.0.0/16`) — для правил по адресу источника на Linux. Смена подсети/адресов требует `docker compose down && up -d`.
+- Адреса торрент-контейнеров закреплены (torrserver `<DOCKER_NET>.0.250`, qbittorrent `.251`, подсеть `<DOCKER_NET>.0.0/16`; `DOCKER_NET` по умолчанию `172.25`, на Windows `172.30` — 172.25 занят `docker_gwbridge`) — для правил по адресу источника на Linux. Смена подсети/адресов требует `docker compose down && up -d`.
 - nekoray (Linux): правила под проект не настраивались.
 - Lib-API (`api.cdnlibs.org`) требует браузерные `Referer`/`Origin` (иначе 403), `Site-Id: 5` — AniLib. AniList отклоняет стандартный User-Agent urllib.
 - zsh: не называть переменную `path` (связана с `PATH`).

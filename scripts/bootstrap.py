@@ -591,19 +591,49 @@ def step_torrserver() -> None:
 
 # ---------------------------------------------------------------- Ollama
 
+# Модели с HuggingFace: CDN HF доступен напрямую
+# (~30 МБ/с), а файлы реестра Ollama (Cloudflare R2) — только через VPN. Скачанное копируется
+# под именем из .env, поэтому код и LLM_MODEL/EMBED_MODEL не меняются.
+# Переопределить: LLM_MODEL_SOURCE / EMBED_MODEL_SOURCE (пусто = реестр Ollama).
+MODEL_SOURCES = {
+    "qwen3.5:9b": "hf.co/unsloth/Qwen3.5-9B-GGUF:Q4_K_M",
+    # Q8_0 вместо F16 библиотеки Ollama: вдвое меньше, векторы почти те же (косинус ~0.999).
+    # Тег — только стандартное имя кванта (FP16 HF не принимает)
+    "bge-m3": "hf.co/gpustack/bge-m3-GGUF:Q8_0",
+}
+
+
+def ollama_call(path: str, body: dict, method: str = "POST", timeout: int = 3600) -> dict:
+    req = urllib.request.Request(f"http://{HOST}:11434{path}", data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"}, method=method)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode() or "{}")
+
+
 def step_ollama() -> None:
     """Скачать модели для рекомендаций (несколько гигабайт, один раз)."""
     wait_for("ollama", 11434, "/api/tags")
     have = {m["name"] for m in Api(11434).get("/api/tags")["models"]}
-    for model in (ENV.get("LLM_MODEL") or "qwen3.5:9b", ENV.get("EMBED_MODEL") or "bge-m3"):
+    models = ((ENV.get("LLM_MODEL") or "qwen3.5:9b", "LLM_MODEL_SOURCE"),
+              (ENV.get("EMBED_MODEL") or "bge-m3", "EMBED_MODEL_SOURCE"))
+    for model, source_key in models:
         if model in have or f"{model}:latest" in have:
             log(f"= {model} уже скачана")
             continue
-        log(f"… скачиваю {model} (может занять несколько минут)")
-        req = urllib.request.Request(f"http://{HOST}:11434/api/pull", data=json.dumps({"model": model, "stream": False}).encode(),
-                                     headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=3600) as resp:
-            status = json.loads(resp.read().decode() or "{}").get("status")
+        source = ENV.get(source_key, MODEL_SOURCES.get(model, ""))
+        if source:
+            log(f"… скачиваю {model} с {source} (может занять несколько минут)")
+            try:
+                ollama_call("/api/pull", {"model": source, "stream": False})
+                ollama_call("/api/copy", {"source": source, "destination": model})
+                # Файлы общие с копией — удаляется только лишнее имя
+                ollama_call("/api/delete", {"model": source}, method="DELETE")
+                log(f"+ {model}: скачана с {source}")
+                continue
+            except (urllib.error.URLError, TimeoutError) as e:
+                log(f"! {source}: {e} — пробую реестр Ollama")
+        log(f"… скачиваю {model} из реестра Ollama (может занять несколько минут)")
+        status = ollama_call("/api/pull", {"model": model, "stream": False}).get("status")
         log(f"+ {model}: {status}")
 
 
