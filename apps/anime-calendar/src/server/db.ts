@@ -408,6 +408,17 @@ function migrate(db: Db) {
   )`);
   // Филлер (не по первоисточнику) — по данным MAL: пересказу сезона он не важен
   if (!columns("episode_meta").has("filler")) db.exec("ALTER TABLE episode_meta ADD COLUMN filler INTEGER");
+  // Японские субтитры для слабослышащих (Jimaku): файл серии лежит только локально (data/plot/<id>/sdh), здесь — откуда и какой
+  db.exec(`CREATE TABLE IF NOT EXISTS sdh_file (
+    anilist_id INTEGER NOT NULL,
+    ep INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    path TEXT NOT NULL,
+    hash TEXT NOT NULL,
+    fetched_at INTEGER NOT NULL,
+    PRIMARY KEY (anilist_id, ep)
+  )`);
   // Уведомления: вкладка, тайтл (обложка), автор (аватар), подпись и действия
   const noticeCols = columns("notifications");
   if (!noticeCols.has("grp")) {

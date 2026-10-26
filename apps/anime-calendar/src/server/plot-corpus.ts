@@ -37,7 +37,8 @@ async function getJson<T>(url: string, limiter: RateLimiter, headers: Record<str
 // ---------------------------------------------------------------- прогресс
 
 
-const progress = new Map<number, CorpusProgress>();
+// Одна карта на процесс: у маршрутов Next.js бывают свои копии модуля, а задачу выполняет любая из них
+const progress = ((globalThis as unknown as { __corpusProgress?: Map<number, CorpusProgress> }).__corpusProgress ??= new Map());
 export const corpusProgress = (anilistId: number) => progress.get(anilistId) ?? null;
 
 type Run = {

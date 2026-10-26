@@ -68,7 +68,14 @@ export function registerHandler(kind: string, h: Handler) {
   HANDLERS[kind] = h;
 }
 
-const HANDLERS: Record<string, Handler> = {
+// Состояние очереди — одно на процесс: Next.js собирает маршруты отдельными пакетами, и у каждого может быть
+// своя копия этого модуля. С копией на модуль новый маршрут «восстанавливался» и отменял чужие идущие задачи
+const g = globalThis as unknown as {
+  __tasks?: { handlers: Record<string, Handler>; queues: Map<string, number[]>; controllers: Map<number, AbortController>; running: Set<string>; recovered: boolean };
+};
+const state = (g.__tasks ??= { handlers: {}, queues: new Map(), controllers: new Map(), running: new Set(), recovered: false });
+
+const HANDLERS: Record<string, Handler> = Object.assign(state.handlers, {
   voices: {
     noun: "Озвучки",
     anilistId: async (key) => Number(key) || null,
@@ -92,15 +99,12 @@ const HANDLERS: Record<string, Handler> = {
     },
     href: (key) => `/anime/${key}?voices=1`,
   },
-};
+} satisfies Record<string, Handler>);
 
 // ---------------------------------------------------------------- очередь
 
-const queues = new Map<string, number[]>();
-const queueOf = (kind: string) => queues.get(kind) ?? (queues.set(kind, []), queues.get(kind)!);
-const controllers = new Map<number, AbortController>();
-const running = new Set<string>();
-let recovered = false;
+const { queues, controllers, running } = state;
+const queueOf = (kind: string): number[] => queues.get(kind) ?? (queues.set(kind, []), queues.get(kind)!);
 
 const getRow = (id: number) => db.prepare<[number], Row>("SELECT * FROM tasks WHERE id = ?").get(id);
 const activeRow = (kind: string, key: string) => db.prepare<[string, string], Row>(
@@ -115,8 +119,8 @@ const info = (r: Row): TaskInfo => ({
 
 /** Задачи прошлого запуска процесса не доделаются — отмечаем прерванными. */
 function recover() {
-  if (recovered) return;
-  recovered = true;
+  if (state.recovered) return;
+  state.recovered = true;
   db.prepare("UPDATE tasks SET status = 'cancelled', error = 'прервано перезапуском', finished_at = ? WHERE status IN ('queued', 'running')").run(now());
   // История — неделя
   db.prepare("DELETE FROM tasks WHERE created_at < ?").run(now() - 7 * 86400);

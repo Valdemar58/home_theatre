@@ -1,7 +1,7 @@
 // Задачи LLM и настройки маршрутизации — общие для сервера и карточки «ИИ» в настройках.
 import type { Price } from "./llm-pricing";
 
-export const LLM_TASKS = ["analysis", "synopsis", "recap", "portrait", "rerank", "tags", "cluster", "plot_deep", "translate"] as const;
+export const LLM_TASKS = ["analysis", "synopsis", "recap", "portrait", "rerank", "tags", "cluster", "plot_deep", "translate", "sdh"] as const;
 export type LlmTask = (typeof LLM_TASKS)[number];
 
 /** Куда идёт задача: локальная модель, дешёвая или умная внешняя. */
@@ -18,6 +18,7 @@ export const TASK_LABELS: Record<LlmTask, { title: string; hint: string }> = {
   tags: { title: "Перевод тегов", hint: "редко, только новые теги AniList" },
   cluster: { title: "Названия островов карты", hint: "при пересборке карты" },
   plot_deep: { title: "Пересказ сезона", hint: "после «Собрать сюжет»: слепо по порядку, порциями по 4 серии; пересказ, серии по-русски, персонажи, термины" },
+  sdh: { title: "Конспект серии по субтитрам", hint: "«Глубокий разбор»: японские субтитры для слабослышащих → конспект по сценам; ~10 тыс. символов на серию" },
   translate: { title: "Перевод пересказов серий", hint: "по кнопке у серии, один раз на текст; Fandom — до 17 тыс. символов на серию" },
 };
 

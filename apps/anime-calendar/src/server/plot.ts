@@ -295,19 +295,40 @@ async function prequelChain(d: AnilistDetails): Promise<AnilistDetails[]> {
   return chain;
 }
 
+// Сначала план (сюжетные линии), потом текст по нему: без плана модель пересказывает серию за серией
+// и склеивает несвязанные события в одно предложение, чтобы уложиться в объём
 const RECAP_SCHEMA: JsonSchema = {
   type: "object",
   properties: {
-    recap_ru: { type: "string", description: "8–14 предложений: что произошло в предыдущих частях по порядку и на чём всё остановилось" },
+    threads: {
+      type: "array", minItems: 1, maxItems: 5, description: "план: 2–5 главных сюжетных линий прошлых частей",
+      items: {
+        type: "object",
+        properties: {
+          name_ru: { type: "string" },
+          goal_ru: { type: "string", description: "чего добиваются герои этой линии и почему" },
+          turns_ru: { type: "string", description: "2–4 главных поворота — с причинами и последствиями" },
+          state_ru: { type: "string", description: "к чему линия пришла к концу последней части" },
+        },
+        required: ["name_ru", "goal_ru", "turns_ru", "state_ru"],
+      },
+    },
+    recap_ru: { type: "string", description: "3–5 абзацев (через пустую строку) по линиям плана, 180–350 слов" },
     points: { type: "array", items: { type: "string" }, description: "3–6 коротких пунктов: что важно помнить к началу новой части" },
   },
-  required: ["recap_ru", "points"],
+  required: ["threads", "recap_ru", "points"],
 };
 
-const RECAP_SYSTEM = `Ты пересказываешь зрителю предыдущие части аниме перед просмотром новой — по-русски, связно и по порядку.
+const RECAP_SYSTEM = `Ты напоминаешь зрителю, который смотрел предыдущие части давно, что в них было — перед просмотром новой. По-русски, живым связным рассказом.
+Сначала составь план (threads): главные сюжетные линии, чего в них добиваются герои, главные повороты, к чему пришли. Потом напиши текст по плану.
+Отбор: событие попадает в текст, только если оно меняет положение героев дальше, объясняет их мотивы или нужно, чтобы понять новую часть. Разовые бои, проходные противники, побочные эпизоды и механика мира — пропускай, даже если они есть в данных.
+Связность: одно предложение — одна мысль. Соединяй события в одном предложении, только если одно вытекает из другого, и называй связь (потому что, чтобы, из-за этого, в ответ). Не нанизывай несвязанное через «и», «а также», запятые.
+Точность: кто кого просит, кто кому предлагает, кто кого предал — сверяй с данными; не меняй направление действий и не приписывай причин, которых в данных нет.
+Термины мира — только если без них не понять; при первом упоминании поясни в двух-трёх словах.
 Опирайся только на данные. О новой части ничего не говори: её событий в данных нет — не придумывай.
-Главное — чем закончилась последняя часть и в каком положении герои. Имена — в принятой русской транскрипции.`;
+Последний абзац — чем закончилась последняя часть и в каком положении герои. Имена — в принятой русской транскрипции.`;
 
+const RECAP_V = 2;
 const recapRuns = new Map<number, Promise<PlotInfo["recap"]>>();
 
 type RecapData = { points: string[]; prequels: { id: number; title: string }[]; thin?: boolean };
@@ -328,7 +349,8 @@ export function ensureRecap(d: AnilistDetails): Promise<PlotInfo["recap"]> {
     if (!chain.length) return null;
     // Готовый пересказ сезона (plot_deep) — вход лучше анонсов; появился или дописался — пересказ «раньше» составляется заново
     const deep = new Map(chain.map((p) => [p.id, seasonPlot(p.id)] as const));
-    const sources = chain.map((p) => { const x = deep.get(p.id); return x?.state ? `${p.id}@${x.state.upTo}` : String(p.id); }).join(",");
+    // Версия пересказа — в наборе источников: новый промпт составляет пересказ заново (старый остаётся в журнале)
+    const sources = `r${RECAP_V}:` + chain.map((p) => { const x = deep.get(p.id); return x?.state ? `${p.id}@${x.state.upTo}` : String(p.id); }).join(",");
     const ready = readRecap(d.id, sources);
     if (ready) return ready;
     if (!(await taskAvailable("recap"))) throw new Error("ИИ недоступен: нет ни ключа внешнего API, ни локальной модели");
@@ -348,6 +370,7 @@ export function ensureRecap(d: AnilistDetails): Promise<PlotInfo["recap"]> {
         const text = [
           `Часть ${i + 1}: «${titleOf(p.title)}» (${p.format ?? "?"}, ${p.seasonYear ?? "?"}, серий: ${p.episodes ?? "?"})`,
           `Пересказ (серии 1–${s.upTo}): ${s.retelling_ru}`,
+          s.arcs.length ? `Арки:\n${s.arcs.map((a) => `- ${a.name_ru} (${a.eps}): ${a.summary_ru}`).join("\n")}` : "",
           `На конец серии ${s.upTo}: ${s.ending_state_ru}`,
           s.characters.length ? `Персонажи: ${s.characters.slice(0, 15).map((c) => `${c.name_ru} — ${c.role_ru}`).join("; ")}` : "",
         ].filter(Boolean).join("\n");
@@ -368,11 +391,11 @@ export function ensureRecap(d: AnilistDetails): Promise<PlotInfo["recap"]> {
     const prompt = `Новая часть: «${titleOf(d.title)}». Перескажи всё, что было до неё.` +
       (thin ? " О последней из прошлых частей известна только завязка — так и скажи в конце, чем она кончилась, не додумывай." : "") +
       `\n\n${parts.map((x) => x.text).join("\n\n")}`;
-    const res = await runTask<{ recap_ru: string; points: string[] }>("recap", { schema: RECAP_SCHEMA, system: RECAP_SYSTEM, user: prompt, maxTokens: 3000 });
+    const res = await runTask<{ threads: unknown[]; recap_ru: string; points: string[] }>("recap", { schema: RECAP_SCHEMA, system: RECAP_SYSTEM, user: prompt, maxTokens: 4000 });
     const r = res.value;
     const prequels = chain.map((p) => ({ id: p.id, title: titleOf(p.title) }));
     const data: RecapData = { points: r.points.map((x) => x.trim()).filter(Boolean).slice(0, 6), prequels, thin };
-    const src = recordOutput("recap", `anime:${d.id}`, res, { recap_ru: r.recap_ru.trim(), ...data, sources }, { schemaV: 1, promptV: 1, inputHash: hashOf(sources) });
+    const src = recordOutput("recap", `anime:${d.id}`, res, { recap_ru: r.recap_ru.trim(), threads: r.threads, ...data, sources }, { schemaV: 1, promptV: RECAP_V, inputHash: hashOf(sources) });
     putPlot(d.id, "recap", r.recap_ru.trim(), data, sources, { src, tier: res.tier });
     return readRecap(d.id);
   })().finally(() => recapRuns.delete(d.id));

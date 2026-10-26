@@ -194,11 +194,12 @@ export function Episodes({ media, entry, now }: { media: AnimeDetails; entry?: L
       </div>
       {plot?.season && <SeasonRetelling season={plot.season} seen={spoilers ? Infinity : seen} total={total} />}
       <CorpusBar id={media.id} />
+      <SdhBar id={media.id} />
     </section>
   );
 }
 
-const SOURCE_LABEL: Record<string, string> = { "wiki-en": "Википедия", fandom: "Fandom", mal: "MyAnimeList", danime: "dアニメストア", tmdb: "TMDB" };
+const SOURCE_LABEL: Record<string, string> = { sdh: "Субтитры", "wiki-en": "Википедия", fandom: "Fandom", mal: "MyAnimeList", danime: "dアニメストア", tmdb: "TMDB" };
 const sourceLabel = (s: string) => SOURCE_LABEL[s] ?? s;
 
 /** Подробный пересказ серии из корпуса: по кнопке, вкладки по источникам. */
@@ -367,6 +368,68 @@ function SeasonRetelling({ season, seen, total }: { season: NonNullable<PlotInfo
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+type SdhState = { task: CorpusState["task"]; progress: CorpusState["progress"] };
+
+/**
+ * «Глубокий разбор» (админ): японские субтитры для слабослышащих с Jimaku → конспект каждой серии по сценам →
+ * корпус и пересказ сезона. Файлы субтитров остаются только на сервере.
+ */
+function SdhBar({ id }: { id: number }) {
+  const { data: me } = useMe();
+  const qc = useQueryClient();
+  const admin = Boolean(me?.isAdmin);
+  const { data: st } = useQuery({
+    queryKey: ["sdh", id], queryFn: () => api<SdhState>(`/api/anime/${id}/sdh`), enabled: admin,
+    refetchInterval: (q) => (q.state.data?.task && ["queued", "running"].includes(q.state.data.task.status) ? 2000 : false),
+  });
+  const start = useMutation({
+    mutationFn: () => api<SdhState>(`/api/anime/${id}/sdh`, { method: "POST" }),
+    onSuccess: (s) => qc.setQueryData(["sdh", id], s),
+  });
+  const active = st?.task && ["queued", "running"].includes(st.task.status);
+  const wasActive = useRef(false);
+  useEffect(() => {
+    if (wasActive.current && !active) {
+      void qc.invalidateQueries({ queryKey: ["plot", id] });
+      void qc.invalidateQueries({ queryKey: ["corpus", id] });
+    }
+    wasActive.current = Boolean(active);
+  }, [active, id, qc]);
+  if (!admin || !st) return null;
+  const p = st.progress;
+  const elapsed = p ? (p.updatedAt - p.startedAt) / 1000 : 0;
+  return (
+    <div className="mt-2 rounded-xl bg-gray-800/40 px-4 py-3 text-sm ring-1 ring-gray-700">
+      <div className="flex flex-wrap items-center gap-3">
+        <SparklesIcon className="h-5 w-5 shrink-0 text-gray-400" />
+        <span className="mr-auto text-gray-300">
+          {active ? (st.task!.status === "queued" ? "Глубокий разбор в очереди…" : `Глубокий разбор: ${p?.step ?? "…"}`)
+            : p?.finished ? `Конспектов серий по субтитрам: ${p.found.sdh ?? 0}` : "Глубокий разбор: японские субтитры для слабослышащих → конспект каждой серии"}
+        </span>
+        {!active && (
+          <button onClick={() => start.mutate()} disabled={start.isPending} className="tone-special soft rounded-lg px-3 py-1.5 font-medium">
+            Глубокий разбор
+          </button>
+        )}
+      </div>
+      {active && p && (
+        <div className="mt-2">
+          <div className="h-1.5 overflow-hidden rounded-full bg-gray-700">
+            <div className="tone-special solid h-full transition-all" style={{ width: `${Math.round((p.done / Math.max(1, p.total)) * 100)}%` }} />
+          </div>
+          <p className="mt-1 flex flex-wrap gap-x-3 text-xs text-gray-500">
+            <span>{p.done} из {p.total}</span>
+            <span>прошло {fmtDuration(elapsed)}</span>
+            {p.etaSec !== null && !p.finished && <span>осталось ~{fmtDuration(p.etaSec)}</span>}
+          </p>
+        </div>
+      )}
+      {p && p.errors.length > 0 && <p className="mt-1 flex flex-wrap gap-x-3 text-xs text-negative-300">{p.errors.map((e) => <span key={e}>{e}</span>)}</p>}
+      {st.task?.status === "error" && <p className="mt-1 text-xs text-negative-300">{st.task.error}</p>}
     </div>
   );
 }
