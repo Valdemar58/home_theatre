@@ -419,6 +419,89 @@ function migrate(db: Db) {
     fetched_at INTEGER NOT NULL,
     PRIMARY KEY (anilist_id, ep)
   )`);
+  // Граф сюжета (идея #79, docs/plot-analysis-design.md): сущности, их имена и облики, появления в тайтлах,
+  // отношения со сроком, события с иерархией и связи «почему». У каждой записи — серия раскрытия (revealed_ep):
+  // по ней курсор зрителя прячет то, что он ещё не видел. Пока заполняются только персонажи из AniList
+  db.exec(`CREATE TABLE IF NOT EXISTS plot_entity (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL,
+    anilist_char_id INTEGER UNIQUE,
+    name TEXT NOT NULL,
+    name_ru TEXT,
+    name_ja TEXT,
+    image TEXT,
+    data TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS plot_alias (
+    entity_id INTEGER NOT NULL,
+    alias TEXT NOT NULL,
+    lang TEXT,
+    anilist_id INTEGER,
+    from_ep INTEGER,
+    to_ep INTEGER,
+    revealed_ep INTEGER,
+    source TEXT NOT NULL,
+    PRIMARY KEY (entity_id, alias, anilist_id)
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS plot_appearance (
+    entity_id INTEGER NOT NULL,
+    anilist_id INTEGER NOT NULL,
+    role TEXT,
+    first_ep INTEGER,
+    last_ep INTEGER,
+    source TEXT NOT NULL,
+    PRIMARY KEY (entity_id, anilist_id)
+  )`);
+  db.exec("CREATE INDEX IF NOT EXISTS plot_appearance_title ON plot_appearance (anilist_id)");
+  db.exec(`CREATE TABLE IF NOT EXISTS plot_relation (
+    id INTEGER PRIMARY KEY,
+    a INTEGER NOT NULL,
+    b INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    label TEXT,
+    anilist_id INTEGER NOT NULL,
+    from_ep INTEGER,
+    to_ep INTEGER,
+    revealed_ep INTEGER,
+    context TEXT,
+    source TEXT NOT NULL,
+    evidence TEXT,
+    created_at INTEGER NOT NULL
+  )`);
+  db.exec("CREATE INDEX IF NOT EXISTS plot_relation_a ON plot_relation (a)");
+  db.exec("CREATE INDEX IF NOT EXISTS plot_relation_b ON plot_relation (b)");
+  db.exec(`CREATE TABLE IF NOT EXISTS plot_event (
+    id INTEGER PRIMARY KEY,
+    anilist_id INTEGER NOT NULL,
+    parent_id INTEGER,
+    level TEXT NOT NULL,
+    kind TEXT,
+    title TEXT NOT NULL,
+    summary TEXT,
+    ep_from INTEGER,
+    ep_to INTEGER,
+    revealed_ep INTEGER,
+    source TEXT NOT NULL,
+    data TEXT,
+    created_at INTEGER NOT NULL
+  )`);
+  db.exec("CREATE INDEX IF NOT EXISTS plot_event_title ON plot_event (anilist_id)");
+  db.exec(`CREATE TABLE IF NOT EXISTS plot_event_participant (
+    event_id INTEGER NOT NULL,
+    entity_id INTEGER NOT NULL,
+    role TEXT,
+    PRIMARY KEY (event_id, entity_id)
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS plot_event_link (
+    from_event INTEGER NOT NULL,
+    to_event INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    revealed_ep INTEGER,
+    source TEXT NOT NULL,
+    PRIMARY KEY (from_event, to_event, kind)
+  )`);
   // Уведомления: вкладка, тайтл (обложка), автор (аватар), подпись и действия
   const noticeCols = columns("notifications");
   if (!noticeCols.has("grp")) {

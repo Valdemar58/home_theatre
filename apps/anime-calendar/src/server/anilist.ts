@@ -10,7 +10,7 @@ const ENDPOINT = "https://graphql.anilist.co";
 // дальше троттлер ждёт сброса по заголовкам X-RateLimit-*
 const limiter = new RateLimiter(250);
 
-const MEDIA_FIELDS = `
+export const MEDIA_FIELDS = `
   id idMal format status episodes duration season seasonYear countryOfOrigin source isAdult
   averageScore popularity genres
   title { romaji english native }
@@ -22,7 +22,7 @@ const MEDIA_FIELDS = `
   nextAiringEpisode { episode airingAt }
 `;
 
-type RawMedia = Omit<MediaLite, "title" | "studios" | "malScore"> & {
+export type RawMedia = Omit<MediaLite, "title" | "studios" | "malScore"> & {
   title: { romaji: string | null; english: string | null; native: string | null };
   studios: { nodes: { name: string }[] } | null;
 };

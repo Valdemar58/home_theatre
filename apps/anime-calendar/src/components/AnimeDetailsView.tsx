@@ -19,6 +19,7 @@ import { Impressions } from "./Impressions";
 import { Lightbox } from "./Lightbox";
 import { ListControl } from "./ListControl";
 import { NextEpisode, useNow } from "./NextEpisode";
+import { CharacterStrip } from "./Characters";
 import { Description, Episodes } from "./Plot";
 import { RequestButton } from "./RequestButton";
 import { TogetherBar } from "./TogetherBar";
@@ -165,6 +166,8 @@ export function AnimeDetailsView({ id, openVoices, together, undo, comment }: {
         <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_20rem]">
           <div className="min-w-0 space-y-8">
             <Description media={a} />
+
+            <CharacterStrip media={a} />
 
             <Impressions media={a} />
 

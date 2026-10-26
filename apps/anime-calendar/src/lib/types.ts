@@ -475,3 +475,50 @@ export type CommentItem = {
 
 /** Сохранённый набор фильтров каталога. */
 export type FilterPreset = { id: number; name: string; query: string; isDefault: boolean };
+
+// ---------------------------------------------------------------- персонажи и граф сюжета
+
+export type CharacterRole = "MAIN" | "SUPPORTING" | "BACKGROUND";
+
+/** Персонаж тайтла: AniList + русское имя Shikimori */
+export type CharacterLite = {
+  id: number;
+  name: string;
+  nameRu: string | null;
+  native: string | null;
+  image: string | null;
+  role: CharacterRole;
+  /** Сэйю (японский голос) */
+  voice: string | null;
+};
+
+/** Отношение персонажа в тайтле (граф сюжета; со сроком действия по сериям) */
+export type PlotRelationInfo = {
+  otherId: number;
+  otherAnilistId: number | null;
+  otherName: string;
+  otherImage: string | null;
+  kind: string;
+  label: string | null;
+  anilistId: number;
+  fromEp: number | null;
+  toEp: number | null;
+};
+
+export type PlotEventInfo = { id: number; anilistId: number; title: string; summary: string | null; kind: string | null; epFrom: number | null; epTo: number | null };
+
+export type CharacterDetails = {
+  id: number;
+  name: string;
+  nameRu: string | null;
+  native: string | null;
+  alternative: string[];
+  image: string | null;
+  /** Описание AniList; спойлеры размечены ~!…!~ */
+  description: string | null;
+  gender: string | null;
+  age: string | null;
+  appearances: { media: MediaLite; role: CharacterRole }[];
+  relations: PlotRelationInfo[];
+  events: PlotEventInfo[];
+};

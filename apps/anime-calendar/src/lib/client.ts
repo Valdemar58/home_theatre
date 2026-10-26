@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import type { Me } from "@/app/api/me/route";
-import type { AnimeDetails, AnimeImages, MatchInfo, PlotInfo, SimilarItem, CalendarResponse, ListEntryWithMedia, ListStatus, MediaLite, SeerrStatus, Notice, NoticeCounts, FriendOpinion, FriendPick, Person, SharedListDetail, SharedListSummary, TogetherState, Profile, TaskInfo, VoicesState } from "./types";
+import type { AnimeDetails, CharacterDetails, CharacterLite, AnimeImages, MatchInfo, PlotInfo, SimilarItem, CalendarResponse, ListEntryWithMedia, ListStatus, MediaLite, SeerrStatus, Notice, NoticeCounts, FriendOpinion, FriendPick, Person, SharedListDetail, SharedListSummary, TogetherState, Profile, TaskInfo, VoicesState } from "./types";
 import { applyProgress } from "./entry-rules";
 
 export async function api<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
@@ -43,6 +43,12 @@ export const usePlot = (id: number) =>
     queryKey: ["plot", id], queryFn: () => api<PlotInfo>(`/api/anime/${id}/plot`), staleTime: 10 * 60_000, enabled: id > 0,
     refetchInterval: (q) => (q.state.data?.pending ? 5000 : false),
   });
+
+export const useTitleCharacters = (id: number) =>
+  useQuery({ queryKey: ["characters", id], queryFn: () => api<CharacterLite[]>(`/api/anime/${id}/characters`), staleTime: 3600_000, enabled: id > 0 });
+
+export const useCharacter = (id: number) =>
+  useQuery({ queryKey: ["character", id], queryFn: () => api<CharacterDetails>(`/api/characters/${id}`), staleTime: 600_000, enabled: id > 0 });
 
 export const useSimilar = (id: number) =>
   useQuery({ queryKey: ["similar", id], queryFn: () => api<SimilarItem[]>(`/api/anime/${id}/similar`), staleTime: 30 * 60_000 });
