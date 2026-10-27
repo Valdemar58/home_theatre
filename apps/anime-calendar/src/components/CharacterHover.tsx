@@ -53,7 +53,7 @@ function MemberCard({ m, onNavigate, spoiler }: { m: CastMember; onNavigate: () 
     <div className="space-y-3">
       <div className="flex gap-3">
         <Link href={m.href} onClick={onNavigate} className="relative aspect-2/3 w-24 shrink-0 overflow-hidden rounded-lg bg-gray-800 ring-1 ring-gray-700">
-          {m.image ? <Img src={m.image} size="thumb" lazy={false} className="absolute inset-0 h-full w-full object-cover" />
+          {m.image ? <Img src={m.image} size="thumb" lazy={false} className="absolute inset-0 h-full w-full object-cover object-top" />
             : <span className="flex h-full items-center justify-center text-gray-600"><UserIcon className="h-8 w-8" /></span>}
         </Link>
         <div className="min-w-0 flex-1 space-y-1">

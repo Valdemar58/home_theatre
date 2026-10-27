@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, useMe, usePlot, useTitleCast } from "@/lib/client";
 import { stateAt } from "@/lib/plot-deep";
 import type { AnimeDetails, CorpusState, EpisodeInfo, EpisodeTexts, ListEntry, PlotInfo } from "@/lib/types";
+import { CORPUS_SOURCE_LABELS } from "@/lib/labels";
 import { formatDate, formatTime, relative } from "@/lib/time";
 import { Img } from "./Img";
 import { NamedText, useNames } from "./NamedText";
@@ -211,8 +212,7 @@ export function Episodes({ media, entry, now }: { media: AnimeDetails; entry?: L
   );
 }
 
-const SOURCE_LABEL: Record<string, string> = { sdh: "Субтитры", "wiki-en": "Википедия", fandom: "Fandom", mal: "MyAnimeList", danime: "dアニメストア", tmdb: "TMDB" };
-const sourceLabel = (s: string) => SOURCE_LABEL[s] ?? s;
+const sourceLabel = (s: string) => CORPUS_SOURCE_LABELS[s] ?? s;
 
 /** Подробный пересказ серии из корпуса: по кнопке, вкладки по источникам. */
 function EpisodeDetail({ id, ep, detail }: { id: number; ep: number; detail: NonNullable<EpisodeInfo["detail"]> }) {

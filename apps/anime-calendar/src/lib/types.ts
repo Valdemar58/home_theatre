@@ -558,7 +558,39 @@ export type TitleCast = {
   groups: { id: number; name: string; count: number }[];
   /** Сколько персонажей появится после курсора */
   hidden: number;
+  /** Для блока «Сюжет»: связей, событий и арок на курсор */
+  stats: { relations: number; events: number; arcs: number };
 };
+
+/** Событие сюжета на курсор зрителя: участники, причины и последствия, которые он уже видел */
+export type EventLinkInfo = { kind: string; note: string | null; key: string; anilistId: number; title: string; ep: number | null };
+export type EventBrief = {
+  key: string;
+  anilistId: number;
+  title: string;
+  summary: string | null;
+  kind: string | null;
+  epFrom: number | null;
+  epTo: number | null;
+  arc: string | null;
+  major: boolean;
+  participants: { id: number; name: string; href: string; image: string | null; role: string | null }[];
+  /** Что к нему привело (причина, повод, условие, мотив) */
+  causes: EventLinkInfo[];
+  /** К чему привело — только раскрытое к курсору */
+  consequences: EventLinkInfo[];
+};
+export type EventDetails = EventBrief & {
+  course: string | null;
+  motives: { id: number; name: string; href: string; text: string }[];
+  /** Последствий после курсора */
+  hiddenConsequences: number;
+  sources: string[];
+  /** Событие после курсора зрителя — не показываем */
+  hiddenUntil: number | null;
+  cursor: PlotCursor;
+};
+export type TitleEvents = { cursor: PlotCursor; arcs: { name: string | null; events: EventBrief[] }[]; hidden: number };
 
 /** Имя в тексте → персонаж (spoiler — зритель его ещё не видел) */
 export type NameRef = {

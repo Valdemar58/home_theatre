@@ -92,3 +92,6 @@ export const IMAGE_KIND_LABELS: Record<GalleryImage["kind"], string> = {
   screenshot: "Кадр",
   portrait: "портрет",
 };
+
+/** Источники корпуса текстов о сериях */
+export const CORPUS_SOURCE_LABELS: Record<string, string> = { sdh: "Субтитры", "wiki-en": "Википедия", fandom: "Fandom", mal: "MyAnimeList", danime: "dアニメストア", tmdb: "TMDB" };

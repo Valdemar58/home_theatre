@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import type { Me } from "@/app/api/me/route";
-import type { AnimeDetails, CharacterDetails, NameRef, PlotViewMode, TitleCast, AnimeImages, MatchInfo, PlotInfo, SimilarItem, CalendarResponse, ListEntryWithMedia, ListStatus, MediaLite, SeerrStatus, Notice, NoticeCounts, FriendOpinion, FriendPick, Person, SharedListDetail, SharedListSummary, TogetherState, Profile, TaskInfo, VoicesState } from "./types";
+import type { AnimeDetails, CharacterDetails, EventDetails, NameRef, PlotViewMode, TitleCast, TitleEvents, AnimeImages, MatchInfo, PlotInfo, SimilarItem, CalendarResponse, ListEntryWithMedia, ListStatus, MediaLite, SeerrStatus, Notice, NoticeCounts, FriendOpinion, FriendPick, Person, SharedListDetail, SharedListSummary, TogetherState, Profile, TaskInfo, VoicesState } from "./types";
 import { applyProgress } from "./entry-rules";
 
 export async function api<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
@@ -61,9 +61,16 @@ export function usePlotView(id: number) {
       qc.setQueryData(["cast", id, "cursor"], cast);
       void qc.invalidateQueries({ queryKey: ["names", id] });
       void qc.invalidateQueries({ queryKey: ["character"] });
+      void qc.invalidateQueries({ queryKey: ["events", id] });
     },
   });
 }
+
+/** События тайтла по аркам и страница события — на «Сюжет на серию» */
+export const useTitleEvents = (id: number) =>
+  useQuery({ queryKey: ["events", id], queryFn: () => api<TitleEvents>(`/api/anime/${id}/events`), staleTime: 600_000, enabled: id > 0 });
+export const useEvent = (id: number, key: string) =>
+  useQuery({ queryKey: ["events", id, key], queryFn: () => api<EventDetails>(`/api/anime/${id}/events/${encodeURIComponent(key)}`), staleTime: 600_000, enabled: id > 0 && Boolean(key) });
 
 /** Имена для подсветки в тексте о сериях до upTo */
 export const useNameRefs = (id: number, upTo: number | null) =>

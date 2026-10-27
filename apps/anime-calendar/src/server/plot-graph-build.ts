@@ -24,7 +24,7 @@ import { registerHandler } from "./tasks";
 // materializeGraph переписывает строки тайтла с source = 'graph' целиком.
 
 const PROMPT_V = 3;
-const INPUT_V = 2;
+const INPUT_V = 3;
 const SOURCE = "graph";
 
 const subject = (id: number, upTo: number) => `graph:${id}:${upTo}`;

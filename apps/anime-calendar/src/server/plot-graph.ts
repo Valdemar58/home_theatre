@@ -2,12 +2,14 @@ import "server-only";
 import { ruNameOf } from "@/lib/characters";
 import { aliasLook, identityGroups } from "@/lib/plot-graph";
 import type {
-  CastMember, CharacterDetails, CharacterLite, CharacterRole, MediaLite, NameRef, PlotCursor, PlotEventInfo, PlotRelationInfo, PlotViewMode, TitleCast,
+  CastMember, CharacterDetails, CharacterLite, CharacterRole, EventBrief, EventDetails, EventLinkInfo, MediaLite, NameRef, PlotCursor, PlotEventInfo,
+  PlotRelationInfo, PlotViewMode, TitleCast, TitleEvents,
 } from "@/lib/types";
 import { getDetails, gql, MEDIA_FIELDS, toLite, type RawMedia } from "./anilist";
 import { cached } from "./cache";
 import { characterGlossary } from "./characters";
 import { db, now } from "./db";
+import { ApiError } from "./route";
 import { withShikimori } from "./lists";
 
 // Граф сюжета — персонажи (идея #79). Состав тайтла и персонажи AniList с русскими именами Shikimori; разбор серий
@@ -338,7 +340,7 @@ export async function titleCast(userId: number, anilistId: number, at?: number):
       id: 0, entities: [], href: `/characters/${c.id}`, anilistCharId: c.id, name: c.nameRu ?? c.name, native: c.native, role: c.role, image: c.image, lookLabel: null,
       description: null, goal: null, groups: [], aka: [], firstEp: null, voice: c.voice,
     }));
-    return { cursor: cursorInfo, built: false, upTo: 0, groupWord: null, powerSystem: false, members, groups: [], hidden: 0 };
+    return { cursor: cursorInfo, built: false, upTo: 0, groupWord: null, powerSystem: false, members, groups: [], hidden: 0, stats: { relations: 0, events: 0, arcs: 0 } };
   }
   type App = { entity_id: number; role: CharacterRole | null; first_ep: number | null; kind: string; anilist_char_id: number | null; name: string; name_ru: string | null; name_ja: string | null };
   const apps = db.prepare<[number], App>(`
@@ -372,9 +374,12 @@ export async function titleCast(userId: number, anilistId: number, at?: number):
   const groupCount = new Map<number, { name: string; count: number }>();
   for (const m of members) for (const g of m.groups) groupCount.set(g.id, { name: g.name, count: (groupCount.get(g.id)?.count ?? 0) + 1 });
   const hidden = apps.filter((a) => a.kind === "character" && !visible.includes(a)).length;
+  const events = visibleEvents(anilistId, k);
+  const relations = db.prepare<[number, number], { n: number }>("SELECT COUNT(*) AS n FROM plot_relation WHERE anilist_id = ? AND COALESCE(revealed_ep, from_ep, 0) <= ?").get(anilistId, k)!.n;
   return {
     cursor: cursorInfo, built: true, upTo: title.up_to, groupWord: title.group_word, powerSystem: Boolean(title.power_system),
     members, groups: [...groupCount].map(([id, g]) => ({ id, ...g })).sort((a, b) => b.count - a.count), hidden,
+    stats: { relations, events: events.length, arcs: new Set(events.map((e) => e.data.arc).filter(Boolean)).size },
   };
 }
 
@@ -409,4 +414,113 @@ export async function nameRefs(userId: number, anilistId: number, upTo: number):
     out.push({ alias: r.alias, entity: r.entity_id, href: hrefOf({ id: r.entity_id, anilist_char_id: r.anilist_char_id }), spoiler: r.anilist_id === anilistId ? ep > own : !seen(cursor, r.anilist_id, ep), anilistId: r.anilist_id, revealedEp: ep, as });
   }
   return out;
+}
+
+// ---------------------------------------------------------------- события
+
+type EventRow = {
+  id: number; key: string; anilist_id: number; title: string; summary: string | null; kind: string | null;
+  ep_from: number | null; ep_to: number | null; revealed_ep: number | null; major: number; data: { course?: string; arc?: string; motives?: Record<string, string> };
+};
+type RawEvent = Omit<EventRow, "data"> & { data: string | null };
+const EVENT_COLS = "id, key, anilist_id, title, summary, kind, ep_from, ep_to, revealed_ep, major, data";
+const parseEvent = (e: RawEvent): EventRow => ({ ...e, data: e.data ? JSON.parse(e.data) : {} });
+const eventEp = (e: { revealed_ep: number | null; ep_to: number | null; ep_from: number | null }) => e.revealed_ep ?? e.ep_to ?? e.ep_from ?? 0;
+
+/** События тайтла, которые зритель уже видел (по серии раскрытия), по порядку серий. */
+function visibleEvents(anilistId: number, k: number): EventRow[] {
+  return db.prepare<[number], RawEvent>(`SELECT ${EVENT_COLS} FROM plot_event WHERE anilist_id = ? AND key IS NOT NULL ORDER BY ep_from, id`).all(anilistId)
+    .filter((e) => eventEp(e) <= k).map(parseEvent);
+}
+
+/** Связи «почему» события: причины (в него) и последствия (из него), видимые на курсор; сколько последствий скрыто. */
+function linksOf(eventId: number, k: number, cursor: Map<number, number>) {
+  type L = { kind: string; revealed_ep: number | null; other: number; dir: string };
+  const rows = db.prepare<[number], L>(`
+    SELECT kind, revealed_ep, from_event AS other, 'in' AS dir FROM plot_event_link WHERE to_event = ?1
+    UNION ALL SELECT kind, revealed_ep, to_event, 'out' FROM plot_event_link WHERE from_event = ?1`).all(eventId);
+  const ev = db.prepare<[number], { key: string; anilist_id: number; title: string; ep_from: number | null; ep_to: number | null; revealed_ep: number | null }>(
+    "SELECT key, anilist_id, title, ep_from, ep_to, revealed_ep FROM plot_event WHERE id = ?");
+  const causes: EventLinkInfo[] = [];
+  const consequences: EventLinkInfo[] = [];
+  let hidden = 0;
+  for (const r of rows) {
+    const o = ev.get(r.other);
+    if (!o) continue;
+    // Причина из предыстории видна по её тайтлу, своя и последствие — по курсору
+    const visible = (r.revealed_ep ?? 0) <= k && seen(cursor, o.anilist_id, eventEp(o));
+    if (!visible) {
+      if (r.dir === "out") hidden++;
+      continue;
+    }
+    const info = { kind: r.kind, note: null, key: o.key, anilistId: o.anilist_id, title: o.title, ep: o.ep_from };
+    (r.dir === "in" ? causes : consequences).push(info);
+  }
+  return { causes, consequences, hidden };
+}
+
+/** Участники события — как зритель знает их сейчас (склеенные — под главным именем); группы не показываем. */
+function participantsOf(eventId: number, cursor: Map<number, number>): EventBrief["participants"] {
+  const out: EventBrief["participants"] = [];
+  for (const p of db.prepare<[number], { entity_id: number; role: string | null }>("SELECT entity_id, role FROM plot_event_participant WHERE event_id = ?").all(eventId)) {
+    const main = canonical(identityOf(p.entity_id, cursor));
+    const e = entity(main);
+    if (!e || e.kind !== "character" || out.some((x) => x.id === main)) continue;
+    out.push({ id: main, name: nameOf(e), href: hrefOf(e), image: currentImage(main, cursor)?.url ?? null, role: p.role });
+  }
+  return out;
+}
+
+function briefOf(e: EventRow, k: number, cursor: Map<number, number>): EventBrief & { hiddenConsequences: number } {
+  const l = linksOf(e.id, k, cursor);
+  return {
+    key: e.key, anilistId: e.anilist_id, title: e.title, summary: e.summary, kind: e.kind, epFrom: e.ep_from, epTo: e.ep_to,
+    arc: e.data.arc || null, major: Boolean(e.major), participants: participantsOf(e.id, cursor),
+    causes: l.causes, consequences: l.consequences, hiddenConsequences: l.hidden,
+  };
+}
+
+/** События тайтла на курсор — по аркам, в порядке серий. */
+export async function titleEvents(userId: number, anilistId: number): Promise<TitleEvents> {
+  const cursorInfo = await titleCursor(userId, anilistId);
+  const cursor = viewerCursor(userId);
+  cursor.set(anilistId, cursorInfo.ep);
+  const all = db.prepare<[number], { n: number }>("SELECT COUNT(*) AS n FROM plot_event WHERE anilist_id = ? AND key IS NOT NULL").get(anilistId)!.n;
+  const events = visibleEvents(anilistId, cursorInfo.ep);
+  const arcs: TitleEvents["arcs"] = [];
+  for (const e of events) {
+    const b = briefOf(e, cursorInfo.ep, cursor);
+    const last = arcs.at(-1);
+    if (last && last.name === b.arc) last.events.push(b);
+    else arcs.push({ name: b.arc, events: [b] });
+  }
+  return { cursor: cursorInfo, arcs, hidden: all - events.length };
+}
+
+/** Страница события. После курсора — только серия, в которой оно раскроется. */
+export async function eventDetails(userId: number, anilistId: number, key: string): Promise<EventDetails> {
+  const cursorInfo = await titleCursor(userId, anilistId);
+  const cursor = viewerCursor(userId);
+  const k = cursorInfo.ep;
+  cursor.set(anilistId, k);
+  const raw = db.prepare<[number, string], RawEvent>(`SELECT ${EVENT_COLS} FROM plot_event WHERE anilist_id = ? AND key = ? ORDER BY id DESC`).get(anilistId, key);
+  if (!raw) throw new ApiError(404, "Событие не найдено");
+  const e = parseEvent(raw);
+  if (eventEp(e) > k) {
+    return {
+      key, anilistId, title: "", summary: null, kind: null, epFrom: null, epTo: null, arc: null, major: false, participants: [], causes: [], consequences: [],
+      course: null, motives: [], hiddenConsequences: 0, sources: [], hiddenUntil: eventEp(e), cursor: cursorInfo,
+    };
+  }
+  const b = briefOf(e, k, cursor);
+  const motives: EventDetails["motives"] = [];
+  for (const [id, text] of Object.entries(e.data.motives ?? {})) {
+    const p = entity(canonical(identityOf(Number(id), cursor)));
+    if (p) motives.push({ id: p.id, name: nameOf(p), href: hrefOf(p), text });
+  }
+  // Источник — подробные тексты корпуса о сериях события
+  const sources = db.prepare<[number, number, number], { source: string }>(
+    "SELECT DISTINCT source FROM episode_text WHERE anilist_id = ? AND ep BETWEEN ? AND ? AND retracted_at IS NULL AND depth != 'teaser'")
+    .all(anilistId, e.ep_from ?? 0, e.ep_to ?? e.ep_from ?? 0).map((r) => r.source);
+  return { ...b, course: e.data.course || null, motives, sources, hiddenUntil: null, cursor: cursorInfo };
 }

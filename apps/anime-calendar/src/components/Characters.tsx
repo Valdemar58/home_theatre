@@ -81,7 +81,7 @@ export function CharacterCard({ m, anilistId, big }: { m: CastMember; anilistId:
     <div className="group">
       <Link {...hover} href={m.href}
         className="relative block aspect-2/3 overflow-hidden rounded-xl bg-gray-800 shadow-lg ring-1 ring-gray-700 transition duration-300 hover:scale-[1.03] hover:ring-gray-500">
-        {m.image ? <Img src={m.image} size="card" className="absolute inset-0 h-full w-full object-cover" />
+        {m.image ? <Img src={m.image} size="card" className="absolute inset-0 h-full w-full object-cover object-top" />
           : <span className="absolute inset-0 flex items-center justify-center text-gray-600"><UserIcon className="h-10 w-10" /></span>}
         <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-1 p-2">
           <span className="shrink-0 whitespace-nowrap rounded-full bg-gray-900/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-200 ring-1 ring-gray-600">
@@ -319,8 +319,12 @@ function CharacterPage({ c }: { c: CharacterDetails }) {
 
       <section>
         <h2 className="mb-3 text-xl font-bold">Появления <span className="text-base font-normal text-gray-500">{c.appearances.length}</span></h2>
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6">
-          {c.appearances.map((a) => <TitleCard key={a.media.id} media={a.media} footer={<p className="text-center text-xs text-gray-400">{ROLE_LABEL[a.role]}</p>} />)}
+        <div className="-mx-1 flex gap-4 overflow-x-auto px-1 pb-2 pt-1">
+          {c.appearances.map((a) => (
+            <div key={a.media.id} className="w-36 shrink-0 sm:w-40">
+              <TitleCard media={a.media} footer={<p className="text-center text-xs text-gray-400">{ROLE_LABEL[a.role]}</p>} />
+            </div>
+          ))}
         </div>
       </section>
 
@@ -335,7 +339,7 @@ function CharacterPage({ c }: { c: CharacterDetails }) {
               {(allRels ? [...rels, ...ended] : rels.slice(0, 4)).map((r, i) => (
                 <Link key={i} href={r.otherHref} className={cx("flex items-center gap-3 rounded-xl bg-gray-800/50 p-2.5 ring-1 ring-gray-700 hover:ring-gray-600", r.endedEp !== null && "opacity-60")}>
                   <span className="relative aspect-2/3 w-10 shrink-0 overflow-hidden rounded-md bg-gray-800">
-                    {r.otherImage ? <Img src={r.otherImage} size="thumb" className="absolute inset-0 h-full w-full object-cover" /> : <UserIcon className="m-auto h-full w-5 text-gray-600" />}
+                    {r.otherImage ? <Img src={r.otherImage} size="thumb" className="absolute inset-0 h-full w-full object-cover object-top" /> : <UserIcon className="m-auto h-full w-5 text-gray-600" />}
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{r.otherName}</span>
@@ -357,7 +361,8 @@ function CharacterPage({ c }: { c: CharacterDetails }) {
               {(allEvents ? events : events.slice(0, 3)).map((e) => (
                 <li key={e.id}>
                   <p className="text-xs text-gray-500">{epRange(e.epFrom, e.epTo)}{e.role ? ` · ${e.role}` : ""}</p>
-                  <p className={cx("font-medium", e.major && "text-gray-100")}>{e.title}</p>
+                  {e.key ? <Link href={`/anime/${e.anilistId}/events/${encodeURIComponent(e.key)}`} className={cx("block font-medium hover:text-accent-200", e.major && "text-gray-100")}>{e.title}</Link>
+                    : <p className={cx("font-medium", e.major && "text-gray-100")}>{e.title}</p>}
                   {e.summary && <p className="text-sm text-gray-400">{e.summary}</p>}
                 </li>
               ))}
