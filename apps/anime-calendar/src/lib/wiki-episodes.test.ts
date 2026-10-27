@@ -31,6 +31,19 @@ describe("pickSeason", () => {
     expect(eps.map((e) => e.ep)).toEqual(Array.from({ length: 25 }, (_, i) => i + 1));
   });
 
+  it("статья, прочитанная дважды, не удваивает серии («Куроко»)", () => {
+    const rows = parseEpisodeTables(fixture("wiki-rezero-s1.html"), "s1");
+    const eps = pickSeason([...rows, ...rows], { start: "2016-04-04", end: "2016-09-19", count: 25 });
+    expect(eps).toHaveLength(25);
+    expect(new Set(eps.map((e) => e.date)).size).toBeGreaterThan(20);
+  });
+
+  it("две серии в один день с одинаковым «TBA» — обе остаются", () => {
+    const row = (overall: string, date: string) => ({ table: "t", overall, date, title: "TBA", text: "", titleJa: null }) as unknown as Parameters<typeof pickSeason>[0][number];
+    const eps = pickSeason([row("1", "2024-05-31"), row("2", "2024-05-31"), row("3", "2024-06-07")], { start: "2024-05-31", end: "2024-06-07", count: 3 });
+    expect(eps).toHaveLength(3);
+  });
+
   it("описания из статьи сезона дополняют общий список", () => {
     const rows = [...parseEpisodeTables(fixture("wiki-slime-list.html"), "list"), ...parseEpisodeTables(fixture("wiki-slime-s1.html"), "s1")];
     const eps = pickSeason(rows, { start: "2018-10-02", end: "2019-03-19", count: 24 });

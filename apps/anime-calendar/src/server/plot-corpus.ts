@@ -157,7 +157,9 @@ async function wikipediaCrawl(run: Run, queue: string[], seen: Set<string>, rows
     seen.add(t);
     const page = await wikipediaPage(t).catch(() => null);
     run.tick();
-    if (!page) continue;
+    // Та же статья под другим названием (перенаправление) — уже прочитана: иначе серии сезона удваиваются («Куроко»)
+    if (!page || (page.title !== t && seen.has(page.title))) continue;
+    seen.add(page.title);
     rows.push(...parseEpisodeTables(page.text, page.title));
     for (const l of page.links ?? []) {
       if (l.exists !== false && /^List of .* episodes|\bseason \d|\(season \d/i.test(l.title) && !seen.has(l.title)) queue.push(l.title);

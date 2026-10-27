@@ -4,7 +4,9 @@ import { db, now } from "./db";
 import { readFile } from "node:fs/promises";
 import sharp from "sharp";
 import { parseAnimeDebut, parseInfoboxImages, pickWikiPage, type InfoboxImage } from "@/lib/fandom-images";
+import { wikiMatchScore } from "@/lib/fandom-episodes";
 import { sameName } from "@/lib/plot-graph";
+import { getDetails } from "./anilist";
 import { cached } from "./cache";
 import { fetchWithRetry, RateLimiter } from "./http";
 import { originalFile } from "./img-cache";
@@ -99,13 +101,32 @@ async function wikiPages(host: string, name: string): Promise<WikiPage[]> {
 }
 
 /**
+ * Вики тайтла для картинок: та, с которой корпус брал пересказы серий, иначе — поиск Fandom по названию
+ * (у «Атаки титанов» серий на вики корпус не нашёл, а страницы персонажей там есть). Вики проверяется по названию.
+ */
+async function fandomHost(anilistId: number): Promise<string | null> {
+  const url = db.prepare<[number], { url: string }>("SELECT url FROM episode_text WHERE anilist_id = ? AND source = 'fandom' AND url IS NOT NULL LIMIT 1").get(anilistId)?.url;
+  if (url) return new URL(url).host;
+  return cached(`fandom-host:v1:${anilistId}`, 30 * 86400, async () => {
+    const d = await getDetails(anilistId);
+    const names = [d.title.english, d.title.romaji].filter((x): x is string => Boolean(x));
+    for (const n of names) {
+      const r = await wikiJson<{ results?: { name: string; description: string | null; url: string }[] }>(
+        `https://services.fandom.com/unified-search/community-search?lang=en&limit=10&query=${encodeURIComponent(n)}`);
+      const hit = (r?.results ?? []).find((h) => /^https?:\/\/[a-z0-9-]+\.fandom\.com\/?$/i.test(h.url) && wikiMatchScore(names, h) >= 0.6);
+      if (hit) return new URL(hit.url).host;
+    }
+    return null;
+  });
+}
+
+/**
  * Картинки обликов с вики тайтла (та, с которой корпус брал пересказы серий) — кандидатами в plot_image.
  * Серию каждой картинке назначит checkLooks; не узнанная картинка с вики не показывается (там бывают формы из поздних сезонов).
  */
 export async function fandomLooks(anilistId: number, signal?: AbortSignal): Promise<number> {
-  const url = db.prepare<[number], { url: string }>("SELECT url FROM episode_text WHERE anilist_id = ? AND source = 'fandom' AND url IS NOT NULL LIMIT 1").get(anilistId)?.url;
-  if (!url) return 0;
-  const host = new URL(url).host;
+  const host = await fandomHost(anilistId);
+  if (!host) return 0;
   const chars = db.prepare<[number], { id: number; name: string; first_ep: number }>(`
     SELECT e.id, e.name, a.first_ep FROM plot_entity e JOIN plot_appearance a ON a.entity_id = e.id
     WHERE a.anilist_id = ? AND a.first_ep IS NOT NULL AND e.kind = 'character' ORDER BY a.first_ep`).all(anilistId);

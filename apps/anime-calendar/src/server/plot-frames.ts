@@ -97,7 +97,7 @@ async function speechTimes(anilistId: number, ep: number, labels: string[], name
 // именем, — строкой. Модели остаются спорные метки: с репликами и сериями, выбор — из готовых вариантов по именам.
 // Любое сопоставление проверяется фактами: метка не звучит раньше первого появления персонажа. Результат модели —
 // в журнале знаний (пересчёт — если поменялись спорные метки или персонажи)
-const SPEAKERS_V = 3;
+const SPEAKERS_V = 4;
 const NOBODY = "никто из списка";
 
 type LabelInfo = { label: string; count: number; firstEp: number; samples: string[] };
@@ -127,7 +127,8 @@ async function speakerMap(anilistId: number): Promise<Map<string, { entity: numb
   const labels = await titleLabels(anilistId);
   if (!labels.length) return new Map();
   const d = await getDetails(anilistId);
-  const native = new Map((await titleCharacters(anilistId, d.idMal).catch(() => [])).map((c) => [c.id, c.native]));
+  const roster = await titleCharacters(anilistId, d.idMal).catch(() => []);
+  const native = new Map(roster.map((c) => [c.id, c.native]));
   const people: Person[] = db.prepare<[number], { id: number; name: string; name_ja: string | null; anilist_char_id: number | null; first_ep: number }>(`
     SELECT e.id, COALESCE(e.name_ru, e.name) AS name, e.name_ja, e.anilist_char_id, a.first_ep FROM plot_entity e JOIN plot_appearance a ON a.entity_id = e.id
     WHERE a.anilist_id = ? AND a.first_ep IS NOT NULL AND e.kind = 'character'`).all(anilistId)
@@ -137,19 +138,26 @@ async function speakerMap(anilistId: number): Promise<Map<string, { entity: numb
     .map((l) => ({ entity: l.entity_id, look: l.look, label: l.label, kind: l.kind }));
   const out = new Map<string, { entity: number; look: string | null }>();
   const open: LabelInfo[] = [];
+  // Персонажи AniList, которых нет в графе (Верьярд): их метки — не к модели, иначе она подбирает похожее имя («Вельдора»)
+  const inGraph = new Set(people.map((p) => p.id));
+  const strangers = roster.filter((c) => c.native).map((c) => ({ id: -c.id, firstEp: 0, names: [c.native!] }))
+    .filter((c) => !db.prepare<[number], { id: number }>("SELECT id FROM plot_entity WHERE anilist_char_id = ?").all(-c.id).some((e) => inGraph.has(e.id)));
   for (const l of labels) {
     // Строкой: одно совпадение, и метка не звучит раньше появления персонажа
     const hit = matchByName(l.label, people).filter((id) => consistent(l.firstEp, byId.get(id)!));
     if (hit.length === 1) out.set(l.label, { entity: hit[0], look: null });
+    else if (!hit.length && matchByName(l.label, strangers).length) continue;
     else open.push(l);
   }
   if (!open.length) return out;
-  // Варианты — по именам (не номерам: в длинном списке номеров модель промахивалась), облики — отдельными вариантами
+  // Варианты — по именам (не номерам: в длинном списке номеров модель промахивалась), облики — отдельными вариантами.
+  // Японское имя в скобках — чтобы сверять звучание метки, а не похожесть русского написания
   const options = new Map<string, { entity: number; look: string | null }>();
-  for (const p of people) options.set(p.name, { entity: p.id, look: null });
+  const label = (p: Person) => `${p.name}${p.names[0] ? ` (${p.names[0]})` : ""}`;
+  for (const p of people) options.set(label(p), { entity: p.id, look: null });
   for (const lo of looks) {
     const p = byId.get(lo.entity);
-    if (p && lo.kind !== "обычный") options.set(`${p.name} — облик «${lo.label}»`, { entity: lo.entity, look: lo.look });
+    if (p && lo.kind !== "обычный") options.set(`${label(p)} — облик «${lo.label}»`, { entity: lo.entity, look: lo.look });
   }
   const names = [...options.keys(), NOBODY];
   const schema: JsonSchema = {
@@ -172,6 +180,7 @@ async function speakerMap(anilistId: number): Promise<Map<string, { entity: numb
       system: `Метки говорящих из японских субтитров аниме: кто это из вариантов. У каждой метки — реплики с номерами серий.
 - Метка называет говорящего: имя, фамилию, прозвище, роль. «三上» — фамилия Сатору Миками до перерождения, «スライム» — герой в облике слизи.
 - Если метка называет особый облик персонажа (прошлая жизнь, форма, маскировка) и такой вариант есть — выбери его.
+- Имя в метке должно звучать так же, как имя варианта (японское — в скобках): «ベルヤード» — Берьярд, а не Вельдора; «カリュブディス» — Харибда (Карибдис). Похожее начало имени — не совпадение.
 - Не уверен или это не персонаж из списка — «${NOBODY}».`,
       user,
     });

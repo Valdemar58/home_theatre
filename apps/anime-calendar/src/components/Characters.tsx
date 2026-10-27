@@ -3,9 +3,10 @@ import { ChevronDownIcon, MagnifyingGlassIcon, UserIcon } from "@heroicons/react
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useAnime, useCharacter, usePlotView, useTitleCast } from "@/lib/client";
+import { useAnime, useCharacter, useList, usePlotView, useTitleCast } from "@/lib/client";
+import { LIST_LABELS } from "@/lib/labels";
 import { displayTitle } from "@/lib/schedule";
-import type { AnimeDetails, CastMember, CharacterDetails, GalleryImage, PlotCursor, TitleCast } from "@/lib/types";
+import type { AnimeDetails, CastMember, CharacterDetails, GalleryImage, ListEntryWithMedia, PlotCursor, TitleCast } from "@/lib/types";
 import { Breadcrumbs, useRememberedTitle, useRememberTitle, type Crumb } from "./Breadcrumbs";
 import { ROLE_LABEL } from "./CharacterHover";
 import { Gallery } from "./Gallery";
@@ -236,14 +237,20 @@ export function CharacterView({ param }: { param: string }) {
   const router = useRouter();
   const { data: c, error, isLoading } = useCharacter(param);
   const remembered = useRememberedTitle();
+  const { byId: myList } = useList();
   useEffect(() => { if (c?.redirect) router.replace(c.redirect); }, [c?.redirect, router]);
   if (error) return <ErrorBox error={error} />;
   if (isLoading || !c || c.redirect) return <Spinner />;
-  // Путь — через тайтл, откуда пришли (если персонаж в нём есть), иначе через первое появление
+  // Путь — через тайтл, откуда пришли (если персонаж в нём есть), иначе через тот, что смотрю, иначе через первое появление
+  const watching = c.appearances.find((a) => myList.get(a.media.id)?.status === "watching")?.media ?? null;
   const from = c.appearances.find((a) => a.media.id === remembered)?.media
-    ?? c.appearances.find((a) => a.media.id === c.hiddenUntil?.anilistId)?.media ?? c.appearances[0]?.media;
+    ?? c.appearances.find((a) => a.media.id === c.hiddenUntil?.anilistId)?.media ?? watching ?? c.appearances[0]?.media;
+  // Звено тайтла раскрывается сезонами, где есть персонаж, — с моим статусом
+  const options = c.appearances.map((a) => ({
+    label: displayTitle(a.media.title), href: `/anime/${a.media.id}`, current: a.media.id === from?.id, note: listNote(myList.get(a.media.id)),
+  }));
   const crumbs = (name: string): Crumb[] => [
-    ...(from ? [{ label: displayTitle(from.title), href: `/anime/${from.id}` }, { label: "Персонажи", href: `/anime/${from.id}/characters` }] : []),
+    ...(from ? [{ label: displayTitle(from.title), href: `/anime/${from.id}`, options }, { label: "Персонажи", href: `/anime/${from.id}/characters` }] : []),
     { label: name },
   ];
   if (c.hiddenUntil) {
@@ -256,10 +263,18 @@ export function CharacterView({ param }: { param: string }) {
       </div>
     );
   }
-  return <CharacterPage key={c.href} c={c} crumbs={crumbs(c.nameRu ?? c.name)} />;
+  return <CharacterPage key={c.href} c={c} crumbs={crumbs(c.nameRu ?? c.name)} watching={watching && watching.id !== from?.id ? { id: watching.id, title: displayTitle(watching.title), ep: myList.get(watching.id)?.episodes ?? 0 } : null} />;
 }
 
-function CharacterPage({ c, crumbs }: { c: CharacterDetails; crumbs: Crumb[] }) {
+/** Мой статус тайтла коротко: «смотрю · 7 серия», «просмотрено». */
+function listNote(e: ListEntryWithMedia | undefined): string | null {
+  if (!e) return null;
+  if (e.status === "watching") return e.episodes ? `смотрю · ${e.episodes} серия` : "смотрю";
+  return LIST_LABELS[e.status].toLowerCase();
+}
+
+function CharacterPage({ c, crumbs, watching }: { c: CharacterDetails; crumbs: Crumb[]; watching: { id: number; title: string; ep: number } | null }) {
+  const { byId: myList } = useList();
   const [shot, setShot] = useState(Math.max(0, c.looks.length - 1));
   const [viewer, setViewer] = useState<number | null>(null);
   const [allNames, setAllNames] = useState(false);
@@ -275,7 +290,15 @@ function CharacterPage({ c, crumbs }: { c: CharacterDetails; crumbs: Crumb[] }) 
   const mainNames = [...new Map(c.names.filter((n) => n.kind === "имя").map((n) => [n.name, n])).values()].slice(0, 3);
   return (
     <div className="mx-auto max-w-6xl space-y-4 p-4 sm:p-6">
-      <Breadcrumbs items={crumbs} />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Breadcrumbs items={crumbs} />
+        {/* Пришли из другого сезона — короткий путь в тот, что смотрю */}
+        {watching && (
+          <Link href={`/anime/${watching.id}`} className="rounded-full px-3 py-1 text-sm tone-accent soft">
+            Вы смотрите: {watching.title}{watching.ep ? ` · ${watching.ep} серия` : ""} →
+          </Link>
+        )}
+      </div>
       <div className="space-y-8">
       <div className="flex flex-col gap-6 md:flex-row">
         <div className="w-full shrink-0 md:w-80">
@@ -335,7 +358,7 @@ function CharacterPage({ c, crumbs }: { c: CharacterDetails; crumbs: Crumb[] }) 
         <div className="-mx-1 flex gap-4 overflow-x-auto px-1 pb-2 pt-1">
           {c.appearances.map((a) => (
             <div key={a.media.id} className="w-36 shrink-0 sm:w-40">
-              <TitleCard media={a.media} footer={<p className="text-center text-xs text-gray-400">{ROLE_LABEL[a.role]}</p>} />
+              <TitleCard media={a.media} entry={myList.get(a.media.id)} footer={<p className="text-center text-xs text-gray-400">{ROLE_LABEL[a.role]}</p>} />
             </div>
           ))}
         </div>

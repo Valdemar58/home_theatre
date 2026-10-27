@@ -96,7 +96,12 @@ export function pickSeason(rows: WikiEpisode[], w: SeasonWindow, today = new Dat
   const to = w.end ? Date.parse(w.end) + 3 * DAY : Date.parse(today);
   const inWindow = rows.filter((r) => r.date && Date.parse(r.date) >= from && Date.parse(r.date) <= to);
   const tables = new Map<string, WikiEpisode[]>();
-  for (const r of inWindow) tables.set(r.table, [...(tables.get(r.table) ?? []), r]);
+  // Статья прочитана дважды — та же строка таблицы целиком; две серии в один день с названием «TBA» — разные
+  const same = (a: WikiEpisode, b: WikiEpisode) => a.date === b.date && a.title === b.title && a.overall === b.overall && a.text === b.text;
+  for (const r of inWindow) {
+    const t = tables.get(r.table) ?? [];
+    if (!t.some((x) => same(x, r))) tables.set(r.table, [...t, r]);
+  }
   const score = (t: WikiEpisode[]) => t.length * 1000 + t.filter((r) => r.text).length;
   const main = [...tables.values()].sort((a, b) => score(b) - score(a))[0] ?? [];
   let eps = main.map((r) => {

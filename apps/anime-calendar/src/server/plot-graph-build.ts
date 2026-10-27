@@ -106,15 +106,18 @@ const SYSTEM = `Ты ведёшь граф сюжета аниме серия з
 
 type Title = { d: AnilistDetails; plan: DeepPlan; hashes: string[]; known: Known<GraphDelta>[] };
 
-/** Сезоны франшизы до этого включительно (от раннего), с цепочкой хэшей графа: предыстория меняет хэш продолжения. */
-async function franchise(id: number): Promise<Title[]> {
+/**
+ * Сезоны франшизы до этого включительно (от раннего), с цепочкой хэшей графа: предыстория меняет хэш продолжения.
+ * variant — второй прогон этого тайтла для замера стабильности: свой хэш входа, основной граф не трогает.
+ */
+async function franchise(id: number, variant = ""): Promise<Title[]> {
   const d = await getDetails(id);
   const chain = [...(await prequelChain(d)), d];
   const out: Title[] = [];
   let pre = "none";
   for (const t of chain) {
     const plan = deepPlan(t.id);
-    const hashes = plan.hashes.map((h) => hashOf([h, INPUT_V, pre]));
+    const hashes = plan.hashes.map((h) => hashOf(variant && t.id === id ? [h, INPUT_V, pre, variant] : [h, INPUT_V, pre]));
     const known: Known<GraphDelta>[] = [];
     for (const [i, b] of plan.batches.entries()) {
       const k = bestOutput<GraphDelta>("plot_graph", subject(t.id, b.at(-1)!), opts(hashes[i]));
@@ -131,8 +134,8 @@ const fold = (titles: Title[], base = emptyGraph()) =>
   foldGraph(titles.flatMap((t) => t.known.map((k, i) => ({ eps: t.plan.batches[i], delta: k.value, title: t.d.id }))), base);
 
 /** Граф франшизы, досчитанный до этого тайтла (без недостроенных порций). */
-export async function titleGraph(id: number): Promise<{ graph: Graph; root: number; titles: Title[] }> {
-  const titles = await franchise(id);
+export async function titleGraph(id: number, variant = ""): Promise<{ graph: Graph; root: number; titles: Title[] }> {
+  const titles = await franchise(id, variant);
   return { graph: fold(titles), root: titles[0].d.id, titles };
 }
 
@@ -140,8 +143,8 @@ export async function titleGraph(id: number): Promise<{ graph: Graph; root: numb
  * Досчитать граф тайтла: порции, которых нет или вход которых изменился (пересказ сезона уже должен быть).
  * Возвращает число вызовов модели.
  */
-export async function buildGraph(id: number, signal: AbortSignal, onBatch?: (done: number, total: number) => void): Promise<number> {
-  const titles = await franchise(id);
+export async function buildGraph(id: number, signal: AbortSignal, onBatch?: (done: number, total: number) => void, variant = ""): Promise<number> {
+  const titles = await franchise(id, variant);
   const me = titles.at(-1)!;
   const total = me.plan.batches.length;
   const routeTier = await bestRouteTier("plot_graph");
@@ -391,17 +394,40 @@ const g_ = globalThis as unknown as { __graphProgress?: Map<number, CorpusProgre
 const progress = (g_.__graphProgress ??= new Map());
 export const graphProgress = (id: number) => progress.get(id) ?? null;
 
+/** Свёрнутый граф прогона тайтла (основного или второго) — для сравнения прогонов между собой. */
+export async function graphSummary(id: number, variant = "") {
+  const { graph: g, titles } = await titleGraph(id, variant);
+  const me = titles.at(-1)!;
+  const mine = <T extends { title: number }>(xs: Iterable<T>) => [...xs].filter((x) => x.title === id);
+  return {
+    batches: me.known.length, total: me.plan.batches.length,
+    personas: mine(g.personas.values()).map((p) => ({ key: p.key, kind: p.kind, importance: p.importance, name_ru: p.name_ru, name_en: p.name_en, first_ep: p.first_ep })),
+    names: mine(g.names), aliases: mine(g.aliases).map((a) => ({ key: a.key, alias: a.alias, kind: a.kind, ep: a.revealed })),
+    looks: mine(g.looks).map((l) => ({ key: l.key, look: l.look, kind: l.kind, ep: l.revealed })),
+    identities: mine(g.identities).map((i) => ({ a: i.a, b: i.b, ep: i.revealed })),
+    members: mine(g.members).map((m) => ({ key: m.key, group: m.group })),
+    relations: mine(g.relations).map((r) => ({ a: r.a, b: r.b, kind: r.kind, from_ep: r.from_ep })),
+    events: mine(g.events.values()).map((e) => ({ key: e.key, title_ru: e.title_ru, ep_from: e.ep_from, ep_to: e.ep_to, major: e.major, participants: e.participants.map((p) => p.key) })),
+  };
+}
+
 registerHandler("graph", {
   noun: "Персонажи и события готовы",
-  anilistId: async (key) => Number(key) || null,
+  anilistId: async (key) => Number(key.split("@")[0]) || null,
   title: async (key) => {
-    const d = await getDetails(Number(key));
-    return d.title.romaji ?? d.title.english ?? `#${key}`;
+    const d = await getDetails(Number(key.split("@")[0]));
+    return (d.title.romaji ?? d.title.english ?? `#${key}`) + (key.includes("@") ? " (второй прогон)" : "");
   },
   fresh: () => false,
-  href: (key) => `/anime/${key}/characters`,
+  href: (key) => `/anime/${key.split("@")[0]}/characters`,
   run: async (key, signal) => {
-    const id = Number(key);
+    const [idStr, variant] = key.split("@");
+    const id = Number(idStr);
+    if (variant) {
+      // Второй прогон для замера стабильности: только порции в журнал, таблицы не трогаются
+      const calls = await buildGraph(id, signal, undefined, variant);
+      return { summary: `Второй прогон: вызовов модели ${calls}`, isNew: false };
+    }
     const p: CorpusProgress = { anilistId: id, step: "Персонажи и события", done: 0, total: 1, startedAt: Date.now(), updatedAt: Date.now(), finished: false, found: {}, errors: [], etaSec: null };
     progress.set(id, p);
     const touch = (patch: Partial<CorpusProgress>) => Object.assign(p, patch, { updatedAt: Date.now() });

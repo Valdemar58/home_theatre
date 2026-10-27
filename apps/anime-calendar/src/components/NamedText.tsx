@@ -71,7 +71,7 @@ function Paragraph({ text, anilistId, upTo, names }: { text: string; anilistId: 
 
 function NameLink({ text, anilistId, ref_, member }: { text: string; anilistId: number; ref_: NameRef; member: CastMember | null }) {
   const spoiler = ref_.spoiler || !member;
-  const hover = useCharacterHover({ anilistId: ref_.anilistId ?? anilistId, entity: ref_.entity, member: spoiler ? null : member, spoilerEp: spoiler ? ref_.revealedEp : null, as: ref_.as });
+  const hover = useCharacterHover({ anilistId: ref_.anilistId ?? anilistId, entity: ref_.entity, member: spoiler ? null : member, spoilerEp: spoiler ? ref_.revealedEp : null, as: ref_.as }, { tapSheet: true });
   return (
     <Link {...hover} href={spoiler ? "#" : ref_.href} onClick={(e) => { hover.onClick?.(e); if (spoiler) e.preventDefault(); }}
       className="text-accent-200 underline decoration-accent-400/70 decoration-dashed underline-offset-4 hover:decoration-solid">
