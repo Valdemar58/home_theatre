@@ -97,16 +97,25 @@ export async function fandomLooks(anilistId: number, signal?: AbortSignal): Prom
   const url = db.prepare<[number], { url: string }>("SELECT url FROM episode_text WHERE anilist_id = ? AND source = 'fandom' AND url IS NOT NULL LIMIT 1").get(anilistId)?.url;
   if (!url) return 0;
   const host = new URL(url).host;
+  // Связанные с AniList — первыми: при двух персонажах с одним именем страница вики достаётся им
   const chars = db.prepare<[number], { id: number; name: string }>(`
     SELECT e.id, e.name FROM plot_entity e JOIN plot_appearance a ON a.entity_id = e.id
-    WHERE a.anilist_id = ? AND a.first_ep IS NOT NULL AND e.kind = 'character'`).all(anilistId);
+    WHERE a.anilist_id = ? AND a.first_ep IS NOT NULL AND e.kind = 'character' ORDER BY e.anilist_char_id IS NULL, a.first_ep`).all(anilistId);
   const put = db.prepare("INSERT INTO plot_image (entity_id, url, source, label, updated_at) VALUES (?, ?, 'fandom', ?, ?) ON CONFLICT (entity_id, url) DO NOTHING");
   let added = 0;
+  // Одна картинка — одному персонажу тайтла: страница ищется по имени, и двое «Гельдов» получали одну и ту же
+  const taken = new Map<string, number>();
+  const drop = db.prepare("DELETE FROM plot_image WHERE entity_id = ? AND url = ? AND source = 'fandom'");
   for (const c of chars) {
     signal?.throwIfAborted();
     // Вики меняются редко — месяц из кэша
     const imgs = await cached(`fandom-img:v1:${host}:${c.name}`, 30 * 86400, () => infobox(host, c.name)).catch(() => []);
-    for (const im of imgs) added += Number(put.run(c.id, im.url, im.label || null, now()).changes);
+    for (const im of imgs) {
+      const owner = taken.get(im.url);
+      if (owner !== undefined && owner !== c.id) { drop.run(c.id, im.url); continue; }
+      taken.set(im.url, c.id);
+      added += Number(put.run(c.id, im.url, im.label || null, now()).changes);
+    }
   }
   return added;
 }

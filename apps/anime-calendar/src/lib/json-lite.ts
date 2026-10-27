@@ -54,6 +54,8 @@ export function extractJson(text: string): unknown {
 function coerce(s: JsonSchema, v: unknown, path: string, errors: string[]): unknown {
   switch (s.type) {
     case "object": {
+      // Объект, завёрнутый в массив из одного элемента («[{…}]»), — тот же объект
+      if (Array.isArray(v) && v.length === 1) v = v[0];
       if (!v || typeof v !== "object" || Array.isArray(v)) {
         errors.push(`${path || "ответ"}: нужен объект`);
         return undefined;

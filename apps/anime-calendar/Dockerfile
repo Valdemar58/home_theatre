@@ -12,6 +12,8 @@ RUN npm run build
 
 FROM node:22-alpine
 WORKDIR /app
+# ffmpeg — кадры персонажей из своих серий (plot-frames.ts)
+RUN apk add --no-cache ffmpeg
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=5056 HOSTNAME=0.0.0.0 DATA_DIR=/data
 # Node 22 перебирает адреса хоста, давая каждому 250 мс на подключение: при медленной
 # сети все попытки не успевают (ETIMEDOUT). Берём IPv4 и подключаемся без этого перебора

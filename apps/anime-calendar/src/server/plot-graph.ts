@@ -371,6 +371,13 @@ export async function titleCast(userId: number, anilistId: number, at?: number):
   }
   const order: Record<CharacterRole, number> = { MAIN: 0, SUPPORTING: 1, BACKGROUND: 2 };
   members.sort((a, b) => order[a.role] - order[b.role] || (a.firstEp ?? 0) - (b.firstEp ?? 0));
+  // Двое с одним именем (два Гельда) — уточнение: титул, известный к курсору, иначе серия появления
+  const dupes = new Set(members.map((m) => m.name).filter((n, i, all) => all.indexOf(n) !== i));
+  for (const m of members.filter((x) => dupes.has(x.name))) {
+    const title = db.prepare<[number, number, number], { alias: string }>(
+      "SELECT alias FROM plot_alias WHERE entity_id = ? AND anilist_id = ? AND kind = 'титул' AND COALESCE(revealed_ep, 0) <= ? ORDER BY revealed_ep LIMIT 1").get(m.id, anilistId, k);
+    m.name = `${m.name} · ${title?.alias ?? `с ${m.firstEp} серии`}`;
+  }
   const groupCount = new Map<number, { name: string; count: number }>();
   for (const m of members) for (const g of m.groups) groupCount.set(g.id, { name: g.name, count: (groupCount.get(g.id)?.count ?? 0) + 1 });
   const hidden = apps.filter((a) => a.kind === "character" && !visible.includes(a)).length;

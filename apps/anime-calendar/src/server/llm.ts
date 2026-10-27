@@ -106,6 +106,8 @@ export type TaskRequest = {
   minTier?: number;
   /** Картинки (base64): внешний API их не принимает — только локальная модель */
   images?: string[];
+  /** Не ограничивать генерацию схемой — ответ всё равно проверяется по ней */
+  freeform?: boolean;
 };
 
 async function attempt(link: Link, r: ChatRequest): Promise<ChatResponse> {
@@ -128,7 +130,7 @@ export async function runTask<T>(task: LlmTask, req: TaskRequest): Promise<LlmRe
       try {
         const out = await attempt(link, {
           model: link.model, schema: req.schema, system: req.system, user: req.user, repair,
-          timeoutMs: req.timeoutMs ?? 300_000, maxTokens: req.maxTokens, images: req.images,
+          timeoutMs: req.timeoutMs ?? 300_000, maxTokens: req.maxTokens, images: req.images, freeform: req.freeform,
         });
         const cost = link.provider === "external" ? costUsd(link.model, out.usage, new Date(), prices) : 0;
         let parsed: unknown;

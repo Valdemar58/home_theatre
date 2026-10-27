@@ -163,3 +163,19 @@ describe("linkNames: регистр", () => {
     expect(parts.filter((p) => typeof p !== "string").map((p) => (p as { text: string }).text)).toEqual(["Официантка"]);
   });
 });
+
+describe("метки говорящих", () => {
+  it("толпа и безымянные — не персонажи", async () => {
+    const { isCrowdLabel } = await import("./speakers");
+    expect(["部下", "オークたち", "エルフＡ", "男", "村人2"].every(isCrowdLabel)).toBe(true);
+    expect(["三上", "リムル", "ガゼル", "通り魔"].some(isCrowdLabel)).toBe(false);
+  });
+  it("строкой по японскому имени, проверка по сериям", async () => {
+    const { matchByName, consistent } = await import("./speakers");
+    const people = [{ id: 1, names: ["リムル＝テンペスト"], firstEp: 1 }, { id: 29, names: ["ガゼル・ドワルゴ"], firstEp: 5 }, { id: 35, names: ["ケンヤ"], firstEp: 20 }];
+    expect(matchByName("ガゼル", people)).toEqual([29]);
+    expect(matchByName("リムル", people)).toEqual([1]);
+    expect(matchByName("三上", people)).toEqual([]);
+    expect(consistent(1, people[2])).toBe(false);
+  });
+});
