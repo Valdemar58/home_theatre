@@ -9,7 +9,7 @@ import { FORMAT_LABELS, GENRE_LABELS, label } from "@/lib/labels";
 import { formatDate } from "@/lib/time";
 import type { RecoResponse, Recommendation } from "@/server/reco/engine";
 import type { QueueStatus } from "@/server/reco/profile";
-import { Badge, Button, cx, EmptyState, ErrorBox, matchTone, Spinner, TONE_CLASS } from "./ui";
+import { Badge, Button, cx, EmptyState, ErrorBox, matchTone, Skel, SkelText, TONE_CLASS } from "./ui";
 import { useHoverCard } from "./HoverCard";
 import { TagList } from "./TagList";
 import { Img } from "./Img";
@@ -109,6 +109,18 @@ export function RecommendationsView() {
   };
 
   const items = (data?.items ?? []).filter(FILTERS.find((f) => f[0] === filter)![2]);
+  const filterBar = (aside: React.ReactNode) => (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {FILTERS.map(([key, text]) => (
+        <button key={key} onClick={() => setFilter(key)}
+          className={cx("rounded-full border px-3 py-1 text-xs font-medium transition",
+            filter === key ? "border-indigo-500 bg-indigo-600 text-white" : "border-gray-700 text-gray-300 hover:border-gray-500")}>
+          {text}
+        </button>
+      ))}
+      {aside}
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -128,11 +140,31 @@ export function RecommendationsView() {
       </div>
 
       {error ? <ErrorBox error={error} /> : null}
+      {/* Пока считается: фильтры и «советуют друзья» уже живые, портрет и карточки — заглушками */}
       {isLoading ? (
-        <div className="flex flex-col items-center gap-3 py-24 text-sm text-gray-400">
-          <Spinner className="h-8 w-8" />
-          Изучаю твои списки и подбираю тайтлы… (первый раз до пары минут)
-        </div>
+        <>
+          <section aria-busy className="rounded-xl bg-gray-800/50 p-5 ring-1 ring-gray-700">
+            <p className="mb-3 text-sm text-gray-400">Изучаю твои списки и подбираю тайтлы… (первый раз до пары минут)</p>
+            <SkelText lines={3} />
+            <div className="mt-3 flex flex-wrap gap-1.5">{[0, 1, 2, 3].map((i) => <Skel key={i} className="h-5 w-20 rounded-full" />)}</div>
+          </section>
+          <FriendPicks />
+          {filterBar(<span className="ml-auto inline-flex"><Skel className="h-3 w-56" /></span>)}
+          <div aria-busy className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+            {Array.from({ length: 6 }, (_, i) => (
+              <div key={i} className="flex gap-4 rounded-xl bg-gray-800/50 p-3 ring-1 ring-gray-700">
+                <Skel className="min-h-52 w-36 shrink-0 self-stretch rounded-lg" />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <div className="flex items-start justify-between gap-2"><Skel className="h-5 w-3/4" /><Skel className="h-5 w-10 rounded-full" /></div>
+                  <Skel className="h-3 w-1/2" />
+                  <SkelText lines={2} />
+                  <Skel className="h-3 w-28" />
+                  <Skel className="h-3 w-full" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
       ) : !data ? null : (
         <>
           {data.portrait ? (
@@ -159,18 +191,11 @@ export function RecommendationsView() {
 
           <FriendPicks />
 
-          <div className="flex flex-wrap items-center gap-1.5">
-            {FILTERS.map(([key, text]) => (
-              <button key={key} onClick={() => setFilter(key)}
-                className={cx("rounded-full border px-3 py-1 text-xs font-medium transition",
-                  filter === key ? "border-indigo-500 bg-indigo-600 text-white" : "border-gray-700 text-gray-300 hover:border-gray-500")}>
-                {text}
-              </button>
-            ))}
+          {filterBar(
             <span className="ml-auto text-xs text-gray-500">
               учтено тайтлов: {data.stats.rated} · проанализировано: {data.stats.analyzed}/{data.stats.profiled}
-            </span>
-          </div>
+            </span>,
+          )}
 
           {items.length === 0 ? (
             <EmptyState title="Пока нечего предложить">

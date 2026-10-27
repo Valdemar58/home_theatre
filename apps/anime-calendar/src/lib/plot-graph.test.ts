@@ -203,6 +203,12 @@ describe("Гельды: тёзки, имя позже первого появл�
     ]);
     expect(g.names.map((n) => [n.name_ru, n.from])).toEqual([["Сатору Миками", 1], ["Римуру Темпест", 2]]);
   });
+  it("серия имени от модели — раньше конца порции (Ригурд назван в 3 серии)", () => {
+    const g = foldGraph([
+      { eps: [1, 2, 3, 4], delta: delta({ personas: [{ ...persona("rigurd", 2, "Ригурд"), name_before_ru: "староста гоблинов", name_ep: 3 }] }) },
+    ]);
+    expect(g.names.map((n) => [n.name_ru, n.from])).toEqual([["староста гоблинов", 2], ["Ригурд", 3]]);
+  });
   it("смена имени в следующей порции без серии в aliases — с конца порции; то же имя — без новой строки", () => {
     const g = foldGraph([
       { eps: [10, 11], delta: delta({ personas: [persona("orc-lord", 10, "Орк-лорд")] }) },
@@ -228,5 +234,36 @@ describe("Гельды: тёзки, имя позже первого появл�
     const { sure, open } = anilistCandidates([persona("geld", 8, "Geld"), persona("geld-son", 13, "Geld")], [{ id: 133522, name: "Geld", native: null, nameRu: null }]);
     expect(sure.size).toBe(0);
     expect(open.size).toBe(2);
+  });
+});
+
+describe("места", () => {
+  it("ключи мест отдельно от персонажей, вложенность, переименование, место события и связи", () => {
+    const g = foldGraph([
+      { eps: [1, 2, 3], delta: delta({
+        personas: [persona("tempest", 1, "Темпест")],
+        places: [
+          { key: "jura-forest", name_ru: "Лес Джура", name_en: "Great Jura Forest", kind: "лес", inside: "", first_ep: 1, description_ru: "Огромный лес" },
+          { key: "goblin-village", name_ru: "Деревня гоблинов", name_en: "Goblin village", kind: "деревня", inside: "jura-forest", first_ep: 2, description_ru: "" },
+        ],
+        place_links: [{ a: "dwargon", b: "jura-forest", kind: "к северу от", distance_ru: "", ep: 3 }],
+        events: [{ key: "wolves", title_ru: "Волки нападают", summary_ru: "", course_ru: "", kind: "бой", major: true, ep_from: 3, ep_to: 3, arc_ru: "", participants: [], where: "goblin-village" }],
+      }) },
+      { eps: [4, 5, 6], delta: delta({
+        places: [
+          { key: "goblin-village", name_ru: "Темпест", name_en: "Tempest", kind: "город", inside: "jura-forest", first_ep: 2, description_ru: "Город монстров", name_ep: 5 },
+          { key: "dwargon", name_ru: "Дварфарго", name_en: "Dwargon", kind: "страна", inside: "", first_ep: 4, description_ru: "" },
+        ],
+        place_links: [{ a: "dwargon", b: "jura-forest", kind: "к северу от", distance_ru: "три дня", ep: 4 }],
+      }) },
+    ]);
+    expect([...g.places.keys()].sort()).toEqual(["place-dwargon", "place-goblin-village", "place-jura-forest"]);
+    expect(g.personas.has("tempest")).toBe(true);
+    expect(g.places.get("place-goblin-village")).toMatchObject({ inside: "place-jura-forest", first_ep: 2 });
+    expect(g.names.filter((n) => n.key === "place-goblin-village").map((n) => [n.name_ru, n.from])).toEqual([["Деревня гоблинов", 2], ["Темпест", 5]]);
+    expect(g.events.get("wolves")?.where).toBe("place-goblin-village");
+    // Связь на ещё не известное место (Дварфарго в 3 серии) не записывается; потом — один раз
+    expect(g.placeLinks).toHaveLength(1);
+    expect(g.placeLinks[0]).toMatchObject({ a: "place-dwargon", b: "place-jura-forest", revealed: 4 });
   });
 });

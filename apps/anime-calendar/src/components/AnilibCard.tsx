@@ -6,7 +6,7 @@ import { api } from "@/lib/client";
 import { LIST_LABELS } from "@/lib/labels";
 import { relative } from "@/lib/time";
 import type { LibAction, LibField, LibPlanItem, LibStatus, LibValues } from "@/lib/types";
-import { Button, cx, ErrorBox, Spinner } from "./ui";
+import { Button, cx, ErrorBox, Skel, Spinner } from "./ui";
 import { imgSrc } from "@/lib/img";
 
 // Синхронизация с AniLib: подключение по ссылке на профиль, предпросмотр, запись, статус.
@@ -74,7 +74,13 @@ export function AnilibCard() {
   };
   const sync = (apply: boolean) => call(() => api("/api/anilib/sync", { method: "POST", json: { apply } }));
 
-  if (isLoading || !st) return <Spinner />;
+  // Заглушка по форме подключённого профиля: строка «Профиль … · синхронизировано» и кнопки
+  if (isLoading || !st) return (
+    <div className="flex flex-wrap items-center justify-between gap-3" aria-busy>
+      <Skel className="h-4 w-72 max-w-full" />
+      <div className="flex gap-2">{["w-40", "w-36", "w-24"].map((w) => <Skel key={w} className={cx("h-7 rounded-lg", w)} />)}</div>
+    </div>
+  );
 
   if (!st.linked) {
     return (

@@ -10,7 +10,7 @@ import { CORPUS_SOURCE_LABELS } from "@/lib/labels";
 import { formatDate, formatTime, relative } from "@/lib/time";
 import { Img } from "./Img";
 import { NamedText, paragraphEps, useNames } from "./NamedText";
-import { Badge, cx, Spinner } from "./ui";
+import { Badge, cx, Skel, SkelText, Spinner } from "./ui";
 
 // Сюжет на странице тайтла: описание (синопсис ИИ вместо заглушки), «Что было раньше», серии.
 
@@ -39,6 +39,8 @@ export function Description({ media }: { media: AnimeDetails }) {
         <p className="mt-2 flex items-center gap-2 text-xs text-gray-500"><Spinner className="h-3.5 w-3.5" /> Составляю подробное описание…</p>
       )}
       {plot?.hasPrequels && <Recap id={media.id} plot={plot} />}
+      {/* Пока сюжет грузится — место под «Что было раньше», если у тайтла есть предыстория */}
+      {!plot && media.relations.some((r) => r.relationType === "PREQUEL") && <Skel className="mt-4 h-[50px] w-full rounded-xl" />}
     </section>
   );
 }
@@ -105,7 +107,7 @@ const SPOILERS_KEY = "episodes-show-all";
 
 /** Серии: кадр, название, дата, описание. Описания после вашей серии скрыты (спойлеры). */
 export function Episodes({ media, entry, now }: { media: AnimeDetails; entry?: ListEntry; now: number }) {
-  const { data: plot } = usePlot(media.id);
+  const { data: plot, isLoading } = usePlot(media.id);
   const [showAll, setShowAll] = useState(false);
   const [spoilers, setSpoilers] = useState(false);
   const [opened, setOpened] = useState<Set<number>>(new Set());
@@ -127,6 +129,8 @@ export function Episodes({ media, entry, now }: { media: AnimeDetails; entry?: L
   const seenEp = cursor ? Math.min(total, cursor.ep) : entry?.status === "completed" ? total : entry?.episodes ?? 0;
   // Имена — до серий, тексты которых видны (спойлеры открыты — до конца)
   const names = useNames(plot?.season ? media.id : 0, spoilers || opened.size ? total : seenEp);
+  // Серии ещё грузятся — число серий известно из данных тайтла: заголовок и строки-заглушки той же высоты
+  if (isLoading && (total || media.episodes)) return <EpisodesSkeleton total={total || media.episodes!} />;
   if (!total) return null;
   const byNum = new Map(eps.map((e) => [e.number, e]));
   const rows: Row[] = Array.from({ length: total }, (_, i) => ({ number: i + 1, info: byNum.get(i + 1) ?? null, airingAt: airing.get(i + 1) ?? null }));
@@ -208,6 +212,22 @@ export function Episodes({ media, entry, now }: { media: AnimeDetails; entry?: L
       {plot?.season && <SeasonRetelling season={plot.season} seen={spoilers ? Infinity : seen} total={total} anilistId={media.id} names={names} />}
       <CorpusBar id={media.id} />
       <SdhBar id={media.id} />
+    </section>
+  );
+}
+
+function EpisodesSkeleton({ total }: { total: number }) {
+  return (
+    <section aria-busy>
+      <div className="mb-3 flex items-center"><h2 className="text-xl font-bold">Серии <span className="text-base font-normal text-gray-500">{total}</span></h2></div>
+      <div className="overflow-hidden rounded-xl ring-1 ring-gray-700">
+        {Array.from({ length: Math.min(10, total) }, (_, i) => (
+          <div key={i} className="flex gap-3 border-b border-gray-700/60 bg-gray-900/40 px-3 py-3 last:border-0 sm:gap-4 sm:px-4">
+            <Skel className="aspect-video w-28 shrink-0 rounded-lg sm:w-40" />
+            <div className="min-w-0 flex-1 space-y-2 pt-1"><Skel className="h-4 w-1/2" /><SkelText lines={2} /></div>
+          </div>
+        ))}
+      </div>
     </section>
   );
 }

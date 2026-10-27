@@ -145,13 +145,13 @@ export function setPlotView(userId: number, anilistId: number, mode: PlotViewMod
     ON CONFLICT (user_id, anilist_id) DO UPDATE SET mode = excluded.mode, ep = excluded.ep`).run(userId, anilistId, mode, mode === "ep" ? ep : null);
 }
 
-const seen = (cursor: Map<number, number>, anilistId: number | null, ep: number | null) => (ep ?? 0) <= (anilistId === null ? ALL : cursor.get(anilistId) ?? 0);
+export const seen = (cursor: Map<number, number>, anilistId: number | null, ep: number | null) => (ep ?? 0) <= (anilistId === null ? ALL : cursor.get(anilistId) ?? 0);
 
 /**
  * Имя на курсор зрителя по ленте имён: безымянный генерал до серии, где ему дали имя, — «генерал орков». Последнее имя
  * ленты и персонажи без смены имени — основное (у AniList-персонажа — русское имя Shikimori, если передано final).
  */
-function nameAt(e: Pick<Entity, "id" | "name" | "name_ru">, cursor: Map<number, number>, final?: string | null): string {
+export function nameAt(e: Pick<Entity, "id" | "name" | "name_ru">, cursor: Map<number, number>, final?: string | null): string {
   const rows = db.prepare<[number], { name: string; anilist_id: number; from_ep: number }>(
     "SELECT name, anilist_id, from_ep FROM plot_name WHERE entity_id = ? ORDER BY anilist_id, from_ep").all(e.id);
   const main = final ?? nameOf(e);
@@ -186,7 +186,7 @@ function imagesOf(entityId: number, cursor: Map<number, number>): { visible: Ima
   return { visible: out.sort((a, b) => (a.from_ep ?? 0) - (b.from_ep ?? 0)), future };
 }
 
-const currentImage = (entityId: number, cursor: Map<number, number>) => imagesOf(entityId, cursor).visible.at(-1) ?? null;
+export const currentImage = (entityId: number, cursor: Map<number, number>) => imagesOf(entityId, cursor).visible.at(-1) ?? null;
 
 /** Склеенные с сущностью «это один человек», раскрытые к курсору (вместе с ней самой). */
 function identityOf(entityId: number, cursor: Map<number, number>): number[] {
@@ -339,6 +339,14 @@ export async function characterDetails(param: string, cursor: Map<number, number
   };
 }
 
+/** Форма блока «Сюжет» без курсора: есть ли разбор серий и карта мест (для заглушки того же вида). */
+export function plotHubShape(anilistId: number): { built: boolean; map: boolean } {
+  const built = Boolean(db.prepare<[number], { n: number }>("SELECT 1 AS n FROM plot_title WHERE anilist_id = ?").get(anilistId));
+  const map = built && Boolean(db.prepare<[number], { n: number }>(`
+    SELECT 1 AS n FROM plot_place_pos pos JOIN plot_appearance a ON a.entity_id = pos.entity_id WHERE a.anilist_id = ? LIMIT 1`).get(anilistId));
+  return { built, map };
+}
+
 // ---------------------------------------------------------------- состав тайтла
 
 /** Персонажи тайтла на курсор: из разбора серий (кто уже появился), без разбора — состав AniList. */
@@ -358,7 +366,7 @@ export async function titleCast(userId: number, anilistId: number, at?: number):
       id: 0, entities: [], href: `/characters/${c.id}`, anilistCharId: c.id, name: c.nameRu ?? c.name, native: c.native, role: c.role, image: c.image, lookLabel: null,
       description: null, goal: null, groups: [], aka: [], firstEp: null, voice: c.voice,
     }));
-    return { cursor: cursorInfo, built: false, upTo: 0, groupWord: null, powerSystem: false, members, groups: [], hidden: 0, stats: { relations: 0, events: 0, arcs: 0 } };
+    return { cursor: cursorInfo, built: false, upTo: 0, groupWord: null, powerSystem: false, members, groups: [], hidden: 0, stats: { relations: 0, events: 0, arcs: 0, places: 0 } };
   }
   type App = { entity_id: number; role: CharacterRole | null; first_ep: number | null; kind: string; anilist_char_id: number | null; name: string; name_ru: string | null; name_ja: string | null };
   const apps = db.prepare<[number], App>(`
@@ -403,10 +411,14 @@ export async function titleCast(userId: number, anilistId: number, at?: number):
   const hidden = apps.filter((a) => a.kind === "character" && !visible.includes(a)).length;
   const events = visibleEvents(anilistId, k);
   const relations = db.prepare<[number, number], { n: number }>("SELECT COUNT(*) AS n FROM plot_relation WHERE anilist_id = ? AND COALESCE(revealed_ep, from_ep, 0) <= ?").get(anilistId, k)!.n;
+  // Места на карте франшизы этого тайтла, известные к серии (карты нет — 0)
+  const places = db.prepare<[number, number], { n: number }>(`
+    SELECT COUNT(DISTINCT pos.entity_id) AS n FROM plot_place_pos pos JOIN plot_appearance a ON a.entity_id = pos.entity_id
+    WHERE a.anilist_id = ? AND a.first_ep IS NOT NULL AND a.first_ep <= ?`).get(anilistId, k)!.n;
   return {
     cursor: cursorInfo, built: true, upTo: title.up_to, groupWord: title.group_word, powerSystem: Boolean(title.power_system),
     members, groups: [...groupCount].map(([id, g]) => ({ id, ...g })).sort((a, b) => b.count - a.count), hidden,
-    stats: { relations, events: events.length, arcs: new Set(events.map((e) => e.data.arc).filter(Boolean)).size },
+    stats: { relations, events: events.length, arcs: new Set(events.map((e) => e.data.arc).filter(Boolean)).size, places },
   };
 }
 

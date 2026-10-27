@@ -3,8 +3,8 @@ import { CheckIcon, TrashIcon } from "@heroicons/react/24/outline";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { api, useNoticeActions, useNotices, type NoticesPage } from "@/lib/client";
 import { useUrlState } from "@/lib/useUrlState";
-import { EMPTY, NoticeList, NoticeTabs } from "./Notifications";
-import { Button, Spinner } from "./ui";
+import { EMPTY, NoticeList, NoticeListSkeleton, NoticeTabs } from "./Notifications";
+import { Button } from "./ui";
 import { useConfirm } from "./Dialogs";
 
 // Все уведомления: вкладки, «только непрочитанные», «Прочитать все», «Удалить прочитанные», подгрузка истории.
@@ -45,7 +45,7 @@ export function NotificationsView() {
         </span>
       </div>
       <div className="overflow-hidden rounded-xl bg-gray-800/60 ring-1 ring-gray-700">
-        {q.isLoading ? <div className="flex justify-center py-16"><Spinner /></div>
+        {q.isLoading ? <NoticeListSkeleton count={6} />
           : <NoticeList items={items} empty={unreadOnly ? "Непрочитанных нет." : EMPTY[tab]} />}
       </div>
       {q.hasNextPage && (

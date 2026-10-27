@@ -2,7 +2,7 @@ import "server-only";
 import type { JsonSchema } from "@/lib/json-lite";
 import { TIER } from "@/lib/llm-tier";
 import {
-  ABILITY_STATUS, ALIAS_KINDS, ENTITY_KINDS, EVENT_KINDS, IMPORTANCE, LINK_KINDS, LOOK_KINDS, RELATION_KINDS,
+  ABILITY_STATUS, ALIAS_KINDS, ENTITY_KINDS, EVENT_KINDS, IMPORTANCE, LINK_KINDS, LOOK_KINDS, PLACE_KINDS, PLACE_LINKS, RELATION_KINDS,
   anilistCandidates, emptyGraph, foldGraph, graphForPrompt, slug, type Graph, type GraphDelta, type GPersona,
 } from "@/lib/plot-graph";
 import type { CharacterLite, CharacterRole, CorpusProgress } from "@/lib/types";
@@ -13,6 +13,7 @@ import { bestRouteTier, runTask } from "./llm";
 import { getLlmConfig } from "./llm-config";
 import { prequelChain } from "./plot";
 import { checkLooks, fandomLooks } from "./plot-looks";
+import { mapStep } from "./plot-map";
 import { deepPlan, type DeepPlan } from "./plot-deep";
 import { characterBase, seedCharacters, titleCharacters } from "./plot-graph";
 import { registerHandler } from "./tasks";
@@ -23,8 +24,8 @@ import { registerHandler } from "./tasks";
 // от хэша пересказа: поменялся текст серии — пересчитывается её порция и всё после. Таблицы plot_* — производные:
 // materializeGraph переписывает строки тайтла с source = 'graph' целиком.
 
-const PROMPT_V = 5;
-const INPUT_V = 5;
+const PROMPT_V = 6;
+const INPUT_V = 6;
 const SOURCE = "graph";
 
 const subject = (id: number, upTo: number) => `graph:${id}:${upTo}`;
@@ -41,16 +42,17 @@ const optional = (s: JsonSchema, keys: string[]): JsonSchema => ({ ...s, require
 
 const KEY = "ключ: латиницей, коротко и навсегда (rimuru, benimaru, ogre-clan); у известных — как в состоянии";
 
-const SCHEMA: JsonSchema = obj({
+const SCHEMA: JsonSchema = optional(obj({
   personas: arr(optional(obj({
     key: str(KEY), kind: en(ENTITY_KINDS), importance: en(IMPORTANCE),
     name_ru: str("как зритель называет его на конец последней данной серии"),
     name_before_ru: str("если имя name_ru зритель узнал позже первого появления (имя дали или назвали потом) — как звали до этого: «генерал орков»; иначе пусто"),
+    name_ep: int("серия, в которой зритель впервые услышал name_ru"),
     name_en: str("как в английском тексте"), name_ja: str("по-японски, если известно, иначе пусто"),
     description_ru: str("1–2 предложения: кто это на конец последней данной серии, только по увиденному"),
     goal_ru: str("чего хочет сейчас, коротко; не ясно — пусто"),
     first_ep: int("серия первого появления"),
-  }), ["name_before_ru"]), 40, "только те, кто действует в новых сериях: новые и прежние, у прежних — обновлённое описание; остальных не повторяй"),
+  }), ["name_before_ru", "name_ep"]), 40, "только те, кто действует в новых сериях: новые и прежние, у прежних — обновлённое описание; остальных не повторяй"),
   aliases: arr(obj({
     key: str(), alias: str("по-русски"), kind: en(ALIAS_KINDS), who_ru: str("кто так зовёт; все — пусто"), ep: int(),
     look: str("ключ облика из looks, если имя относится к особому облику (прошлая жизнь, маскировка, форма); иначе пусто"),
@@ -69,19 +71,29 @@ const SCHEMA: JsonSchema = obj({
     a: str(), b: str(), kind: en(RELATION_KINDS, "a по отношению к b: «служит» — a служит b"), label_ru: str("уточнение: «брат», «приёмный отец»"),
     from_ep: int(), ended_ep: int("отношение кончилось в серии; иначе 0"),
   }), 40, "новые отношения и конец прежних"),
-  events: arr(obj({
+  events: arr(optional(obj({
     key: str("ключ события латиницей, новый для каждого события"), title_ru: str("коротко: «Орки сжигают деревню огров»"),
     summary_ru: str("1–2 предложения"), course_ru: str("как шло: 2–4 предложения"), kind: en(EVENT_KINDS),
     major: { type: "boolean", description: "важно для сюжета сезона" }, ep_from: int(), ep_to: int(), arc_ru: str("арка или этап; нет — пусто"),
     participants: arr(obj({ key: str(), role_ru: str("роль в событии: нападает, защищает, свидетель"), motive_ru: str("зачем, если серия это показала; иначе пусто") }), 30),
-  }), 10, "события новых серий: важные для сюжета, не каждую реплику"),
+    where: str("ключ места из places, где это произошло; не ясно — пусто"),
+  }), ["where"]), 10, "события новых серий: важные для сюжета, не каждую реплику"),
+  places: arr(optional(obj({
+    key: str("ключ места латиницей: jura-forest, goblin-village; у известных — как в состоянии"), name_ru: str("как зритель называет место сейчас"),
+    name_en: str("как на английской вики или карте: Great Jura Forest, Dwargon"), kind: en(PLACE_KINDS),
+    inside: str("ключ места, внутри которого это: деревня — в лесу, лес — в стране или на континенте; не ясно — пусто"),
+    first_ep: int("серия, где место впервые показано или названо"), description_ru: str("1 предложение: что это за место сейчас"),
+    name_before_ru: str("если название узнали позже — как называли до этого; иначе пусто"), name_ep: int("серия, где прозвучало name_ru"),
+  }), ["name_before_ru", "name_ep"]), 20, "места, где происходит действие или о которых говорят: новые и изменившиеся (переименование, разрушение); остальных не повторяй"),
+  place_links: arr(obj({ a: str("ключ места"), b: str("ключ места"), kind: en(PLACE_LINKS, "a по отношению к b"), distance_ru: str("что сказано о пути: «три дня пешком»; нет — пусто"), ep: int() }), 15,
+    "взаимное расположение мест, только если оно сказано или показано"),
   links: arr(obj({ from: str("ключ события-причины"), to: str("ключ события-следствия"), kind: en(LINK_KINDS), note_ru: str() }), 30,
     "почему случилось событие: связи от прежних или новых событий к новым"),
   abilities: arr(obj({ key: str("ключ персонажа, у которого эта способность"), name_ru: str(), text_ru: str("что делает, коротко"), status: en(ABILITY_STATUS), ep: int() }), 8,
     "способности, если в тайтле есть система сил: только важные для сюжета, новые и сменившие статус; мелкие навыки не нужны"),
   group_word_ru: str("как в тайтле называют группы во множественном числе: «кланы», «команды»; групп нет — пусто"),
   power_system: { type: "boolean", description: "есть ли в тайтле система сил (магия, навыки, техники)" },
-});
+}), ["places", "place_links"]);
 
 const SYSTEM = `Ты ведёшь граф сюжета аниме серия за серией, как зритель, который смотрит впервые: кто есть кто, как их зовут, как выглядят, кто с кем связан, что произошло и почему.
 Тебе дают граф после прошлых серий и тексты следующих серий. Верни только дополнения по новым сериям.
@@ -93,12 +105,15 @@ const SYSTEM = `Ты ведёшь граф сюжета аниме серия з
 - Имя — то, что зритель знает в этой серии. Персонаж, которому имя дали или которого назвали позже, до этого зовётся описанием («генерал орков»): name_before_ru — прежнее, новое имя — в aliases kind «имя» с серией, где его узнали.
 - Персонаж под описательным именем или титулом («Орк-лорд»), у которого потом узнали имя, — тот же ключ, а не новый персонаж.
 - Двое с одним именем (отец и сын, тёзки) — разные персонажи с разными ключами.
+- Имена — транслитерация, а не перевод: Historia — Хистория (не «История»), Himmel — Химмель. Титулы и должности — переводом по смыслу: Great Mage — Великий маг (не «Великая магия»).
+- members — все известные участники группы, включая главных героев. Ушёл (погиб, покинул) — to_ep; снова в ту же группу — только если вернулся в сюжете.
 - name_en — как в английском тексте; если персонаж есть в списке AniList — ровно как там.
 - Имена из словаря Shikimori — строго как там; остальные японские — по Поливанову; одного персонажа везде одинаково.
 - Организации, союзы, кланы, отряды, команды, гильдии, государства с правителями — персонажи kind «группа» (например, «Умеренная клоунада»), и members для каждого известного участника. Группа без участников не нужна.
 - aliases — только собственные имена, прозвища и титулы, которыми персонажа называют вместо имени. Описание («слизень», «дракон», «уникальный») — не имя.
 - looks — как персонаж выглядит в кадре. Первый облик заметного персонажа — kind «обычный». Новый облик — только с серии, где его показали: «принял человеческий облик», «превратился в титана». Прошлая жизнь, воспоминание, другой человек до перерождения — kind «прошлое», это не нынешний облик.
 - events — 2–4 на серию, главное. Ключ — новый для каждого события. links — только если связь видна из текста.
+- places — где происходит действие: страны, города, деревни, леса, пещеры, важные здания. inside — во что вложено место. Место, у которого название узнали позже, до этого зовётся описанием («деревня гоблинов»). События — с where, если место понятно.
 - Пиши сжато: описания и уточнения — коротко, без повторов. Не повторяй того, что уже есть в графе: имена, облики, отношения, события — только новое.
 - Серии (ep, first_ep, from_ep, ep_from) — номера из заголовков «### Серия N».`;
 
@@ -299,6 +314,15 @@ export async function materializeGraph(id: number): Promise<{ entities: number; 
     entityOf.set(p.key, e);
     claimed.add(e);
   }
+  // Места — свои сущности; ключ франшизы с приставкой place- не пересекается с ключами персонажей
+  for (const pl of g.places.values()) {
+    const old = keyRows.get(pl.key);
+    const e = old !== undefined && !claimed.has(old) ? old : newEntity.get("place", pl.name_en || pl.name_ru, pl.name_ru || null, null, t, t)!.id;
+    entityOf.set(pl.key, e);
+    claimed.add(e);
+    if (old !== e) db.prepare("INSERT OR REPLACE INTO plot_key (root_id, key, entity_id) VALUES (?, ?, ?)").run(root, pl.key, e);
+    db.prepare("UPDATE plot_entity SET kind = 'place', name = ?, name_ru = ?, updated_at = ? WHERE id = ?").run(pl.name_en || pl.name_ru, pl.name_ru, t, e);
+  }
   for (const p of personas) {
     const e = entityOf.get(p.key)!;
     if (keyRows.get(p.key) !== e) db.prepare("INSERT OR REPLACE INTO plot_key (root_id, key, entity_id) VALUES (?, ?, ?)").run(root, p.key, e);
@@ -318,7 +342,7 @@ export async function materializeGraph(id: number): Promise<{ entities: number; 
       db.prepare("DELETE FROM plot_event_participant WHERE event_id = ?").run(ev);
       db.prepare("DELETE FROM plot_event_link WHERE from_event = ? OR to_event = ?").run(ev, ev);
     }
-    for (const table of ["plot_event", "plot_name", "plot_alias", "plot_relation", "plot_look", "plot_identity", "plot_member", "plot_ability"]) {
+    for (const table of ["plot_event", "plot_place", "plot_place_link", "plot_name", "plot_alias", "plot_relation", "plot_look", "plot_identity", "plot_member", "plot_ability"]) {
       db.prepare(`DELETE FROM ${table} WHERE anilist_id = ? AND source = ?`).run(id, SOURCE);
     }
     db.prepare("DELETE FROM plot_note WHERE anilist_id = ?").run(id);
@@ -330,9 +354,14 @@ export async function materializeGraph(id: number): Promise<{ entities: number; 
     const firstHere = new Map<string, number>();
     for (const n of mine(g.notes)) firstHere.set(n.key, Math.min(firstHere.get(n.key) ?? Infinity, n.from));
     for (const p of g.personas.values()) if (p.title === id) firstHere.set(p.key, Math.min(firstHere.get(p.key) ?? Infinity, p.first_ep));
+    for (const p of g.places.values()) if (p.title === id) firstHere.set(p.key, Math.min(firstHere.get(p.key) ?? Infinity, p.first_ep));
     const app = db.prepare(`INSERT INTO plot_appearance (entity_id, anilist_id, role, first_ep, source) VALUES (?, ?, ?, ?, ?)
       ON CONFLICT (entity_id, anilist_id) DO UPDATE SET first_ep = excluded.first_ep, role = COALESCE(plot_appearance.role, excluded.role)`);
-    for (const [key, ep] of firstHere) app.run(E(key), id, ROLE[g.personas.get(key)!.importance], ep, SOURCE);
+    for (const [key, ep] of firstHere) if (entityOf.has(key)) app.run(E(key), id, ROLE[g.personas.get(key)?.importance ?? "второй план"], ep, SOURCE);
+    const place = db.prepare("INSERT OR REPLACE INTO plot_place (entity_id, anilist_id, kind, inside_id, from_ep, source) VALUES (?, ?, ?, ?, ?, ?)");
+    for (const pl of mine(g.places.values())) place.run(E(pl.key), id, pl.kind, pl.inside && entityOf.has(pl.inside) && pl.inside !== pl.key ? E(pl.inside) : null, pl.first_ep, SOURCE);
+    const plink = db.prepare("INSERT INTO plot_place_link (a, b, kind, distance, anilist_id, revealed_ep, source) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    for (const l of mine(g.placeLinks)) plink.run(E(l.a), E(l.b), l.kind, l.distance_ru || null, id, l.revealed, SOURCE);
 
     const note = db.prepare("INSERT OR REPLACE INTO plot_note (entity_id, anilist_id, up_to, description, goal) VALUES (?, ?, ?, ?, ?)");
     for (const n of mine(g.notes)) note.run(E(n.key), id, n.upTo, n.description_ru, n.goal_ru || null);
@@ -357,13 +386,13 @@ export async function materializeGraph(id: number): Promise<{ entities: number; 
     for (const a of mine(g.abilities)) ab.run(E(a.key), id, a.name_ru, a.text_ru || null, a.status, a.revealed, SOURCE);
 
     const evId = new Map<string, number>();
-    const ev = db.prepare<[number, string, string, string, number, number, number, string, number, string, number], { id: number }>(`
-      INSERT INTO plot_event (anilist_id, level, kind, title, summary, ep_from, ep_to, revealed_ep, source, data, created_at, key, major)
-      VALUES (?, 'event', ?, ?, ?, ?, ?, ?, '${SOURCE}', ?, ?, ?, ?) RETURNING id`);
+    const ev = db.prepare<[number, string, string, string, number, number, number, string, number, string, number, number | null], { id: number }>(`
+      INSERT INTO plot_event (anilist_id, level, kind, title, summary, ep_from, ep_to, revealed_ep, source, data, created_at, key, major, place_id)
+      VALUES (?, 'event', ?, ?, ?, ?, ?, ?, '${SOURCE}', ?, ?, ?, ?, ?) RETURNING id`);
     const part = db.prepare("INSERT OR IGNORE INTO plot_event_participant (event_id, entity_id, role) VALUES (?, ?, ?)");
     for (const e of mine(g.events.values())) {
       const data = JSON.stringify({ course: e.course_ru, arc: e.arc_ru, motives: Object.fromEntries(e.participants.filter((p) => p.motive_ru).map((p) => [E(p.key), p.motive_ru])) });
-      const row = ev.get(id, e.kind, e.title_ru, e.summary_ru, e.ep_from, e.ep_to, e.revealed, data, t, e.key, Number(e.major))!;
+      const row = ev.get(id, e.kind, e.title_ru, e.summary_ru, e.ep_from, e.ep_to, e.revealed, data, t, e.key, Number(e.major), e.where && entityOf.has(e.where) ? E(e.where) : null)!;
       evId.set(e.key, row.id);
       for (const p of e.participants) part.run(row.id, E(p.key), p.role_ru || null);
       events++;
@@ -439,6 +468,8 @@ registerHandler("graph", {
     touch({ step: "Облики на портретах" });
     await fandomLooks(id, signal).catch((e) => { if (signal.aborted) throw e; p.errors.push(`Fandom: ${e instanceof Error ? e.message : String(e)}`); });
     await checkLooks(id, signal).catch((e) => { if (signal.aborted) throw e; p.errors.push(`Облики: ${e instanceof Error ? e.message : String(e)}`); });
+    touch({ step: "Карта мест" });
+    await mapStep(id, signal, (done, total) => touch({ done, total })).catch((e) => { if (signal.aborted) throw e; p.errors.push(`Карта: ${e instanceof Error ? e.message : String(e)}`); });
     touch({ step: "готово", finished: true, etaSec: 0 });
     if (failed && !r.entities) throw failed;
     return { summary: `Персонажей и групп: ${r.entities}, событий: ${r.events}` + (failed ? " (граф неполный: порция не удалась)" : ""), isNew: r.entities > 0 };

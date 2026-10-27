@@ -14,7 +14,7 @@ import { useCharacterHover } from "./HoverCard";
 import { Img } from "./Img";
 import { Lightbox } from "./Lightbox";
 import { TitleCard } from "./TitleCard";
-import { Badge, Chip, cx, ErrorBox, Spinner } from "./ui";
+import { Badge, Chip, cx, ErrorBox, Skel, SkelPosters, SkelText } from "./ui";
 
 // Персонажи: блок на странице тайтла, вкладка «Персонажи» и страница персонажа. Всё — на серию курсора
 // («Сюжет на серию N»: мой прогресс, другая серия или весь сезон); что раскрыто позже — не показывается.
@@ -106,19 +106,21 @@ export function CharacterCard({ m, anilistId, big }: { m: CastMember; anilistId:
 
 /** Блок «Персонажи» на странице тайтла: выбор серии, главные и второй план лентой, ссылка на всех. */
 export function CharacterStrip({ media }: { media: AnimeDetails }) {
-  const { data: cast } = useTitleCast(media.id);
-  if (!cast?.members.length) return null;
-  const shown = cast.members.slice(0, 10);
+  const { data: cast, isLoading } = useTitleCast(media.id);
+  // Загружается — заголовок и ссылка сразу, вместо карточек — заглушки того же размера; персонажей нет — блока нет
+  if (!isLoading && !cast?.members.length) return null;
+  const shown = cast?.members.slice(0, 10) ?? [];
   return (
     <section>
       <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
-        <h2 className="mr-auto text-xl font-bold">Персонажи <span className="text-base font-normal text-gray-500">{cast.members.length}</span></h2>
-        {cast.built && <EpisodePicker anilistId={media.id} cursor={cast.cursor} />}
+        <h2 className="mr-auto text-xl font-bold">Персонажи {cast && <span className="text-base font-normal text-gray-500">{cast.members.length}</span>}</h2>
+        {cast?.built && <EpisodePicker anilistId={media.id} cursor={cast.cursor} />}
         <Link href={`/anime/${media.id}/characters`} className="text-sm text-accent-300 hover:text-accent-200">Все персонажи</Link>
       </div>
-      <CastNotice cast={cast} />
+      {cast && <CastNotice cast={cast} />}
       <div className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-2 pt-1">
-        {shown.map((m) => <div key={m.href} className="w-32 shrink-0"><CharacterCard m={m} anilistId={media.id} /></div>)}
+        {cast ? shown.map((m) => <div key={m.href} className="w-32 shrink-0"><CharacterCard m={m} anilistId={media.id} /></div>)
+          : Array.from({ length: 8 }, (_, i) => <Skel key={i} className="aspect-2/3 w-32 shrink-0 rounded-xl" />)}
       </div>
     </section>
   );
@@ -157,8 +159,21 @@ export function TitleCharactersView({ id }: { id: number }) {
           <h1 className="mt-1 text-2xl font-bold">Персонажи {cast && <span className="text-lg font-normal text-gray-500">{cast.members.length}</span>}</h1>
         </div>
         {cast?.built && <EpisodePicker anilistId={id} cursor={cast.cursor} />}
+        {isLoading && <Skel className="h-9 w-44 rounded-full" />}
       </div>
-      {isLoading && <Spinner />}
+      {isLoading && (
+        <>
+          <Skel className="h-9 w-full max-w-xs rounded-lg" />
+          <section className="space-y-3">
+            <Skel className="h-4 w-24" />
+            <SkelPosters count={5} className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5" />
+          </section>
+          <section className="space-y-3">
+            <Skel className="h-4 w-28" />
+            <SkelPosters count={16} className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8" />
+          </section>
+        </>
+      )}
       {cast && <CastNotice cast={cast} />}
       {cast && cast.members.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
@@ -240,7 +255,7 @@ export function CharacterView({ param }: { param: string }) {
   const { byId: myList } = useList();
   useEffect(() => { if (c?.redirect) router.replace(c.redirect); }, [c?.redirect, router]);
   if (error) return <ErrorBox error={error} />;
-  if (isLoading || !c || c.redirect) return <Spinner />;
+  if (isLoading || !c || c.redirect) return <CharacterPageSkeleton />;
   // Путь — через тайтл, откуда пришли (если персонаж в нём есть), иначе через тот, что смотрю, иначе через первое появление
   const watching = c.appearances.find((a) => myList.get(a.media.id)?.status === "watching")?.media ?? null;
   const from = c.appearances.find((a) => a.media.id === remembered)?.media
@@ -264,6 +279,33 @@ export function CharacterView({ param }: { param: string }) {
     );
   }
   return <CharacterPage key={c.href} c={c} crumbs={crumbs(c.nameRu ?? c.name)} watching={watching && watching.id !== from?.id ? { id: watching.id, title: displayTitle(watching.title), ep: myList.get(watching.id)?.episodes ?? 0 } : null} />;
+}
+
+/** Страница персонажа до загрузки — та же раскладка: крошки, облик слева, имя и описание, имена, появления. */
+function CharacterPageSkeleton() {
+  return (
+    <div className="mx-auto max-w-6xl space-y-4 p-4 sm:p-6" aria-busy>
+      <Skel className="h-4 w-72" />
+      <div className="space-y-8">
+        <div className="flex flex-col gap-6 md:flex-row">
+          <div className="w-full shrink-0 space-y-2 md:w-80">
+            <Skel className="aspect-4/5 w-full rounded-xl" />
+            <div className="flex gap-2">{[0, 1, 2, 3].map((i) => <Skel key={i} className="h-16 flex-1 rounded-lg" />)}</div>
+          </div>
+          <div className="min-w-0 flex-1 space-y-4">
+            <div className="space-y-2"><Skel className="h-9 w-64" /><Skel className="h-4 w-48" /></div>
+            <SkelText lines={4} className="max-w-2xl" />
+            <div className="flex gap-2">{[0, 1, 2].map((i) => <Skel key={i} className="h-6 w-28 rounded-full" />)}</div>
+            <div className="space-y-2"><Skel className="h-3 w-32" /><div className="flex gap-2">{[0, 1, 2].map((i) => <Skel key={i} className="h-8 w-32 rounded-full" />)}</div></div>
+          </div>
+        </div>
+        <section className="space-y-3">
+          <Skel className="h-6 w-36" />
+          <div className="flex gap-4 overflow-hidden">{[0, 1, 2, 3, 4].map((i) => <Skel key={i} className="aspect-2/3 w-36 shrink-0 rounded-xl sm:w-40" />)}</div>
+        </section>
+      </div>
+    </div>
+  );
 }
 
 /** Мой статус тайтла коротко: «смотрю · 7 серия», «просмотрено». */

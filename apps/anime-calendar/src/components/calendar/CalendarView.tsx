@@ -10,7 +10,7 @@ import { browserTimeZone, monthName, tzLabel } from "@/lib/time";
 import { useUrlState } from "@/lib/useUrlState";
 import { Drawer } from "../Drawer";
 import { FilterPanel } from "../FilterPanel";
-import { Button, ErrorBox, Spinner } from "../ui";
+import { Button, ErrorBox, Skel, Spinner } from "../ui";
 import { AgendaView } from "./AgendaView";
 import { DayDrawer } from "./DayDrawer";
 import { MonthGrid } from "./MonthGrid";
@@ -103,7 +103,7 @@ export function CalendarView() {
 
       <p className="mb-3 flex flex-wrap items-center gap-x-2 text-sm text-gray-400">
         <FlagIcon className="h-4 w-4 text-purple-400" />
-        {filters.mode === "finales"
+        {isLoading ? <span className="inline-flex"><Skel className="h-4 w-44" /></span> : filters.mode === "finales"
           ? `${finales} ${plural(finales, "финал", "финала", "финалов")} сезонов`
           : `${total} ${plural(total, "серия", "серии", "серий")}, из них ${finales} ${plural(finales, "финал", "финала", "финалов")}`}
         <span className="text-gray-600">·</span>
@@ -111,19 +111,13 @@ export function CalendarView() {
       </p>
 
       {error ? <ErrorBox error={error} /> : null}
-      {isLoading ? (
-        <div className="flex h-96 items-center justify-center rounded-xl bg-gray-800/40">
-          <div className="flex flex-col items-center gap-3 text-sm text-gray-400">
-            <Spinner className="h-8 w-8" />
-            Загружаю расписание из AniList…
-          </div>
-        </div>
-      ) : view === "month" ? (
-        <MonthGrid days={days} byDay={byDay} today={today} onOpen={(key, focus) => setOpenDay({ key, focus: focus ?? null })} />
+      {/* Пока расписание грузится, сетка дней уже настоящая (числа кликабельны), выпуски — заглушками */}
+      {view === "month" ? (
+        <MonthGrid days={days} byDay={byDay} today={today} loading={isLoading} onOpen={(key, focus) => setOpenDay({ key, focus: focus ?? null })} />
       ) : view === "week" ? (
-        <WeekView days={days} byDay={byDay} today={today} onOpen={(key, focus) => setOpenDay({ key, focus: focus ?? null })} />
+        <WeekView days={days} byDay={byDay} today={today} loading={isLoading} onOpen={(key, focus) => setOpenDay({ key, focus: focus ?? null })} />
       ) : (
-        <AgendaView days={days} byDay={byDay} today={today} />
+        <AgendaView days={days} byDay={byDay} today={today} loading={isLoading} />
       )}
 
       <DayDrawer

@@ -8,7 +8,7 @@ import type { EventBrief, TitleEvents } from "@/lib/types";
 import { Breadcrumbs, useRememberTitle } from "./Breadcrumbs";
 import { EpisodePicker } from "./Characters";
 import { EVENT_TONE, EventCard, eventHref } from "./Events";
-import { Badge, cx, ErrorBox, Segmented, Spinner, TONE_CLASS } from "./ui";
+import { Badge, cx, ErrorBox, Segmented, Skel, TONE_CLASS } from "./ui";
 
 // Карта событий тайтла: «Дорожки» (сюжетные линии по сериям, стрелки причин), «Цепочка» (что привело к событию
 // и к чему оно привело), «Арки» (по аркам карточками). Всё — на «Сюжет на серию N»: дальше — только число скрытого.
@@ -37,9 +37,9 @@ export function EventMapView({ id }: { id: number }) {
           <h1 className="mt-1 text-2xl font-bold">Карта событий {data && <span className="text-lg font-normal text-gray-500">{events.length}</span>}</h1>
         </div>
         <Segmented value={mode} onChange={setMode} options={[["lanes", "Дорожки"], ["chain", "Цепочка"], ["arcs", "Арки"]]} />
-        {data && <EpisodePicker anilistId={id} cursor={data.cursor} />}
+        {data ? <EpisodePicker anilistId={id} cursor={data.cursor} /> : <Skel className="h-9 w-44 rounded-full" />}
       </div>
-      {isLoading && <Spinner />}
+      {isLoading && <Skel className="h-[520px] w-full rounded-2xl" />}
       {data && !events.length && <p className="text-gray-400">На эту серию событий пока нет.</p>}
       {data && events.length > 0 && mode === "lanes" && <Lanes data={data} events={events} selected={selected} onSelect={setSelected} />}
       {data && events.length > 0 && mode === "chain" && <Chain events={events} center={selected ?? [...events].reverse().find((e) => e.major)?.key ?? events.at(-1)!.key} onSelect={setSelected} />}

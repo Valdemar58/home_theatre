@@ -10,7 +10,7 @@ import { useUrlState } from "@/lib/useUrlState";
 import { entryKey, ListControl } from "./ListControl";
 import { ListsSwitch } from "./SharedListsView";
 import { TitleCard } from "./TitleCard";
-import { cx, EmptyState, ErrorBox, Spinner } from "./ui";
+import { cx, EmptyState, ErrorBox, Skel } from "./ui";
 
 const TABS: (ListStatus | "waiting")[] = ["watching", "waiting", "planned", "completed", "on_hold", "dropped", "rewatching"];
 
@@ -29,13 +29,13 @@ export function ListsView({ owner }: { owner?: { id: number; name: string } } = 
   // и переезжает при смене вкладки или обновлении страницы
   const snapshot = useRef<{ tab: string; ids: Set<number> } | null>(null);
 
-  if (isLoading) return <div className="flex h-64 items-center justify-center"><Spinner className="h-8 w-8" /></div>;
   if (error) return <ErrorBox error={error} />;
 
   const all = data ?? [];
   const counts = Object.fromEntries(TABS.map((t) => [t, all.filter((e) => entryKey(e) === t).length]));
-  if (snapshot.current?.tab !== tab) snapshot.current = { tab, ids: new Set(all.filter((e) => entryKey(e) === tab).map((e) => e.anilistId)) };
-  const pinned = owner ? new Set<number>() : snapshot.current.ids;
+  // Снимок берём только по загруженному списку, иначе вкладка «застынет» пустой
+  if (!isLoading && snapshot.current?.tab !== tab) snapshot.current = { tab, ids: new Set(all.filter((e) => entryKey(e) === tab).map((e) => e.anilistId)) };
+  const pinned = owner ? new Set<number>() : snapshot.current?.ids ?? new Set<number>();
   let items = all.filter((e) => entryKey(e) === tab || pinned.has(e.anilistId));
   const back = (e: ListEntryWithMedia) => e.media && upsert.mutate({
     media: e.media, patch: tab === "waiting" ? { status: "planned", waiting: true } : { status: tab as ListStatus, waiting: false },
@@ -51,12 +51,25 @@ export function ListsView({ owner }: { owner?: { id: number; name: string } } = 
           <button key={t} onClick={() => setParams({ tab: t === "watching" ? null : t })}
             className={cx("-mb-px whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium transition",
               tab === t ? "border-indigo-500 text-white" : "border-transparent text-gray-400 hover:text-gray-200")}>
-            {LIST_LABELS[t]} <span className="ml-1 rounded-full bg-gray-700 px-2 py-0.5 text-xs">{counts[t]}</span>
+            {LIST_LABELS[t]}{" "}
+            {isLoading
+              ? <span className="inline-flex align-middle"><Skel className="ml-1 h-5 w-7 rounded-full" /></span>
+              : <span className="ml-1 rounded-full bg-gray-700 px-2 py-0.5 text-xs">{counts[t]}</span>}
           </button>
         ))}
       </div>
 
-      {items.length === 0 ? (
+      {isLoading ? (
+        // Постеры с местом под кнопку списка — сетка та же, что у настоящих карточек
+        <div aria-busy className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 2xl:grid-cols-7">
+          {Array.from({ length: 10 }, (_, i) => (
+            <div key={i}>
+              <Skel className="aspect-2/3 w-full rounded-xl" />
+              <Skel className="mt-2 h-7 w-28 rounded-lg" />
+            </div>
+          ))}
+        </div>
+      ) : items.length === 0 ? (
         owner ? <EmptyState title="Здесь пока пусто">{owner.name} ещё ничего сюда не добавил.</EmptyState> : <EmptyState title="Здесь пока пусто">
           Добавляй тайтлы из <Link href="/calendar" className="text-indigo-300 underline">календаря</Link> или{" "}
           <Link href="/browse" className="text-indigo-300 underline">каталога</Link>. Если привязан Shikimori, списки подтянутся оттуда.

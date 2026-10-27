@@ -7,7 +7,7 @@ import { formatDateTime } from "@/lib/time";
 import { AnilibCard } from "./AnilibCard";
 import { ADMIN_NAV } from "./AppShell";
 import { LlmCard } from "./LlmCard";
-import { Badge, Button, ErrorBox, Spinner } from "./ui";
+import { Badge, Button, ErrorBox, Skel, SkelText } from "./ui";
 
 type SyncStats = { pushed: number; pulled: number; imported: number; removed: number; skipped: number };
 
@@ -28,7 +28,16 @@ export function SettingsView() {
   const [error, setError] = useState<unknown>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  if (isLoading || !me) return <Spinner />;
+  // Пока нет «me»: карточки, не зависящие от пользователя, уже настоящие (AniLib грузится сам)
+  if (isLoading || !me) return (
+    <div className="max-w-3xl space-y-6" aria-busy>
+      <h1 className="text-2xl font-bold sm:text-3xl">Настройки</h1>
+      <Card title="Shikimori"><SkelText lines={2} /><Skel className="mt-4 h-9 w-48 rounded-lg" /></Card>
+      <Card title="AniLib"><AnilibCard /></Card>
+      <Card title="Seerr"><SkelText lines={2} /></Card>
+      <TimeCard />
+    </div>
+  );
   const s = me.shikimori;
 
   const run = async (name: string, fn: () => Promise<string>) => {
@@ -164,11 +173,17 @@ export function SettingsView() {
         )}
       </Card>
 
-      <Card title="Время">
-        <p className="text-sm text-gray-300">
-          Даты выхода показываются в часовом поясе браузера: <b>{Intl.DateTimeFormat().resolvedOptions().timeZone}</b>.
-        </p>
-      </Card>
+      <TimeCard />
     </div>
+  );
+}
+
+function TimeCard() {
+  return (
+    <Card title="Время">
+      <p className="text-sm text-gray-300">
+        Даты выхода показываются в часовом поясе браузера: <b>{Intl.DateTimeFormat().resolvedOptions().timeZone}</b>.
+      </p>
+    </Card>
   );
 }

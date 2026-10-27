@@ -9,7 +9,7 @@ import type { RelationMap } from "@/lib/types";
 import { Breadcrumbs, useRememberTitle } from "./Breadcrumbs";
 import { EpisodePicker } from "./Characters";
 import { Img } from "./Img";
-import { cx, ErrorBox, Segmented, Spinner } from "./ui";
+import { cx, ErrorBox, Segmented, Skel } from "./ui";
 
 // Карта персонажей: два режима одной сцены — «Граф» (все связи, группы островами) и «Круги» (окружение одного
 // персонажа). Узлы не перерисовываются: при смене режима или центра они переезжают на новые места.
@@ -65,9 +65,14 @@ export function RelationMapView({ id }: { id: number }) {
           <Breadcrumbs items={[{ label: anime ? displayTitle(anime.title) : "Тайтл", href: `/anime/${id}` }, { label: "Карта персонажей" }]} />
           <h1 className="mt-1 text-2xl font-bold">Карта персонажей</h1>
         </div>
-        {data && <EpisodePicker anilistId={id} cursor={data.cursor} />}
+        {data ? <EpisodePicker anilistId={id} cursor={data.cursor} /> : <Skel className="h-9 w-44 rounded-full" />}
       </div>
-      {isLoading && <Spinner />}
+      {isLoading && (
+        <div className="grid gap-4 lg:grid-cols-[1fr_20rem]">
+          <div className="space-y-2"><Skel className="h-9 w-48 rounded-lg" /><Skel className="mx-auto aspect-square max-h-[78vh] w-full rounded-2xl" /></div>
+          <Skel className="h-64 w-full rounded-2xl" />
+        </div>
+      )}
       {data && (data.nodes.length ? <Scene data={data} /> : <p className="text-gray-400">На эту серию персонажей пока нет.</p>)}
     </div>
   );

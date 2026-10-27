@@ -8,7 +8,7 @@ import { api, usePeople, useSharedLists } from "@/lib/client";
 import type { SharedListSummary } from "@/lib/types";
 import { Avatar } from "./Avatar";
 import { Img } from "./Img";
-import { Button, EmptyState, ErrorBox, Modal, Spinner } from "./ui";
+import { Button, EmptyState, ErrorBox, Modal, Skel } from "./ui";
 
 // Общие списки: приглашения, мои списки (обложки, участники, сколько смотрим/досмотрели), создание.
 
@@ -114,7 +114,6 @@ export function SharedListsView() {
   const withTitle = Number(params.get("create")) || undefined;
   const [create, setCreate] = useState(false);
   useEffect(() => { if (withTitle) setCreate(true); }, [withTitle]);
-  if (isLoading) return <div className="flex h-64 items-center justify-center"><Spinner className="h-8 w-8" /></div>;
   if (error) return <ErrorBox error={error} />;
   const lists = data ?? [];
   const invites = lists.filter((l) => l.role === "invited");
@@ -126,6 +125,21 @@ export function SharedListsView() {
         <p className="text-sm text-gray-400">Списки на нескольких: видно, кто что смотрел, «Посмотрели вместе» отмечает серии сразу всем.</p>
         <Button variant="primary" className="ml-auto" onClick={() => setCreate(true)}><PlusIcon className="h-4 w-4" />Создать</Button>
       </div>
+      {isLoading && (
+        // Карточки-заглушки той же формы: обложки 16:9, название, участники, счётчики
+        <div aria-busy className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {Array.from({ length: 4 }, (_, i) => (
+            <div key={i} className="overflow-hidden rounded-xl bg-gray-800/60 ring-1 ring-gray-700">
+              <Skel className="aspect-video w-full rounded-none rounded-t-xl" />
+              <div className="space-y-2 p-3">
+                <Skel className="h-5 w-2/3" />
+                <div className="flex items-center gap-2"><Skel className="h-7 w-16 rounded-full" /><Skel className="h-3 w-24" /></div>
+                <Skel className="h-3 w-32" />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       {invites.length > 0 && (
         <section className="mb-8">
           <h2 className="mb-3 text-lg font-semibold">Приглашения</h2>
@@ -134,7 +148,7 @@ export function SharedListsView() {
       )}
       {mine.length ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{mine.map((l) => <ListCard key={l.id} l={l} />)}</div>
-      ) : !invites.length && (
+      ) : !invites.length && !isLoading && (
         <EmptyState title="Общих списков пока нет">Создайте список и пригласите друзей — добавлять тайтлы можно отсюда и со страницы тайтла.</EmptyState>
       )}
       <CreateListModal open={create} onClose={() => setCreate(false)} withTitle={withTitle} />

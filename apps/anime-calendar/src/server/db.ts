@@ -583,6 +583,49 @@ function migrate(db: Db) {
     goal TEXT,
     PRIMARY KEY (entity_id, anilist_id, up_to)
   )`);
+  // Места (сущность kind = 'place'): вид, во что вложено, с какой серии; связи «к северу от», «три дня пути»
+  db.exec(`CREATE TABLE IF NOT EXISTS plot_place (
+    entity_id INTEGER NOT NULL,
+    anilist_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    inside_id INTEGER,
+    from_ep INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    PRIMARY KEY (entity_id, anilist_id)
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS plot_place_link (
+    a INTEGER NOT NULL,
+    b INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    distance TEXT,
+    anilist_id INTEGER NOT NULL,
+    revealed_ep INTEGER NOT NULL,
+    source TEXT NOT NULL
+  )`);
+  if (!columns("plot_event").has("place_id")) db.exec("ALTER TABLE plot_event ADD COLUMN place_id INTEGER");
+  // Карта франшизы (подложка с вики) и подписи на ней (прочитаны моделью со зрением); координаты — доли от 0 до 1
+  db.exec(`CREATE TABLE IF NOT EXISTS plot_map (
+    root_id INTEGER PRIMARY KEY,
+    url TEXT NOT NULL,
+    width INTEGER NOT NULL,
+    height INTEGER NOT NULL,
+    crop TEXT,
+    built_at INTEGER NOT NULL
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS plot_map_label (
+    root_id INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    x REAL NOT NULL, y REAL NOT NULL, w REAL NOT NULL, h REAL NOT NULL
+  )`);
+  // Точка места на карте: по подписи (label), внутри родителя (inside) или вручную (manual)
+  db.exec(`CREATE TABLE IF NOT EXISTS plot_place_pos (
+    entity_id INTEGER NOT NULL,
+    root_id INTEGER NOT NULL,
+    x REAL NOT NULL, y REAL NOT NULL,
+    how TEXT NOT NULL,
+    label TEXT,
+    PRIMARY KEY (entity_id, root_id)
+  )`);
   // Лента имён: как зритель зовёт персонажа с какой серии (безымянный генерал → «Гельд» с серии, где ему дали имя)
   db.exec(`CREATE TABLE IF NOT EXISTS plot_name (
     entity_id INTEGER NOT NULL,

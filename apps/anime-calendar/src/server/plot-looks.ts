@@ -71,7 +71,7 @@ export async function checkLooks(anilistId: number, signal?: AbortSignal): Promi
 const fandom = new RateLimiter(700);
 const UA = "home-theater/1.0 (personal media server)";
 
-async function wikiJson<T>(url: string): Promise<T | null> {
+export async function wikiJson<T>(url: string): Promise<T | null> {
   const res = await fetchWithRetry(url, { headers: { "User-Agent": UA, Accept: "application/json" } }, fandom, { timeoutMs: 30_000 });
   return res.ok ? ((await res.json()) as T) : null;
 }
@@ -104,7 +104,7 @@ async function wikiPages(host: string, name: string): Promise<WikiPage[]> {
  * Вики тайтла для картинок: та, с которой корпус брал пересказы серий, иначе — поиск Fandom по названию
  * (у «Атаки титанов» серий на вики корпус не нашёл, а страницы персонажей там есть). Вики проверяется по названию.
  */
-async function fandomHost(anilistId: number): Promise<string | null> {
+export async function fandomHost(anilistId: number): Promise<string | null> {
   const url = db.prepare<[number], { url: string }>("SELECT url FROM episode_text WHERE anilist_id = ? AND source = 'fandom' AND url IS NOT NULL LIMIT 1").get(anilistId)?.url;
   if (url) return new URL(url).host;
   return cached(`fandom-host:v1:${anilistId}`, 30 * 86400, async () => {

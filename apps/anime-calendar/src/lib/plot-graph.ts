@@ -10,12 +10,28 @@ export const RELATION_KINDS = ["семья", "друг", "союзник", "сл
 export const EVENT_KINDS = ["бой", "встреча", "решение", "раскрытие", "союз", "предательство", "потеря", "победа", "другое"] as const;
 export const LINK_KINDS = ["причина", "повод", "условие", "мотив"] as const;
 export const ABILITY_STATUS = ["постоянная", "разовая", "в процессе", "утрачена", "раскрыта частично"] as const;
+export const PLACE_KINDS = ["мир", "континент", "страна", "область", "город", "деревня", "лес", "горы", "пещера", "водоём", "здание", "другое"] as const;
+export const PLACE_LINKS = ["к северу от", "к югу от", "к востоку от", "к западу от", "рядом с", "далеко от", "граничит с"] as const;
+
+/**
+ * Место. Ключи мест живут отдельно от персонажей (у «Темпеста» есть и город, и федерация-группа): внутри графа —
+ * с приставкой place-. inside — место, внутри которого это (дерево мест: мир → страна → город → здание).
+ */
+export type GPlace = {
+  key: string; name_ru: string; name_en: string; kind: (typeof PLACE_KINDS)[number]; inside: string; first_ep: number; description_ru: string;
+  name_before_ru?: string; name_ep?: number;
+};
+/** a по отношению к b: «Дварфарго к северу от леса Джура»; distance_ru — что сказано о пути: «три дня пешком» */
+export type GPlaceLink = { a: string; b: string; kind: (typeof PLACE_LINKS)[number]; distance_ru: string; ep: number };
+export const placeKey = (k: string) => { const s = slug(k); return !s ? "" : s.startsWith("place-") ? s : `place-${s}`; };
 
 export type GPersona = {
   key: string; kind: (typeof ENTITY_KINDS)[number]; importance: (typeof IMPORTANCE)[number];
   name_ru: string; name_en: string; name_ja: string;
   /** Как звали до того, как зритель узнал name_ru (имя дали или назвали позже первого появления) */
   name_before_ru?: string;
+  /** Серия, где зритель впервые услышал name_ru (без неё новое имя — с конца порции) */
+  name_ep?: number;
   /** Кто это — на конец порции, только по увиденному */
   description_ru: string; goal_ru: string; first_ep: number;
 };
@@ -28,6 +44,8 @@ export type GEvent = {
   key: string; title_ru: string; summary_ru: string; course_ru: string; kind: (typeof EVENT_KINDS)[number]; major: boolean;
   ep_from: number; ep_to: number; arc_ru: string;
   participants: { key: string; role_ru: string; motive_ru: string }[];
+  /** Ключ места, где это произошло */
+  where?: string;
 };
 export type GLink = { from: string; to: string; kind: (typeof LINK_KINDS)[number]; note_ru: string };
 export type GAbility = { key: string; name_ru: string; text_ru: string; status: (typeof ABILITY_STATUS)[number]; ep: number };
@@ -36,6 +54,7 @@ export type GAbility = { key: string; name_ru: string; text_ru: string; status: 
 export type GraphDelta = {
   personas: GPersona[]; aliases: GAlias[]; looks: GLook[]; identities: GIdentity[]; members: GMember[];
   relations: GRelation[]; events: GEvent[]; links: GLink[]; abilities: GAbility[];
+  places?: GPlace[]; place_links?: GPlaceLink[];
   /** Как в тайтле называются группы («команды», «кланы»); пусто — групп нет */
   group_word_ru: string;
   power_system: boolean;
@@ -62,13 +81,16 @@ export type Graph = {
   events: Map<string, GEvent & At>;
   links: (GLink & At)[];
   abilities: (GAbility & At)[];
+  /** Места по ключу с приставкой place-; описания — в notes, смена названия — в names, как у персонажей */
+  places: Map<string, GPlace & At>;
+  placeLinks: (GPlaceLink & At)[];
   groupWord: string;
   powerSystem: boolean;
 };
 
 export const emptyGraph = (): Graph => ({
   upTo: 0, personas: new Map(), notes: [], names: [], aliases: [], looks: [], identities: [], members: [], relations: [],
-  events: new Map(), links: [], abilities: [], groupWord: "", powerSystem: false,
+  events: new Map(), links: [], abilities: [], places: new Map(), placeLinks: [], groupWord: "", powerSystem: false,
 });
 
 const norm = (s: string) => s.normalize("NFKC").toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ").trim();
@@ -84,7 +106,7 @@ export function foldGraph(batches: { eps: number[]; delta: GraphDelta; title?: n
     const lo = Math.min(...eps), hi = Math.max(...eps);
     const at = (ep: number) => Math.min(hi, Math.max(lo, Number.isFinite(ep) && ep > 0 ? ep : lo));
     g.upTo = Math.max(g.upTo, hi);
-    const renamed: { key: string; name: string; before: string; first: number; prev?: string }[] = [];
+    const renamed: { key: string; name: string; before: string; first: number; prev?: string; heard?: number }[] = [];
     for (const p of d.personas) {
       const key = slug(p.key);
       if (!key) continue;
@@ -94,19 +116,35 @@ export function foldGraph(batches: { eps: number[]; delta: GraphDelta; title?: n
       g.personas.set(key, { ...p, key, first_ep: first, revealed: old?.revealed ?? at(p.first_ep), title: old?.title ?? title });
       if (p.description_ru.trim()) g.notes.push({ key, from: Math.max(lo, at(p.first_ep)), upTo: hi, description_ru: p.description_ru.trim(), goal_ru: p.goal_ru.trim(), title });
       const before = old ? "" : (p.name_before_ru ?? "").trim();
-      renamed.push({ key, name: p.name_ru.trim(), before: norm(before) !== norm(p.name_ru) ? before : "", first, prev: g.names.findLast((n) => n.key === key)?.name_ru });
+      renamed.push({ key, name: p.name_ru.trim(), before: norm(before) !== norm(p.name_ru) ? before : "", first, prev: g.names.findLast((n) => n.key === key)?.name_ru,
+        heard: p.name_ep && p.name_ep > 0 ? at(p.name_ep) : undefined });
+    }
+    for (const pl of d.places ?? []) {
+      const key = placeKey(pl.key);
+      if (!key || !pl.name_ru?.trim()) continue;
+      const old = g.places.get(key);
+      const first = old?.first_ep ?? at(pl.first_ep);
+      // Родитель может появиться позже в той же порции — проверяется при записи
+      g.places.set(key, { ...pl, key, kind: pl.kind ?? "другое", inside: pl.inside ? placeKey(pl.inside) : old?.inside ?? "", first_ep: first, revealed: old?.revealed ?? first, title: old?.title ?? title });
+      if (pl.description_ru?.trim()) g.notes.push({ key, from: Math.max(lo, first), upTo: hi, description_ru: pl.description_ru.trim(), goal_ru: "", title });
+      const before = old ? "" : (pl.name_before_ru ?? "").trim();
+      renamed.push({ key, name: pl.name_ru.trim(), before: norm(before) !== norm(pl.name_ru) ? before : "", first, prev: g.names.findLast((n) => n.key === key)?.name_ru,
+        heard: pl.name_ep && pl.name_ep > 0 ? at(pl.name_ep) : undefined });
     }
     const has = (k: string) => g.personas.has(slug(k));
+    // Имя может быть и у места («Темпест» — новое название деревни гоблинов): персонаж с таким ключом важнее
+    const named = (k: string) => (has(k) ? slug(k) : g.places.has(placeKey(k)) ? placeKey(k) : "");
     const once = <T,>(list: T[], item: T, same: (x: T) => boolean) => { if (!list.some(same)) list.push(item); };
-    for (const a of d.aliases) if (a.alias && a.kind && has(a.key) && a.alias.trim())
-      once(g.aliases, { ...a, key: slug(a.key), alias: a.alias.trim(), revealed: at(a.ep), title }, (x) => x.key === slug(a.key) && norm(x.alias) === norm(a.alias));
+    for (const a of d.aliases) if (a.alias && a.kind && named(a.key) && a.alias.trim())
+      once(g.aliases, { ...a, key: named(a.key), alias: a.alias.trim(), revealed: at(a.ep), title }, (x) => x.key === named(a.key) && norm(x.alias) === norm(a.alias));
     // Лента имён. Новое имя — с серии, где его узнали (имя в aliases), без неё — с конца порции: раньше показать нельзя
     for (const n of renamed) {
       if (!n.name) continue;
       // Имя узнали, когда прозвучало оно само или его начало («Римуру» → «Римуру Темпест»)
       const known = Math.min(...g.aliases.filter((a) => a.key === n.key && a.kind === "имя" && norm(a.alias) !== norm(n.before)
         && (norm(n.name) + " ").startsWith(norm(a.alias) + " ")).map((a) => a.revealed));
-      const from = Math.max(n.first, Number.isFinite(known) ? known : hi);
+      // Серия имени: из aliases, иначе названная моделью, иначе — конец порции (раньше показать нельзя)
+      const from = Math.max(n.first, Number.isFinite(known) ? known : n.heard ?? hi);
       if (n.before) g.names.push({ key: n.key, name_ru: n.before, from: n.first, title }, { key: n.key, name_ru: n.name, from, title });
       else if (n.prev === undefined) g.names.push({ key: n.key, name_ru: n.name, from: n.first, title });
       else if (norm(n.prev) !== norm(n.name)) g.names.push({ key: n.key, name_ru: n.name, from, title });
@@ -132,7 +170,13 @@ export function foldGraph(batches: { eps: number[]; delta: GraphDelta; title?: n
       if (!key || g.events.has(key)) continue;
       const participants = e.participants.filter((p) => has(p.key)).map((p) => ({ ...p, key: slug(p.key) }));
       const from = at(e.ep_from);
-      g.events.set(key, { ...e, kind: e.kind ?? "другое", key, participants, ep_from: from, ep_to: Math.max(from, at(e.ep_to || e.ep_from)), revealed: Math.max(from, at(e.ep_to || e.ep_from)), title });
+      const where = e.where && g.places.has(placeKey(e.where)) ? placeKey(e.where) : "";
+      g.events.set(key, { ...e, kind: e.kind ?? "другое", key, participants, where, ep_from: from, ep_to: Math.max(from, at(e.ep_to || e.ep_from)), revealed: Math.max(from, at(e.ep_to || e.ep_from)), title });
+    }
+    for (const l of d.place_links ?? []) {
+      const a = placeKey(l.a), b = placeKey(l.b);
+      if (!l.kind || a === b || !g.places.has(a) || !g.places.has(b)) continue;
+      once(g.placeLinks, { ...l, a, b, distance_ru: (l.distance_ru ?? "").trim(), revealed: at(l.ep), title }, (x) => x.a === a && x.b === b && x.kind === l.kind);
     }
     // Старые ответы в журнале бывают с дырами (поле не прошло проверку) — такие записи пропускаем
     for (const l of d.links) if (l.kind && g.events.has(slug(l.from)) && g.events.has(slug(l.to)) && slug(l.from) !== slug(l.to))
@@ -159,6 +203,10 @@ export function graphForPrompt(g: Graph, recentEvents = 40): string {
   for (const p of g.personas.values()) {
     lines.push(`${p.key} | ${p.kind} | ${p.importance} | ${p.name_ru} / ${p.name_en} | ${note.get(p.key)?.description_ru ?? ""}`);
   }
+  if (g.places.size) {
+    const nameOf = (k: string) => g.names.findLast((n) => n.key === k)?.name_ru ?? g.places.get(k)?.name_ru ?? k;
+    lines.push(`Места (ключ | вид | название | внутри):\n${[...g.places.values()].map((p) => `${p.key} | ${p.kind} | ${nameOf(p.key)} / ${p.name_en} | ${p.inside ? nameOf(p.inside) : ""}`).join("\n")}`);
+  }
   if (g.aliases.length) lines.push(`Имена и облики: ${g.aliases.map((a) => `${a.key}: ${a.alias} (${a.kind})`).join("; ")}`);
   if (g.looks.length) lines.push(`Облики: ${g.looks.map((l) => `${l.key}/${l.look}: ${l.label_ru}`).join("; ")}`);
   if (g.identities.length) lines.push(`Раскрыто, что это одно лицо: ${g.identities.map((i) => `${i.a} = ${i.b}`).join("; ")}`);
@@ -168,7 +216,7 @@ export function graphForPrompt(g: Graph, recentEvents = 40): string {
   if (rels.length) lines.push(`Действующие отношения: ${rels.map((r) => `${r.a} — ${r.b}: ${r.kind}${r.label_ru ? ` (${r.label_ru})` : ""}`).join("; ")}`);
   const events = [...g.events.values()].sort((a, b) => b.ep_to - a.ep_to);
   const shown = [...events.filter((e) => e.major), ...events.filter((e) => !e.major)].slice(0, recentEvents).sort((a, b) => a.ep_from - b.ep_from);
-  if (shown.length) lines.push(`События (ключ | серии | название):\n${shown.map((e) => `${e.key} | ${e.ep_from}${e.ep_to !== e.ep_from ? `–${e.ep_to}` : ""} | ${e.title_ru}`).join("\n")}`);
+  if (shown.length) lines.push(`События (ключ | серии | название | где):\n${shown.map((e) => `${e.key} | ${e.ep_from}${e.ep_to !== e.ep_from ? `–${e.ep_to}` : ""} | ${e.title_ru} | ${e.where ?? ""}`).join("\n")}`);
   if (g.abilities.length) lines.push(`Способности: ${g.abilities.map((a) => `${a.key}: ${a.name_ru} (${a.status})`).join("; ")}`);
   return lines.join("\n");
 }

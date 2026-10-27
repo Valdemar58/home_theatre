@@ -28,7 +28,7 @@ import { Scores } from "./Scores";
 import { VoicesButton } from "./VoicesButton";
 import { TitleCard } from "./TitleCard";
 import { Videos } from "./Videos";
-import { Badge, cx, ErrorBox, Segmented, Spinner } from "./ui";
+import { Badge, cx, ErrorBox, Segmented, Skel, SkelText } from "./ui";
 import { Img, UpscaleBadge } from "./Img";
 
 function Fact({ name, children }: { name: string; children: React.ReactNode }) {
@@ -37,6 +37,31 @@ function Fact({ name, children }: { name: string; children: React.ReactNode }) {
     <div className="flex justify-between gap-4 border-b border-gray-700/60 px-4 py-2.5 text-sm last:border-0">
       <span className="text-gray-400">{name}</span>
       <span className="text-right font-medium text-gray-200">{children}</span>
+    </div>
+  );
+}
+
+/** Страница тайтла до загрузки — та же раскладка: фон, постер, бейджи, название, факты, кнопки, описание, колонка справа. */
+function TitlePageSkeleton() {
+  return (
+    <div className="-mx-4 -mt-6 lg:-mx-8" aria-busy>
+      <div className="h-64 bg-gray-800/60 sm:h-96" />
+      <div className="relative -mt-40 px-4 lg:px-8">
+        <div className="flex flex-col gap-6 sm:flex-row">
+          <Skel className="aspect-2/3 w-48 shrink-0 rounded-xl shadow-2xl sm:w-72" />
+          <div className="flex-1 space-y-3 sm:pt-20">
+            <div className="flex gap-2"><Skel className="h-5 w-16 rounded-full" /><Skel className="h-5 w-20 rounded-full" /></div>
+            <Skel className="h-10 w-3/4 max-w-xl" />
+            <Skel className="h-4 w-1/2 max-w-sm" />
+            <div className="flex gap-3"><Skel className="h-4 w-24" /><Skel className="h-4 w-20" /><Skel className="h-4 w-28" /></div>
+            <div className="flex flex-wrap gap-3 pt-2"><Skel className="h-10 w-40 rounded-lg" /><Skel className="h-10 w-32 rounded-lg" /><Skel className="h-10 w-28 rounded-lg" /></div>
+          </div>
+        </div>
+        <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_20rem]">
+          <section className="space-y-3"><Skel className="h-6 w-32" /><SkelText lines={5} /></section>
+          <aside className="space-y-3"><div className="flex flex-wrap gap-1.5">{[0, 1, 2, 3].map((i) => <Skel key={i} className="h-5 w-16 rounded-full" />)}</div><Skel className="h-56 w-full rounded-xl" /></aside>
+        </div>
+      </div>
     </div>
   );
 }
@@ -58,7 +83,7 @@ export function AnimeDetailsView({ id, openVoices, together, undo, comment }: {
   // Индекс в полноэкранном просмотре: 0 — постер из шапки, дальше — галерея (shot + 1)
   const [viewer, setViewer] = useState<number | null>(null);
 
-  if (isLoading) return <div className="flex h-96 items-center justify-center"><Spinner className="h-8 w-8" /></div>;
+  if (isLoading) return <TitlePageSkeleton />;
   if (error || !a) return <ErrorBox error={error ?? "Не найдено"} />;
 
   const finale = finaleOf(a, a.schedule);
@@ -173,6 +198,13 @@ export function AnimeDetailsView({ id, openVoices, together, undo, comment }: {
 
             <Impressions media={a} />
 
+            {/* Галерея грузится отдельно — место под неё заранее, чтобы серии ниже не прыгали */}
+            {!gallery && (
+              <section aria-busy>
+                <h2 className="mb-3 text-xl font-bold">Кадры и арт</h2>
+                <Skel className="aspect-video w-full rounded-xl" />
+              </section>
+            )}
             {images.length > 1 && (
               <section>
                 <h2 className="mb-3 text-xl font-bold">Кадры и арт <span className="text-base font-normal text-gray-500">{images.length}</span></h2>

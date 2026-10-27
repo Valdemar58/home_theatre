@@ -15,7 +15,7 @@ import { useHoverCard } from "./HoverCard";
 import { Img } from "./Img";
 import { useConfirm } from "./Dialogs";
 import { ListsSwitch } from "./SharedListsView";
-import { Button, EmptyState, ErrorBox, Spinner, cx } from "./ui";
+import { Button, EmptyState, ErrorBox, Skel, cx } from "./ui";
 import { WatchTogetherDialog } from "./WatchTogetherDialog";
 
 // Общий список: участники, тайтлы с живыми статусами каждого, «Посмотрели вместе», добавление поиском.
@@ -111,6 +111,44 @@ function AddTitle({ listId, onAdded }: { listId: number; onAdded: () => void }) 
   );
 }
 
+/** Заглушка общего списка: переключатель и вкладки живые, название, участники и строки тайтлов — по форме настоящих. */
+function SharedListSkeleton({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
+  return (
+    <div className="space-y-6" aria-busy>
+      <ListsSwitch active="shared" />
+      <div className="flex flex-wrap items-center gap-3">
+        <Skel className="h-8 w-56" />
+        <Skel className="ml-auto h-8 w-32 rounded-lg" />
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {[0, 1, 2].map((i) => <Skel key={i} className="h-8 w-28 rounded-full" />)}
+      </div>
+      <Skel className="h-9 w-full max-w-md rounded-lg" />
+      <div className="flex gap-1 overflow-x-auto border-b border-gray-700">
+        {TABS.map(([t, text]) => (
+          <button key={t} onClick={() => onTab(t)}
+            className={cx("-mb-px whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium transition",
+              tab === t ? "border-indigo-500 text-white" : "border-transparent text-gray-400 hover:text-gray-200")}>
+            {text} <span className="inline-flex align-middle"><Skel className="ml-1 h-5 w-7 rounded-full" /></span>
+          </button>
+        ))}
+      </div>
+      <ul className="grid gap-3 xl:grid-cols-2">
+        {Array.from({ length: 4 }, (_, i) => (
+          <li key={i} className="flex gap-3 rounded-xl bg-gray-800/50 p-3 ring-1 ring-gray-700">
+            <Skel className="aspect-2/3 w-16 shrink-0 rounded-lg sm:w-20" />
+            <div className="min-w-0 flex-1 space-y-2">
+              <Skel className="h-5 w-2/3" />
+              <div className="flex gap-1.5"><Skel className="h-6 w-16 rounded-full" /><Skel className="h-6 w-16 rounded-full" /></div>
+              <div className="flex items-center gap-2"><Skel className="h-7 w-40 rounded-lg" /><Skel className="h-3 w-24" /></div>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function SharedListView({ id }: { id: number }) {
   const { data: list, isLoading, error } = useSharedList(id);
   const { data: me } = useMe();
@@ -123,7 +161,7 @@ export function SharedListView({ id }: { id: number }) {
   const [rename, setRename] = useState<string | null>(null);
   const [invite, setInvite] = useState(false);
 
-  if (isLoading) return <div className="flex h-64 items-center justify-center"><Spinner className="h-8 w-8" /></div>;
+  if (isLoading) return <SharedListSkeleton tab={(params.get("tab") as Tab) || "watching"} onTab={(t) => setParams({ tab: t })} />;
   if (error || !list) return <ErrorBox error={error} />;
 
   const refresh = () => {

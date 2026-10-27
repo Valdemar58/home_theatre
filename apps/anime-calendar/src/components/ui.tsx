@@ -119,6 +119,32 @@ export function EmptyState({ title, children }: { title: string; children?: Reac
   );
 }
 
+/**
+ * Заглушка на время загрузки — того же размера, что придёт (размер задаёт className). Правило приложения: всё,
+ * что не зависит от данных (заголовки, ссылки, кнопки, раскладка), рисуется сразу; заглушкой — только место под данные.
+ */
+export function Skel({ className }: { className?: string }) {
+  return <span aria-hidden className={cx("block animate-pulse rounded-md bg-gray-700/50", className ?? "h-4 w-24")} />;
+}
+
+/** Абзац-заглушка: строки разной длины, последняя короче. */
+export function SkelText({ lines = 3, className }: { lines?: number; className?: string }) {
+  return (
+    <span aria-hidden className={cx("block space-y-2", className)}>
+      {Array.from({ length: lines }, (_, i) => <Skel key={i} className={cx("h-3.5", i === lines - 1 ? "w-3/5" : i % 2 ? "w-11/12" : "w-full")} />)}
+    </span>
+  );
+}
+
+/** Сетка постеров-заглушек 2:3 (карточки тайтлов и персонажей): классы сетки — те же, что у настоящей. */
+export function SkelPosters({ count, className }: { count: number; className: string }) {
+  return (
+    <div aria-hidden className={className}>
+      {Array.from({ length: count }, (_, i) => <Skel key={i} className="aspect-2/3 w-full rounded-xl" />)}
+    </div>
+  );
+}
+
 export function ErrorBox({ error }: { error: unknown }) {
   return (
     <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">

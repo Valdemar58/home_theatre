@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import type { Me } from "@/app/api/me/route";
-import type { AnimeDetails, CharacterDetails, EventDetails, NameRefs, PlotViewMode, RelationMap, TitleCast, TitleEvents, AnimeImages, MatchInfo, PlotInfo, SimilarItem, CalendarResponse, ListEntryWithMedia, ListStatus, MediaLite, SeerrStatus, Notice, NoticeCounts, FriendOpinion, FriendPick, Person, SharedListDetail, SharedListSummary, TogetherState, Profile, TaskInfo, VoicesState } from "./types";
+import type { AnimeDetails, CharacterDetails, EventDetails, NameRefs, PlotMap, PlotViewMode, RelationMap, TitleCast, TitleEvents, AnimeImages, MatchInfo, PlotInfo, SimilarItem, CalendarResponse, ListEntryWithMedia, ListStatus, MediaLite, SeerrStatus, Notice, NoticeCounts, FriendOpinion, FriendPick, Person, SharedListDetail, SharedListSummary, TogetherState, Profile, TaskInfo, VoicesState } from "./types";
 import { applyProgress } from "./entry-rules";
 
 export async function api<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
@@ -63,6 +63,7 @@ export function usePlotView(id: number) {
       void qc.invalidateQueries({ queryKey: ["character"] });
       void qc.invalidateQueries({ queryKey: ["events", id] });
       void qc.invalidateQueries({ queryKey: ["relations", id] });
+      void qc.invalidateQueries({ queryKey: ["plot-map", id] });
     },
   });
 }
@@ -74,6 +75,9 @@ export const useEvent = (id: number, key: string) =>
   useQuery({ queryKey: ["events", id, key], queryFn: () => api<EventDetails>(`/api/anime/${id}/events/${encodeURIComponent(key)}`), staleTime: 600_000, enabled: id > 0 && Boolean(key) });
 
 /** Карта персонажей на «Сюжет на серию» */
+export const usePlotMap = (id: number) =>
+  useQuery({ queryKey: ["plot-map", id], queryFn: () => api<PlotMap>(`/api/anime/${id}/map`), staleTime: 600_000, enabled: id > 0 });
+
 export const useRelationMap = (id: number) =>
   useQuery({ queryKey: ["relations", id], queryFn: () => api<RelationMap>(`/api/anime/${id}/relations`), staleTime: 600_000, enabled: id > 0 });
 

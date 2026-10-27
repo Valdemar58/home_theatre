@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { DayItem, GridDay } from "@/lib/schedule";
 import { WEEKDAYS } from "@/lib/time";
-import { cx } from "../ui";
+import { cx, Skel } from "../ui";
 import { CellRow, type OpenDay } from "./shared";
 
 const ROW = 24; // высота строки тайтла с отступом
@@ -24,12 +24,13 @@ function useCapacity() {
   return { ref, capacity };
 }
 
-function DayCell({ day, items, today, past, onOpen }: {
+function DayCell({ day, items, today, past, onOpen, loading }: {
   day: GridDay;
   items: DayItem[];
   today: string;
   past: boolean;
   onOpen: OpenDay;
+  loading?: boolean;
 }) {
   const { ref, capacity } = useCapacity();
   const shown = items.slice(0, capacity);
@@ -52,6 +53,8 @@ function DayCell({ day, items, today, past, onOpen }: {
         )}
       </button>
       <div className={cx("min-h-0 space-y-0.5", (!day.inMonth || past) && "opacity-60")}>
+        {/* Пока расписание грузится — строки-заглушки разной длины, число дня уже настоящее */}
+        {loading && Array.from({ length: Math.min(capacity, 1 + (day.day % 3)) }, (_, i) => <Skel key={i} className={cx("h-5.5", i % 2 ? "w-2/3" : "w-full")} />)}
         {shown.map((item) => (
           <CellRow key={`${item.media.id}-${item.airing.episode}`} item={item}
             onClick={() => onOpen(day.key, item.media.id)} />
@@ -61,17 +64,19 @@ function DayCell({ day, items, today, past, onOpen }: {
   );
 }
 
-export function MonthGrid({ days, byDay, today, onOpen, height }: {
+export function MonthGrid({ days, byDay, today, onOpen, height, loading }: {
   days: GridDay[];
   byDay: Map<string, DayItem[]>;
   today: string;
   onOpen: OpenDay;
   /** Высота сетки (Tailwind-классы); по умолчанию — на весь экран */
   height?: string;
+  /** Расписание ещё не пришло: сетка настоящая, выпуски — заглушками */
+  loading?: boolean;
 }) {
 
   return (
-    <div className="overflow-hidden rounded-xl ring-1 ring-gray-800">
+    <div className="overflow-hidden rounded-xl ring-1 ring-gray-800" aria-busy={loading || undefined}>
       <div className="grid grid-cols-7 bg-gray-800/80 text-center text-[11px] font-semibold uppercase tracking-wider text-gray-400">
         {WEEKDAYS.map((d, i) => <div key={d} className={cx("py-2", i >= 5 && "text-indigo-300/80")}>{d}</div>)}
       </div>
@@ -80,7 +85,7 @@ export function MonthGrid({ days, byDay, today, onOpen, height }: {
         style={{ gridTemplateRows: `repeat(${days.length / 7}, minmax(0, 1fr))` }}>
         {days.map((d) => (
           <DayCell key={d.key} day={d} items={byDay.get(d.key) ?? []} today={today} past={d.key < today}
-            onOpen={onOpen} />
+            onOpen={onOpen} loading={loading} />
         ))}
       </div>
     </div>

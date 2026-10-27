@@ -104,6 +104,8 @@ export type AnimeDetails = MediaLite & {
   relations: { relationType: string; media: MediaLite }[];
   tags: { name: string; rank: number; spoiler: boolean }[];
   externalIds: { tmdbTv: number | null; tmdbMovie: number | null; tvdb: number | null; tmdbSeason: number | null };
+  /** Что есть из разбора серий — чтобы блок «Сюжет» сразу знал свою форму (заглушка того же вида, без сдвига) */
+  plotHub?: { built: boolean; map: boolean };
 };
 
 /** Серия: название и описание из TMDB (русские, иначе английские) или Kitsu */
@@ -496,6 +498,17 @@ export type CharacterLite = {
 
 /** На какую серию показывать сюжет: мой прогресс, выбранная серия или весь сезон */
 export type PlotViewMode = "progress" | "ep" | "all";
+/** Карта мест на курсор зрителя: подложка с вики, закрытые подписи, места, события и пути. Координаты — доли 0…1 вырезанной карты. */
+export type PlotMap = {
+  cursor: PlotCursor;
+  map: { url: string; width: number; height: number; crop: { x: number; y: number; w: number; h: number } } | null;
+  masks: { x: number; y: number; w: number; h: number }[];
+  places: { id: number; name: string; kind: string; x: number; y: number; approx: boolean; firstEp: number; anilistId: number; inside: string | null }[];
+  events: { key: string | null; title: string; kind: string | null; anilistId: number; ep: number; placeId: number; major: boolean }[];
+  people: { id: number; name: string; href: string; image: string | null; stops: { placeId: number; anilistId: number; ep: number }[] }[];
+  hidden: number;
+};
+
 export type PlotCursor = {
   /** Досмотрено до серии (весь сезон — 1e6) */
   ep: number;
@@ -559,7 +572,7 @@ export type TitleCast = {
   /** Сколько персонажей появится после курсора */
   hidden: number;
   /** Для блока «Сюжет»: связей, событий и арок на курсор */
-  stats: { relations: number; events: number; arcs: number };
+  stats: { relations: number; events: number; arcs: number; /** Мест на карте франшизы, известных к серии; 0 — карты нет */ places: number };
 };
 
 /** Событие сюжета на курсор зрителя: участники, причины и последствия, которые он уже видел */

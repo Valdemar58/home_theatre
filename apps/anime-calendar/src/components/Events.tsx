@@ -10,7 +10,7 @@ import { Breadcrumbs, useRememberTitle } from "./Breadcrumbs";
 import { EpisodePicker } from "./Characters";
 import { Img } from "./Img";
 import { NamedText, useNames } from "./NamedText";
-import { Badge, cx, ErrorBox, Spinner, type Tone } from "./ui";
+import { Badge, cx, ErrorBox, Skel, SkelText, type Tone } from "./ui";
 
 // События сюжета: карточка (причина, повод, последствие, участники), список тайтла по аркам и страница события.
 // Всё — на «Сюжет на серию N»: последствия после этой серии не показываются, только их число.
@@ -133,7 +133,17 @@ export function EventView({ id, eventKey }: { id: number; eventKey: string }) {
   const names = useNames(e?.hiddenUntil === null ? id : 0, e?.epTo ?? e?.epFrom ?? null);
   useRememberTitle(id);
   if (error) return <ErrorBox error={error} />;
-  if (isLoading || !e) return <Spinner />;
+  if (isLoading || !e) return (
+    <div className="mx-auto max-w-4xl space-y-8 p-4 sm:p-6" aria-busy>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="mr-auto"><Breadcrumbs items={[{ label: anime ? displayTitle(anime.title) : "Тайтл", href: `/anime/${id}` }, { label: "Карта событий", href: `/anime/${id}/events` }, { label: "Событие" }]} /></div>
+        <Skel className="h-9 w-44 rounded-full" />
+      </div>
+      <div className="space-y-3"><Skel className="h-5 w-32 rounded-full" /><Skel className="h-9 w-3/4" /><SkelText lines={2} /></div>
+      <section className="space-y-3"><Skel className="h-6 w-56" />{[0, 1, 2].map((i) => <Skel key={i} className="h-16 w-full rounded-xl" />)}</section>
+      <section className="space-y-3"><Skel className="h-6 w-28" /><SkelText lines={4} /></section>
+    </div>
+  );
   const back = <Breadcrumbs items={[
     { label: anime ? displayTitle(anime.title) : "Тайтл", href: `/anime/${id}` }, { label: "Карта событий", href: `/anime/${id}/events` },
     ...(e.arc ? [{ label: `арка «${e.arc}»` }] : []), { label: e.hiddenUntil !== null ? "Событие" : e.title },

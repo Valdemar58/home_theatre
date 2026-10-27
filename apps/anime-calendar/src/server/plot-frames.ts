@@ -97,7 +97,7 @@ async function speechTimes(anilistId: number, ep: number, labels: string[], name
 // именем, — строкой. Модели остаются спорные метки: с репликами и сериями, выбор — из готовых вариантов по именам.
 // Любое сопоставление проверяется фактами: метка не звучит раньше первого появления персонажа. Результат модели —
 // в журнале знаний (пересчёт — если поменялись спорные метки или персонажи)
-const SPEAKERS_V = 4;
+const SPEAKERS_V = 5;
 const NOBODY = "никто из списка";
 
 type LabelInfo = { label: string; count: number; firstEp: number; samples: string[] };
@@ -165,7 +165,19 @@ async function speakerMap(anilistId: number): Promise<Map<string, { entity: numb
     properties: { map: { type: "array", items: { type: "object", properties: { label: { type: "string" }, who: { type: "string", enum: names } }, required: ["label", "who"] } } },
     required: ["map"],
   };
+  // Кто есть кто: метки-роли («村長» — староста, «息子» — сын вожака) звучат до того, как персонажу дали имя,
+  // поэтому модели нужны прежние имена из ленты, титулы и первое описание
+  const who = people.map((p) => {
+    const aka = [
+      ...db.prepare<[number, number], { name: string; from_ep: number }>("SELECT name, from_ep FROM plot_name WHERE entity_id = ? AND anilist_id = ? ORDER BY from_ep").all(p.id, anilistId)
+        .filter((n) => n.name !== p.name).map((n) => `${n.name} (с ${n.from_ep})`),
+      ...db.prepare<[number, number], { alias: string }>("SELECT alias FROM plot_alias WHERE entity_id = ? AND anilist_id = ? AND kind IN ('титул', 'прозвище')").all(p.id, anilistId).map((a) => a.alias),
+    ];
+    const about = db.prepare<[number, number], { description: string }>("SELECT description FROM plot_note WHERE entity_id = ? AND anilist_id = ? ORDER BY up_to LIMIT 1").get(p.id, anilistId)?.description ?? "";
+    return `${label(p)} — с ${p.firstEp} серии${aka.length ? `; также: ${aka.join(", ")}` : ""}${about ? `; ${about.slice(0, 90)}` : ""}`;
+  });
   const user = [
+    `Персонажи (кто это):\n${who.join("\n")}`,
     `Варианты (выбирай строку целиком):\n${names.join("\n")}`,
     `Метки:\n${open.map((l) => `${l.label} — ${l.count} реплик, с ${l.firstEp} серии; ${l.samples.join(" / ")}`).join("\n")}`,
   ].join("\n\n");
@@ -179,6 +191,7 @@ async function speakerMap(anilistId: number): Promise<Map<string, { entity: numb
       schema, maxTokens: 8000, timeoutMs: 300_000,
       system: `Метки говорящих из японских субтитров аниме: кто это из вариантов. У каждой метки — реплики с номерами серий.
 - Метка называет говорящего: имя, фамилию, прозвище, роль. «三上» — фамилия Сатору Миками до перерождения, «スライム» — герой в облике слизи.
+- Метка-роль («村長» — староста, «ボス» — вожак, «息子» — сын, «リーダー» — главарь) — тот, кто был в этой роли в сериях метки: сверяй с «также» и описанием персонажа. Часто это персонаж до того, как ему дали имя.
 - Если метка называет особый облик персонажа (прошлая жизнь, форма, маскировка) и такой вариант есть — выбери его.
 - Имя в метке должно звучать так же, как имя варианта (японское — в скобках): «ベルヤード» — Берьярд, а не Вельдора; «カリュブディス» — Харибда (Карибдис). Похожее начало имени — не совпадение.
 - Не уверен или это не персонаж из списка — «${NOBODY}».`,
