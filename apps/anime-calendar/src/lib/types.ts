@@ -502,8 +502,10 @@ export type PlotViewMode = "progress" | "ep" | "all";
 export type PlotMap = {
   cursor: PlotCursor;
   map: { url: string; width: number; height: number; crop: { x: number; y: number; w: number; h: number } } | null;
-  masks: { x: number; y: number; w: number; h: number }[];
-  places: { id: number; name: string; kind: string; x: number; y: number; approx: boolean; firstEp: number; anilistId: number; inside: string | null }[];
+  /** Подписи будущих мест — закрыть пятном цвета фона вокруг подписи */
+  masks: { x: number; y: number; w: number; h: number; color: string | null }[];
+  /** fog — радиус открытого тумана (доля ширины карты) */
+  places: { id: number; name: string; kind: string; x: number; y: number; approx: boolean; fog: number; firstEp: number; anilistId: number; inside: string | null }[];
   events: { key: string | null; title: string; kind: string | null; anilistId: number; ep: number; placeId: number; major: boolean }[];
   people: { id: number; name: string; href: string; image: string | null; stops: { placeId: number; anilistId: number; ep: number }[] }[];
   hidden: number;

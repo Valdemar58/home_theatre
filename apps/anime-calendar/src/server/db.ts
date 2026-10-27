@@ -617,6 +617,8 @@ function migrate(db: Db) {
     text TEXT NOT NULL,
     x REAL NOT NULL, y REAL NOT NULL, w REAL NOT NULL, h REAL NOT NULL
   )`);
+  // Цвет карты вокруг подписи — закрыть подпись будущего места пятном в цвет фона
+  if (!columns("plot_map_label").has("color")) db.exec("ALTER TABLE plot_map_label ADD COLUMN color TEXT");
   // Точка места на карте: по подписи (label), внутри родителя (inside) или вручную (manual)
   db.exec(`CREATE TABLE IF NOT EXISTS plot_place_pos (
     entity_id INTEGER NOT NULL,

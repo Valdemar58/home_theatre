@@ -2,7 +2,7 @@ import "server-only";
 import { readFile } from "node:fs/promises";
 import sharp from "sharp";
 import type { JsonSchema } from "@/lib/json-lite";
-import { dedupeLabels, dropLegend, insidePoint, isLegendText, legendEdge, matchLabel, mergeLines, plausibleLabel, tiles, type Box, type MapLabel } from "@/lib/plot-map";
+import { dedupeLabels, dropLegend, FOG_RADIUS, insidePoint, isLegendText, legendEdge, matchLabel, mergeLines, plausibleLabel, tiles, type Box, type MapLabel } from "@/lib/plot-map";
 import type { PlotMap } from "@/lib/types";
 import { getDetails } from "./anilist";
 import { db, now } from "./db";
@@ -139,6 +139,34 @@ function cleanLegend(rootId: number) {
   }
 }
 
+/**
+ * Цвет фона у каждой подписи: среднее по рамке вокруг неё (сама надпись не входит). Пятно, которым закрыта подпись
+ * будущего места, тогда сливается с бумагой или сушей, а не выглядит размытой кляксой.
+ */
+async function labelColors(rootId: number) {
+  const todo = db.prepare<[number], MapLabel & { rowid: number }>("SELECT rowid, text, x, y, w, h FROM plot_map_label WHERE root_id = ? AND color IS NULL").all(rootId);
+  if (!todo.length) return;
+  const map = db.prepare<[number], { url: string; width: number; height: number; crop: string | null }>("SELECT url, width, height, crop FROM plot_map WHERE root_id = ?").get(rootId)!;
+  const crop: Box = map.crop ? JSON.parse(map.crop) : { x: 0, y: 0, w: map.width, h: map.height };
+  const { data, info } = await sharp(await readFile((await originalFile(map.url)).file)).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const at = (x: number, y: number) => {
+    const xi = Math.min(info.width - 1, Math.max(0, Math.round(x))), yi = Math.min(info.height - 1, Math.max(0, Math.round(y)));
+    const i = (yi * info.width + xi) * 3;
+    return [data[i], data[i + 1], data[i + 2]];
+  };
+  const set = db.prepare("UPDATE plot_map_label SET color = ? WHERE rowid = ?");
+  for (const l of todo) {
+    const x0 = crop.x + l.x * crop.w, y0 = crop.y + l.y * crop.h, w = l.w * crop.w, h = l.h * crop.h, pad = Math.max(6, h * 0.6);
+    const sum = [0, 0, 0];
+    let n = 0;
+    for (let t = 0; t <= 1; t += 0.05) for (const [x, y] of [[x0 - pad + t * (w + 2 * pad), y0 - pad], [x0 - pad + t * (w + 2 * pad), y0 + h + pad], [x0 - pad, y0 - pad + t * (h + 2 * pad)], [x0 + w + pad, y0 - pad + t * (h + 2 * pad)]]) {
+      const c = at(x, y);
+      sum[0] += c[0]; sum[1] += c[1]; sum[2] += c[2]; n++;
+    }
+    set.run(`#${sum.map((v) => Math.round(v / n).toString(16).padStart(2, "0")).join("")}`, l.rowid);
+  }
+}
+
 // ---------------------------------------------------------------- места на карте
 
 type PlaceRow = { id: number; name: string; name_ru: string | null; kind: string; inside_id: number | null };
@@ -226,6 +254,7 @@ export async function mapStep(anilistId: number, signal: AbortSignal, onTile?: (
   const root = rootOf(anilistId);
   if (root === null) return { map: false, places: 0 };
   const map = await buildMap(root, anilistId, signal, onTile);
+  if (map) await labelColors(root);
   return { map, places: map ? await placePositions(root) : 0 };
 }
 
@@ -268,10 +297,14 @@ export async function mapView(userId: number, anilistId: number): Promise<PlotMa
   const visible = all.filter((p) => seen(cursor, p.anilist_id, p.first_ep));
   const known = new Set(visible.map((p) => p.label).filter(Boolean));
   // Закрываем все подписи, кроме мест, известных зрителю (на официальной карте есть и страны будущих сезонов)
-  const masks = db.prepare<[number], MapLabel>("SELECT text, x, y, w, h FROM plot_map_label WHERE root_id = ?").all(root)
-    .filter((l) => !known.has(l.text)).map(({ x, y, w, h }) => ({ x, y, w, h }));
+  const allLabels = db.prepare<[number], MapLabel & { color: string | null }>("SELECT text, x, y, w, h, color FROM plot_map_label WHERE root_id = ?").all(root);
+  const masks = allLabels.filter((l) => !known.has(l.text)).map(({ x, y, w, h, color }) => ({ x, y, w, h, color }));
+  const labelW = new Map(allLabels.map((l) => [l.text, l.w]));
+  // Туман открывается по размеру места: у страны с подписью — по ширине подписи (крупная страна — крупная надпись),
+  // у места без подписи — небольшой круг по виду
+  const fogR = (p: P) => p.how === "label" && p.label ? Math.max((FOG_RADIUS[p.kind] ?? 0.05) * 0.5, (labelW.get(p.label) ?? 0) * 0.8) : Math.min(FOG_RADIUS[p.kind] ?? 0.04, 0.045);
   const places = visible.map((p) => ({
-    id: p.id, name: nameAt(p, cursor), kind: p.kind, x: p.x, y: p.y, approx: p.how === "inside",
+    id: p.id, name: nameAt(p, cursor), kind: p.kind, x: p.x, y: p.y, approx: p.how === "inside", fog: fogR(p),
     firstEp: p.first_ep, anilistId: p.anilist_id, inside: p.inside_id !== null && byId.has(p.inside_id) && visible.some((v) => v.id === p.inside_id) ? nameAt(byId.get(p.inside_id)!, cursor) : null,
   }));
   const placeIds = new Set(places.map((p) => p.id));

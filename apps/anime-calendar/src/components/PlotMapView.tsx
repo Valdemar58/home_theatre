@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAnime, usePlotMap } from "@/lib/client";
 import { imgSrc } from "@/lib/img";
-import { FOG_RADIUS, placeLabels } from "@/lib/plot-map";
+import { placeLabels } from "@/lib/plot-map";
 import { displayTitle } from "@/lib/schedule";
 import type { PlotMap } from "@/lib/types";
 import { Breadcrumbs, useRememberTitle } from "./Breadcrumbs";
@@ -57,8 +57,13 @@ function Scene({ id, data }: { id: number; data: PlotMap }) {
   const [selected, setSelected] = useState<number | null>(null);
   // Пришли со страницы места («Показать на карте») — оно сразу выбрано
   useEffect(() => { const p = Number(new URLSearchParams(window.location.search).get("place")); if (p) setSelected(p); }, []);
-  const [view, setView] = useState({ k: 1, x: 0, y: 0 });
+  const [view, setViewRaw] = useState({ k: 1, x: 0, y: 0 });
   const box = useRef<HTMLDivElement>(null);
+  // Предел приближения — пока картинка не начала заметно пикселить (полтора пикселя экрана на пиксель карты)
+  const maxK = useRef(4);
+  // Сдвиг не дальше краёв карты: за её рамкой — легенда и пустое поле
+  const setView = (f: (v: { k: number; x: number; y: number }) => { k: number; x: number; y: number }) =>
+    setViewRaw((v) => { const n = f(v); const k = Math.min(maxK.current, Math.max(1, n.k)); return { k, x: Math.min(0, Math.max(1 - k, n.x)), y: Math.min(0, Math.max(1 - k, n.y)) }; });
   const drag = useRef<{ x: number; y: number; vx: number; vy: number; moved: boolean } | null>(null);
 
   // Ползунок — по сериям этого тайтла; предыстории видны целиком
@@ -85,7 +90,7 @@ function Scene({ id, data }: { id: number; data: PlotMap }) {
       const r = el.getBoundingClientRect();
       const mx = (e.clientX - r.left) / r.width, my = (e.clientY - r.top) / r.height;
       setView((v) => {
-        const k = Math.min(6, Math.max(1, v.k * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+        const k = Math.min(maxK.current, Math.max(1, v.k * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
         return { k, x: mx - ((mx - v.x) * k) / v.k, y: my - ((my - v.y) * k) / v.k };
       });
     };
@@ -98,22 +103,25 @@ function Scene({ id, data }: { id: number; data: PlotMap }) {
   useEffect(() => {
     const el = box.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setBoxW(el.clientWidth || 900));
+    const ro = new ResizeObserver(() => { setBoxW(el.clientWidth || 900); maxK.current = Math.max(2, (map.crop.w * 1.5) / (el.clientWidth || 900)); });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
   const KIND_RANK: Record<string, number> = { "континент": 6, "страна": 5, "лес": 4, "горы": 3, "водоём": 3, "город": 3, "деревня": 2, "пещера": 2 };
+  // Точка на экране (доли рамки): масштабируется только карта, точки и подписи — нет, поэтому при приближении
+  // близкие места расходятся
+  const screen = (p: { x: number; y: number }) => ({ x: view.x + p.x * view.k, y: view.y + p.y * view.k });
   const labelled = useMemo(() => {
-    const W = boxW * view.k, Hpx = boxW * ratio * view.k;
+    const W = boxW, Hpx = boxW * ratio;
     return placeLabels(places.map((p) => {
+      const s = { x: view.x + p.x * view.k, y: view.y + p.y * view.k };
       const w = Math.min(144, p.name.length * 6.2 + 16) / W, h = 18 / Hpx;
-      return { id: p.id, x: p.x - w / 2, y: p.y + 9 / Hpx, w, h, priority: (p.id === selected ? 1000 : 0) + (eventsAt.get(p.id)?.length ?? 0) * 2 + (KIND_RANK[p.kind] ?? 1) };
+      return { id: p.id, x: s.x - w / 2, y: s.y + 9 / Hpx, w, h, priority: (p.id === selected ? 1000 : 0) + (eventsAt.get(p.id)?.length ?? 0) * 2 + (KIND_RANK[p.kind] ?? 1) };
     }));
-  }, [places, boxW, ratio, view.k, selected, eventsAt]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [places, boxW, ratio, view, selected, eventsAt]); // eslint-disable-line react-hooks/exhaustive-deps
   const sel = selected !== null ? byId.get(selected) ?? null : null;
   const selEvents = sel ? eventsAt.get(sel.id) ?? [] : [];
   const visitors = sel ? data.people.filter((p) => stops(p).some((s) => s.placeId === sel.id)) : [];
-  const fog = (k: string) => (FOG_RADIUS[k] ?? 0.05) * 1000;
 
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_20rem]">
@@ -126,7 +134,7 @@ function Scene({ id, data }: { id: number; data: PlotMap }) {
           <div className="ml-auto flex gap-1">
             <button aria-label="Крупнее" onClick={() => setView((v) => ({ ...v, k: Math.min(6, v.k * 1.25) }))} className="rounded-lg bg-gray-800 p-2 ring-1 ring-gray-700 hover:bg-gray-700"><PlusIcon className="h-4 w-4" /></button>
             <button aria-label="Мельче" onClick={() => setView((v) => ({ ...v, k: Math.max(1, v.k / 1.25) }))} className="rounded-lg bg-gray-800 p-2 ring-1 ring-gray-700 hover:bg-gray-700"><MinusIcon className="h-4 w-4" /></button>
-            <button aria-label="Вся карта" onClick={() => setView({ k: 1, x: 0, y: 0 })} className="rounded-lg bg-gray-800 p-2 ring-1 ring-gray-700 hover:bg-gray-700"><ArrowsPointingInIcon className="h-4 w-4" /></button>
+            <button aria-label="Вся карта" onClick={() => setView(() => ({ k: 1, x: 0, y: 0 }))} className="rounded-lg bg-gray-800 p-2 ring-1 ring-gray-700 hover:bg-gray-700"><ArrowsPointingInIcon className="h-4 w-4" /></button>
           </div>
         </div>
         <div ref={box} style={{ aspectRatio: `${map.crop.w} / ${map.crop.h}` }}
@@ -142,40 +150,45 @@ function Scene({ id, data }: { id: number; data: PlotMap }) {
           }}
           onPointerUp={() => setTimeout(() => { drag.current = null; }, 0)}
           onPointerLeave={() => { drag.current = null; }}>
-          <div className="absolute inset-0 origin-top-left" style={{ transform: `translate(${view.x * 100}%, ${view.y * 100}%) scale(${view.k})` }}>
+          <div className="absolute inset-0 origin-top-left overflow-hidden" style={{ transform: `translate(${view.x * 100}%, ${view.y * 100}%) scale(${view.k})` }}>
             {/* Подложка: исходная картинка, сдвинутая так, что видна только вырезанная карта (без легенды) */}
             <img src={imgSrc(map.url)} alt="" draggable={false} className="pointer-events-none absolute max-w-none select-none"
               style={{ width: `${(map.width / map.crop.w) * 100}%`, left: `${(-map.crop.x / map.crop.w) * 100}%`, top: `${(-map.crop.y / map.crop.h) * 100}%` }} />
             <svg viewBox={`0 0 1000 ${H}`} className="absolute inset-0 h-full w-full" aria-hidden>
               <defs>
                 <filter id="soft"><feGaussianBlur stdDeviation="14" /></filter>
-                <filter id="smudge"><feGaussianBlur stdDeviation="3" /></filter>
+                <filter id="smudge"><feGaussianBlur stdDeviation="1.5" /></filter>
                 <mask id="fog-mask">
                   <rect width="1000" height={H} fill="white" />
-                  <g filter="url(#soft)">{places.map((p) => <circle key={p.id} cx={p.x * 1000} cy={p.y * H} r={fog(p.kind)} fill="black" />)}</g>
+                  <g filter="url(#soft)">{places.map((p) => <circle key={p.id} cx={p.x * 1000} cy={p.y * H} r={p.fog * 1000} fill="black" />)}</g>
                 </mask>
               </defs>
               {/* Подписи мест, которых зритель ещё не знает, закрыты всегда (даже без тумана) */}
               <g filter="url(#smudge)">
-                {data.masks.map((m, i) => <rect key={i} x={m.x * 1000 - 4} y={m.y * H - 3} width={m.w * 1000 + 8} height={m.h * H + 6} rx="6" fill="#3a3324" opacity="0.94" />)}
+                {data.masks.map((m, i) => <rect key={i} x={m.x * 1000 - 6} y={m.y * H - m.h * H * 0.9 - 4} width={m.w * 1000 + 12} height={m.h * H * 2.8 + 8} rx="6" fill={m.color ?? "#3a3324"} />)}
               </g>
               {layers.fog && <rect width="1000" height={H} fill="#05070d" opacity="0.8" mask="url(#fog-mask)" />}
-              {layers.paths && pathStops.length > 1 && (
-                <g>
-                  <polyline points={pathStops.map((s) => { const p = byId.get(s.placeId)!; return `${p.x * 1000},${p.y * H}`; }).join(" ")}
-                    fill="none" stroke="#c4b5fd" strokeWidth="3.5" strokeDasharray="2 9" strokeLinecap="round" strokeLinejoin="round" />
-                  {pathStops.map((s, i) => {
-                    const p = byId.get(s.placeId)!;
-                    return <text key={i} x={p.x * 1000 + 10} y={p.y * H - 12 - (i % 2) * 14} className="fill-violet-200 text-[13px] font-semibold" style={{ paintOrder: "stroke", stroke: "#05070d", strokeWidth: 4 }}>с. {s.ep}</text>;
-                  })}
-                </g>
-              )}
             </svg>
+          </div>
+          <div className="pointer-events-none absolute inset-0">
+            {/* Путь — в экранных координатах: толщина и пунктир не растут при приближении */}
+            {layers.paths && pathStops.length > 1 && (
+              <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full" aria-hidden>
+                <polyline points={pathStops.map((st) => { const p = screen(byId.get(st.placeId)!); return `${p.x * 100},${p.y * 100}`; }).join(" ")}
+                  fill="none" stroke="#c4b5fd" strokeWidth="2.5" strokeDasharray="2 7" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+              </svg>
+            )}
+            {layers.paths && pathStops.length > 1 && pathStops.map((s, i) => {
+              const p = screen(byId.get(s.placeId)!);
+              return <span key={`s${i}`} className="absolute text-[12px] font-semibold text-violet-200 [text-shadow:0_0_3px_#05070d,0_0_3px_#05070d]"
+                style={{ left: `calc(${p.x * 100}% + 9px)`, top: `calc(${p.y * 100}% - ${18 + (i % 2) * 13}px)` }}>с. {s.ep}</span>;
+            })}
             {places.map((p) => {
               const n = eventsAt.get(p.id)?.length ?? 0;
+              const s = screen(p);
               return (
                 <button key={p.id} onClick={() => { if (!drag.current?.moved) setSelected(p.id); }}
-                  className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5" style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%` }}>
+                  className="pointer-events-auto absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5" style={{ left: `${s.x * 100}%`, top: `${s.y * 100}%` }}>
                   <span className={cx("block h-3.5 w-3.5 rounded-full ring-2", p.approx ? "bg-transparent ring-violet-300 [outline:2px_dashed_rgba(196,181,253,0.6)] outline-offset-2" : "bg-indigo-400 ring-indigo-100", selected === p.id && "ring-4")} />
                   {/* Подпись, которая наехала бы на более важную, скрыта — видна при наведении и приближении */}
                   <span title={p.name} className={cx("max-w-36 truncate rounded bg-gray-950/75 px-1.5 text-[11px] font-medium leading-snug text-gray-100", !labelled.has(p.id) && "pointer-events-none opacity-0")}>
