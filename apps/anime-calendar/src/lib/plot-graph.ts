@@ -14,6 +14,8 @@ export const ABILITY_STATUS = ["постоянная", "разовая", "в п�
 export type GPersona = {
   key: string; kind: (typeof ENTITY_KINDS)[number]; importance: (typeof IMPORTANCE)[number];
   name_ru: string; name_en: string; name_ja: string;
+  /** Как звали до того, как зритель узнал name_ru (имя дали или назвали позже первого появления) */
+  name_before_ru?: string;
   /** Кто это — на конец порции, только по увиденному */
   description_ru: string; goal_ru: string; first_ep: number;
 };
@@ -50,6 +52,8 @@ export type Graph = {
   upTo: number;
   personas: Map<string, GPersona & At>;
   notes: (GNote & { title: number })[];
+  /** Лента имён: с какой серии зритель зовёт персонажа так (у персонажа без смены имени — одна строка) */
+  names: { key: string; name_ru: string; from: number; title: number }[];
   aliases: (GAlias & At)[];
   looks: (GLook & At)[];
   identities: (GIdentity & At)[];
@@ -63,7 +67,7 @@ export type Graph = {
 };
 
 export const emptyGraph = (): Graph => ({
-  upTo: 0, personas: new Map(), notes: [], aliases: [], looks: [], identities: [], members: [], relations: [],
+  upTo: 0, personas: new Map(), notes: [], names: [], aliases: [], looks: [], identities: [], members: [], relations: [],
   events: new Map(), links: [], abilities: [], groupWord: "", powerSystem: false,
 });
 
@@ -80,18 +84,33 @@ export function foldGraph(batches: { eps: number[]; delta: GraphDelta; title?: n
     const lo = Math.min(...eps), hi = Math.max(...eps);
     const at = (ep: number) => Math.min(hi, Math.max(lo, Number.isFinite(ep) && ep > 0 ? ep : lo));
     g.upTo = Math.max(g.upTo, hi);
+    const renamed: { key: string; name: string; before: string; first: number; prev?: string }[] = [];
     for (const p of d.personas) {
       const key = slug(p.key);
       if (!key) continue;
       const old = g.personas.get(key);
+      const first = old?.first_ep ?? at(p.first_ep);
       // Имя и важность уточняются, серия первого появления — нет
-      g.personas.set(key, { ...p, key, first_ep: old?.first_ep ?? at(p.first_ep), revealed: old?.revealed ?? at(p.first_ep), title: old?.title ?? title });
+      g.personas.set(key, { ...p, key, first_ep: first, revealed: old?.revealed ?? at(p.first_ep), title: old?.title ?? title });
       if (p.description_ru.trim()) g.notes.push({ key, from: Math.max(lo, at(p.first_ep)), upTo: hi, description_ru: p.description_ru.trim(), goal_ru: p.goal_ru.trim(), title });
+      const before = old ? "" : (p.name_before_ru ?? "").trim();
+      renamed.push({ key, name: p.name_ru.trim(), before: norm(before) !== norm(p.name_ru) ? before : "", first, prev: g.names.findLast((n) => n.key === key)?.name_ru });
     }
     const has = (k: string) => g.personas.has(slug(k));
     const once = <T,>(list: T[], item: T, same: (x: T) => boolean) => { if (!list.some(same)) list.push(item); };
     for (const a of d.aliases) if (a.alias && a.kind && has(a.key) && a.alias.trim())
       once(g.aliases, { ...a, key: slug(a.key), alias: a.alias.trim(), revealed: at(a.ep), title }, (x) => x.key === slug(a.key) && norm(x.alias) === norm(a.alias));
+    // Лента имён. Новое имя — с серии, где его узнали (имя в aliases), без неё — с конца порции: раньше показать нельзя
+    for (const n of renamed) {
+      if (!n.name) continue;
+      // Имя узнали, когда прозвучало оно само или его начало («Римуру» → «Римуру Темпест»)
+      const known = Math.min(...g.aliases.filter((a) => a.key === n.key && a.kind === "имя" && norm(a.alias) !== norm(n.before)
+        && (norm(n.name) + " ").startsWith(norm(a.alias) + " ")).map((a) => a.revealed));
+      const from = Math.max(n.first, Number.isFinite(known) ? known : hi);
+      if (n.before) g.names.push({ key: n.key, name_ru: n.before, from: n.first, title }, { key: n.key, name_ru: n.name, from, title });
+      else if (n.prev === undefined) g.names.push({ key: n.key, name_ru: n.name, from: n.first, title });
+      else if (norm(n.prev) !== norm(n.name)) g.names.push({ key: n.key, name_ru: n.name, from, title });
+    }
     for (const l of d.looks) if (l.kind && l.label_ru !== undefined && has(l.key))
       once(g.looks, { ...l, key: slug(l.key), look: slug(l.look || l.label_en || l.label_ru), revealed: at(l.ep), title }, (x) => x.key === slug(l.key) && x.look === slug(l.look || l.label_en || l.label_ru));
     for (const i of d.identities) if (has(i.a) && has(i.b) && slug(i.a) !== slug(i.b))
@@ -163,6 +182,25 @@ export function sameName(a: string, b: string): boolean {
   if (!a.trim() || !b.trim()) return false;
   const ka = nameKey(a), kb = nameKey(b);
   return ka === kb || ka.replace(/\s/g, "") === kb.replace(/\s/g, "");
+}
+
+type AnilistChar = { id: number; name: string; native: string | null; nameRu: string | null };
+
+/**
+ * Персонажи графа → персонажи AniList по имени. Однозначно (один кандидат, и он больше ни к кому не подходит) — sure;
+ * спорно (двое «Geld» в составе AniList или двое в графе на одного) — open: решают факты, а не первое совпадение.
+ */
+export function anilistCandidates<C extends AnilistChar>(personas: GPersona[], chars: C[]): { sure: Map<string, number>; open: Map<string, C[]> } {
+  const of = new Map(personas.filter((p) => p.kind === "персонаж").map((p) => [p.key, chars.filter((c) =>
+    sameName(p.name_en, c.name) || (c.native !== null && sameName(p.name_ja, c.native)) || (c.nameRu !== null && sameName(p.name_ru, c.nameRu)))]));
+  const users = new Map<number, number>();
+  for (const cs of of.values()) for (const c of cs) users.set(c.id, (users.get(c.id) ?? 0) + 1);
+  const sure = new Map<string, number>(), open = new Map<string, C[]>();
+  for (const [key, cs] of of) {
+    if (cs.length === 1 && users.get(cs[0].id) === 1) sure.set(key, cs[0].id);
+    else if (cs.length) open.set(key, cs);
+  }
+  return { sure, open };
 }
 
 /**

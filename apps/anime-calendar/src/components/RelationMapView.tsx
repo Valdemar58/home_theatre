@@ -6,6 +6,7 @@ import { useAnime, useRelationMap } from "@/lib/client";
 import { graphLayout, REL_TONE, ringLayout, type Pos, type Ring } from "@/lib/relation-layout";
 import { displayTitle } from "@/lib/schedule";
 import type { RelationMap } from "@/lib/types";
+import { Breadcrumbs, useRememberTitle } from "./Breadcrumbs";
 import { EpisodePicker } from "./Characters";
 import { Img } from "./Img";
 import { cx, ErrorBox, Segmented, Spinner } from "./ui";
@@ -55,12 +56,13 @@ function useAnimated(target: Map<number, Pos & { ring?: Ring }>) {
 export function RelationMapView({ id }: { id: number }) {
   const { data: anime } = useAnime(id);
   const { data, error, isLoading } = useRelationMap(id);
+  useRememberTitle(id);
   if (error) return <ErrorBox error={error} />;
   return (
     <div className="mx-auto max-w-7xl space-y-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-end gap-3">
         <div className="mr-auto">
-          <Link href={`/anime/${id}`} className="text-sm text-gray-400 hover:text-gray-200">{anime ? displayTitle(anime.title) : "Тайтл"}</Link>
+          <Breadcrumbs items={[{ label: anime ? displayTitle(anime.title) : "Тайтл", href: `/anime/${id}` }, { label: "Карта персонажей" }]} />
           <h1 className="mt-1 text-2xl font-bold">Карта персонажей</h1>
         </div>
         {data && <EpisodePicker anilistId={id} cursor={data.cursor} />}

@@ -36,9 +36,10 @@ type CharEdge = { role: CharacterRole; node: { id: number; name: { full: string;
 
 /** Персонажи тайтла (до 100): главные первыми. Неделю из кэша — состав меняется редко. */
 export function titleCharacters(animeId: number, malId: number | null): Promise<CharacterLite[]> {
-  return cached(`title-chars:v1:${animeId}`, 7 * 86400, async () => {
+  // До 100 персонажей: на двух страницах (50) у «Слизи» не было Гельда-отца, и сверка не могла его выбрать
+  return cached(`title-chars:v2:${animeId}`, 7 * 86400, async () => {
     const edges: CharEdge[] = [];
-    for (let page = 1; page <= 2; page++) {
+    for (let page = 1; page <= 4; page++) {
       const { Media } = await gql<{ Media: { characters: { pageInfo: { hasNextPage: boolean }; edges: CharEdge[] } } }>(TITLE_CHARS, { id: animeId, page });
       edges.push(...Media.characters.edges);
       if (!Media.characters.pageInfo.hasNextPage) break;
@@ -67,7 +68,7 @@ type RawCharacter = {
 
 type CharacterBase = Pick<CharacterDetails, "name" | "nameRu" | "native" | "alternative" | "image" | "description" | "gender" | "age" | "appearances"> & { id: number };
 
-function characterBase(id: number): Promise<CharacterBase> {
+export function characterBase(id: number): Promise<CharacterBase> {
   return cached(`character:v1:${id}`, 7 * 86400, async () => {
     const { Character: c } = await gql<{ Character: RawCharacter }>(CHARACTER, { id });
     const appearances = c.media.edges.map((e) => ({ media: toLite(e.node), role: e.characterRole }));
@@ -146,6 +147,20 @@ export function setPlotView(userId: number, anilistId: number, mode: PlotViewMod
 
 const seen = (cursor: Map<number, number>, anilistId: number | null, ep: number | null) => (ep ?? 0) <= (anilistId === null ? ALL : cursor.get(anilistId) ?? 0);
 
+/**
+ * Имя на курсор зрителя по ленте имён: безымянный генерал до серии, где ему дали имя, — «генерал орков». Последнее имя
+ * ленты и персонажи без смены имени — основное (у AniList-персонажа — русское имя Shikimori, если передано final).
+ */
+function nameAt(e: Pick<Entity, "id" | "name" | "name_ru">, cursor: Map<number, number>, final?: string | null): string {
+  const rows = db.prepare<[number], { name: string; anilist_id: number; from_ep: number }>(
+    "SELECT name, anilist_id, from_ep FROM plot_name WHERE entity_id = ? ORDER BY anilist_id, from_ep").all(e.id);
+  const main = final ?? nameOf(e);
+  if (rows.length < 2) return main;
+  const last = rows.filter((r) => seen(cursor, r.anilist_id, r.from_ep)).at(-1);
+  if (!last) return rows[0].name;
+  return last === rows.at(-1) ? main : last.name;
+}
+
 // ---------------------------------------------------------------- облики и «это один человек»
 
 type ImageRow = { entity_id: number; url: string; label: string | null; anilist_id: number | null; from_ep: number | null; source: string };
@@ -202,7 +217,7 @@ function relationsOf(ids: number[], cursor: Map<number, number>): PlotRelationIn
       const other = entity(canonical(identityOf(r.other, cursor)));
       if (!other) continue;
       out.push({
-        otherId: other.id, otherHref: hrefOf(other), otherName: nameOf(other), otherImage: currentImage(other.id, cursor)?.url ?? null,
+        otherId: other.id, otherHref: hrefOf(other), otherName: nameAt(other, cursor), otherImage: currentImage(other.id, cursor)?.url ?? null,
         kind: r.kind, label: r.label, anilistId: r.anilist_id, fromEp: r.from_ep,
         endedEp: r.ended_ep !== null && seen(cursor, r.anilist_id, r.ended_ep) ? r.ended_ep : null,
       });
@@ -284,7 +299,7 @@ export async function characterDetails(param: string, cursor: Map<number, number
     const o = entity(x)!;
     const r = db.prepare<[number, number, number, number], { anilist_id: number; revealed_ep: number }>(
       "SELECT anilist_id, revealed_ep FROM plot_identity WHERE (a = ? AND b = ?) OR (a = ? AND b = ?)").get(x, main!, main!, x);
-    return { name: nameOf(o), href: hrefOf(o), revealedEp: r?.revealed_ep ?? 0, anilistId: r?.anilist_id ?? 0 };
+    return { name: nameAt(o, cursor), href: hrefOf(o), revealedEp: r?.revealed_ep ?? 0, anilistId: r?.anilist_id ?? 0 };
   });
 
   const imgs = ids.length ? ids.map((x) => imagesOf(x, cursor)) : [];
@@ -303,11 +318,14 @@ export async function characterDetails(param: string, cursor: Map<number, number
     return [...last.values()].map((a) => ({ name: a.name, text: a.text, status: a.status, fromEp: a.from_ep, anilistId: a.anilist_id }));
   })() : null;
 
-  const name = base?.nameRu ?? (e ? nameOf(e) : base?.name ?? "");
+  const final = base?.nameRu ?? (e ? nameOf(e) : base?.name ?? "");
+  const name = e ? nameAt(e, cursor, final) : final;
+  // Имя ещё не узнано (по ленте имён) — английское и японское имя тоже спойлер
+  const early = name !== final;
   return {
     id: anilistCharId, entityId, href: e ? hrefOf(e) : `/characters/${anilistCharId}`,
-    name: base?.name ?? e?.name ?? "", nameRu: base?.nameRu ?? e?.name_ru ?? null, native: base?.native ?? e?.name_ja ?? null,
-    alternative: base?.alternative ?? [],
+    name: early ? name : base?.name ?? e?.name ?? "", nameRu: early ? name : base?.nameRu ?? e?.name_ru ?? null, native: early ? null : base?.native ?? e?.name_ja ?? null,
+    alternative: early ? [] : base?.alternative ?? [],
     // Портрет AniList — только если он уже среди показанных обликов
     image: looks.at(-1)?.image ?? (ids.length ? null : base?.image ?? null),
     description: base?.description ?? null, plotDescription: note?.description ?? null, goal: note?.goal ?? null,
@@ -360,12 +378,14 @@ export async function titleCast(userId: number, anilistId: number, at?: number):
     const c = e.anilist_char_id ? byChar.get(e.anilist_char_id) : undefined;
     const img = ids.map((x) => currentImage(x, cursor)).filter((x) => x !== null).sort((x, y) => (x!.from_ep ?? 0) - (y!.from_ep ?? 0)).at(-1) ?? null;
     const note = k > 0 ? noteOf(ids, cursor) : null;
+    const name = nameAt(e, cursor, c?.nameRu);
     members.push({
-      id: main, entities: ids, href: hrefOf(e), anilistCharId: e.anilist_char_id, name: c?.nameRu ?? nameOf(e), native: c?.native ?? e.name_ja,
+      id: main, entities: ids, href: hrefOf(e), anilistCharId: e.anilist_char_id, name,
+      native: name !== (c?.nameRu ?? nameOf(e)) ? null : c?.native ?? e.name_ja,
       role: (c?.role ?? apps.find((x) => x.entity_id === main)?.role ?? a.role ?? "SUPPORTING") as CharacterRole,
       image: img?.url ?? null, lookLabel: img?.label ?? null, description: note?.description ?? null, goal: note?.goal ?? null,
       groups: groupsOf(ids, cursor).filter((g) => !g.past).map(({ id, name, role }) => ({ id, name, role })),
-      aka: ids.filter((x) => x !== main).map((x) => nameOf(entity(x)!)), firstEp: Math.min(...apps.filter((x) => ids.includes(x.entity_id)).map((x) => x.first_ep!)),
+      aka: ids.filter((x) => x !== main).map((x) => nameAt(entity(x)!, cursor)), firstEp: Math.min(...apps.filter((x) => ids.includes(x.entity_id)).map((x) => x.first_ep!)),
       voice: c?.voice ?? null,
     });
   }
@@ -404,8 +424,13 @@ export async function nameRefs(userId: number, anilistId: number, upTo: number):
     WHERE al.entity_id IN (SELECT entity_id FROM plot_appearance WHERE anilist_id = ?1 AND first_ep IS NOT NULL) AND e.kind = 'character'
       AND COALESCE(al.kind, 'имя') IN ('имя', 'прозвище')
     UNION ALL
-    SELECT e.id, COALESCE(e.name_ru, e.name), a.anilist_id, a.first_ep, e.anilist_char_id, NULL, 1 FROM plot_entity e JOIN plot_appearance a ON a.entity_id = e.id
-    WHERE a.anilist_id = ?1 AND a.first_ep IS NOT NULL AND e.kind = 'character'`).all(anilistId);
+    SELECT e.id, COALESCE(e.name_ru, e.name), a.anilist_id,
+      COALESCE((SELECT MAX(from_ep) FROM plot_name x WHERE x.entity_id = e.id AND x.anilist_id = a.anilist_id HAVING COUNT(*) > 1), a.first_ep),
+      e.anilist_char_id, NULL, 1 FROM plot_entity e JOIN plot_appearance a ON a.entity_id = e.id
+    WHERE a.anilist_id = ?1 AND a.first_ep IS NOT NULL AND e.kind = 'character'
+    UNION ALL
+    SELECT n.entity_id, n.name, n.anilist_id, n.from_ep, e.anilist_char_id, NULL, 2 FROM plot_name n JOIN plot_entity e ON e.id = n.entity_id
+    WHERE n.anilist_id = ?1 AND e.kind = 'character' AND n.from_ep < (SELECT MAX(from_ep) FROM plot_name x WHERE x.entity_id = n.entity_id AND x.anilist_id = n.anilist_id)`).all(anilistId);
   type LookRow = { look: string; label: string; label_en: string | null };
   const looksOf = new Map<number, LookRow[]>();
   const looks = (e: number) => looksOf.get(e) ?? looksOf.set(e, db.prepare<[number], LookRow>("SELECT look, label, label_en FROM plot_look WHERE entity_id = ?").all(e)).get(e)!;
@@ -416,7 +441,8 @@ export async function nameRefs(userId: number, anilistId: number, upTo: number):
   const out: NameRef[] = [];
   // В тексте полное имя пишут коротко: «Римуру Темпест» → «Римуру», «Шизуэ Идзава» → «Шизуэ». Прилагательное — не имя
   // («Великий мудрец», «Небесный дракон»). Общая у двух персонажей часть («Темпест») разметкой пропускается и так
-  const short = rows.filter((r) => r.main && isProperName(r.alias) && r.alias.trim().split(/\s+/).length > 1)
+  // Прежние имена из ленты (main = 2: «Генерал орков») не сокращаем
+  const short = rows.filter((r) => r.main === 1 && isProperName(r.alias) && r.alias.trim().split(/\s+/).length > 1)
     .map((r) => ({ ...r, alias: r.alias.trim().split(/\s+/)[0] }))
     .filter((r) => r.alias.length >= 3 && !/(ий|ый|ой|ая|яя|ое|ее|ые|ие)$/i.test(r.alias));
   // Строчное основное имя из одного слова — нарицательное («официантка»): не размечаем; «человек с ножом» — да
@@ -451,10 +477,11 @@ function nameCard(entityId: number, anilistId: number, cursor: Map<number, numbe
     const m = entity(main)!;
     const r = db.prepare<[number, number, number, number], { anilist_id: number; revealed_ep: number }>(
       "SELECT anilist_id, revealed_ep FROM plot_identity WHERE (a = ? AND b = ?) OR (a = ? AND b = ?)").get(entityId, main, main, entityId);
-    mergedInto = { name: nameOf(m), href: hrefOf(m), ep: r && r.anilist_id === anilistId ? r.revealed_ep : 0 };
+    mergedInto = { name: nameAt(m, cursor), href: hrefOf(m), ep: r && r.anilist_id === anilistId ? r.revealed_ep : 0 };
   }
+  const name = nameAt(e, cursor);
   return {
-    name: nameOf(e), native: e.name_ja, href: hrefOf(e), role: app?.role ?? "SUPPORTING",
+    name, native: name === nameOf(e) ? e.name_ja : null, href: hrefOf(e), role: app?.role ?? "SUPPORTING",
     description: note?.description ?? null, goal: note?.goal ?? null,
     groups: groupsOf([entityId], cursor).filter((g) => !g.past).map(({ id, name, role }) => ({ id, name, role })),
     firstEp: app?.first_ep ?? null,
@@ -513,7 +540,7 @@ function participantsOf(eventId: number, cursor: Map<number, number>): EventBrie
     const main = canonical(identityOf(p.entity_id, cursor));
     const e = entity(main);
     if (!e || e.kind !== "character" || out.some((x) => x.id === main)) continue;
-    out.push({ id: main, name: nameOf(e), href: hrefOf(e), image: currentImage(main, cursor)?.url ?? null, role: p.role });
+    out.push({ id: main, name: nameAt(e, cursor), href: hrefOf(e), image: currentImage(main, cursor)?.url ?? null, role: p.role });
   }
   return out;
 }
@@ -563,7 +590,7 @@ export async function eventDetails(userId: number, anilistId: number, key: strin
   const motives: EventDetails["motives"] = [];
   for (const [id, text] of Object.entries(e.data.motives ?? {})) {
     const p = entity(canonical(identityOf(Number(id), cursor)));
-    if (p) motives.push({ id: p.id, name: nameOf(p), href: hrefOf(p), text });
+    if (p) motives.push({ id: p.id, name: nameAt(p, cursor), href: hrefOf(p), text });
   }
   // Источник — подробные тексты корпуса о сериях события
   const sources = db.prepare<[number, number, number], { source: string }>(

@@ -5,6 +5,7 @@ import { useAnime, useTitleEvents } from "@/lib/client";
 import { chainLayout, laneLayout } from "@/lib/event-layout";
 import { displayTitle } from "@/lib/schedule";
 import type { EventBrief, TitleEvents } from "@/lib/types";
+import { Breadcrumbs, useRememberTitle } from "./Breadcrumbs";
 import { EpisodePicker } from "./Characters";
 import { EVENT_TONE, EventCard, eventHref } from "./Events";
 import { Badge, cx, ErrorBox, Segmented, Spinner, TONE_CLASS } from "./ui";
@@ -18,6 +19,7 @@ const MODE_KEY = "event-map-mode";
 export function EventMapView({ id }: { id: number }) {
   const { data: anime } = useAnime(id);
   const { data, error, isLoading } = useTitleEvents(id);
+  useRememberTitle(id);
   const [mode, setModeState] = useState<Mode>("lanes");
   useEffect(() => {
     try { const m = localStorage.getItem(MODE_KEY) as Mode | null; if (m) setModeState(m); } catch { /* без хранилища — по умолчанию */ }
@@ -31,7 +33,7 @@ export function EventMapView({ id }: { id: number }) {
     <div className="mx-auto max-w-7xl space-y-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-end gap-3">
         <div className="mr-auto">
-          <Link href={`/anime/${id}`} className="text-sm text-gray-400 hover:text-gray-200">{anime ? displayTitle(anime.title) : "Тайтл"}</Link>
+          <Breadcrumbs items={[{ label: anime ? displayTitle(anime.title) : "Тайтл", href: `/anime/${id}` }, { label: "Карта событий" }]} />
           <h1 className="mt-1 text-2xl font-bold">Карта событий {data && <span className="text-lg font-normal text-gray-500">{events.length}</span>}</h1>
         </div>
         <Segmented value={mode} onChange={setMode} options={[["lanes", "Дорожки"], ["chain", "Цепочка"], ["arcs", "Арки"]]} />

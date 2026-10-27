@@ -10,6 +10,7 @@ import type { GalleryImage, SimilarItem } from "@/lib/types";
 import { displayTitle, finaleOf, secondaryTitle } from "@/lib/schedule";
 import { imgSrc } from "@/lib/img";
 import { formatAiring, fuzzyDate, pluralEpisodes, relative } from "@/lib/time";
+import { useRememberTitle } from "./Breadcrumbs";
 import { Gallery } from "./Gallery";
 import { MatchBadge } from "./MatchBadge";
 import { Discussion } from "./Discussion";
@@ -44,6 +45,7 @@ export function AnimeDetailsView({ id, openVoices, together, undo, comment }: {
   id: number; openVoices?: boolean; together?: number; undo?: number; comment?: number;
 }) {
   const { data: a, error, isLoading } = useAnime(id);
+  useRememberTitle(id);
   const { data: me } = useMe();
   const { data: gallery } = useAnimeImages(id);
   const { data: similar } = useSimilar(id);

@@ -583,6 +583,15 @@ function migrate(db: Db) {
     goal TEXT,
     PRIMARY KEY (entity_id, anilist_id, up_to)
   )`);
+  // Лента имён: как зритель зовёт персонажа с какой серии (безымянный генерал → «Гельд» с серии, где ему дали имя)
+  db.exec(`CREATE TABLE IF NOT EXISTS plot_name (
+    entity_id INTEGER NOT NULL,
+    anilist_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    from_ep INTEGER NOT NULL,
+    source TEXT NOT NULL
+  )`);
+  db.exec("CREATE INDEX IF NOT EXISTS plot_name_entity ON plot_name (entity_id)");
   db.exec(`CREATE TABLE IF NOT EXISTS plot_title (
     anilist_id INTEGER PRIMARY KEY,
     group_word TEXT,

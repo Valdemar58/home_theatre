@@ -19,3 +19,21 @@ describe("parseInfoboxImages", () => {
     expect(parseInfoboxImages(`<aside class="portable-infobox">${fig("Shizu", "s.png")}</aside>`)).toEqual([{ label: "", url: "https://static.wikia.nocookie.net/w/images/s.png/revision/latest?cb=1" }]);
   });
 });
+
+describe("страница персонажа на вики: тёзки", () => {
+  const box = (debut: string) => `<aside class="portable-infobox"><h3>Debut</h3><div>Web Novel Chapter 39 Light Novel Volume 2 Anime Episode ${debut}: Title</div></aside>`;
+  it("дебют в аниме из врезки", async () => {
+    const { parseAnimeDebut } = await import("./fandom-images");
+    expect(parseAnimeDebut(box("8"))).toBe(8);
+    expect(parseAnimeDebut("<aside class=\"portable-infobox\">Debut Manga Chapter 11</aside>")).toBeNull();
+  });
+  it("«Geld» ведёт на сына: отца выбираем по дебюту, ровно совпавшее имя — сразу", async () => {
+    const { pickWikiPage } = await import("./fandom-images");
+    const pages = [{ title: "Geld Junior", debut: 14 }, { title: "Geld Senior", debut: 8 }];
+    expect(pickWikiPage(pages, "Geld", 8)?.title).toBe("Geld Senior");
+    expect(pickWikiPage(pages, "Geld", 13)?.title).toBe("Geld Junior");
+    expect(pickWikiPage(pages, "Geld", null)).toBeNull();
+    expect(pickWikiPage([{ title: "Geld Junior", debut: 14 }], "Geld", 8)).toBeNull();
+    expect(pickWikiPage([{ title: "Rigurd", debut: 2 }, { title: "Rigur", debut: 2 }], "Rigur", 2)?.title).toBe("Rigur");
+  });
+});

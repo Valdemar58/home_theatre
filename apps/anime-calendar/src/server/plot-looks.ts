@@ -3,7 +3,7 @@ import type { JsonSchema } from "@/lib/json-lite";
 import { db, now } from "./db";
 import { readFile } from "node:fs/promises";
 import sharp from "sharp";
-import { parseInfoboxImages } from "@/lib/fandom-images";
+import { parseAnimeDebut, parseInfoboxImages, pickWikiPage, type InfoboxImage } from "@/lib/fandom-images";
 import { sameName } from "@/lib/plot-graph";
 import { cached } from "./cache";
 import { fetchWithRetry, RateLimiter } from "./http";
@@ -76,17 +76,26 @@ async function wikiJson<T>(url: string): Promise<T | null> {
 
 type Parse = { parse?: { title: string; text: string }; error?: { code: string } };
 
-/** Врезка персонажа на вики: страница по имени, иначе первая в поиске, если её название — то же имя. */
-async function infobox(host: string, name: string) {
+type WikiPage = { title: string; debut: number | null; images: InfoboxImage[] };
+
+/**
+ * Страницы-кандидаты персонажа на вики: по имени (с перенаправлением) и из поиска — все, чьё название содержит имя
+ * («Geld» → «Geld Junior» и «Geld Senior»; подстраницы «…/Chronology» — нет). У каждой — серия первого появления в аниме.
+ */
+async function wikiPages(host: string, name: string): Promise<WikiPage[]> {
   const api = `https://${host}/api.php?format=json&formatversion=2&`;
   const page = (title: string) => wikiJson<Parse>(`${api}action=parse&redirects=1&prop=text&section=0&page=${encodeURIComponent(title)}`);
-  let p = await page(name);
-  if (!p?.parse) {
-    const s = await wikiJson<{ query?: { search?: { title: string }[] } }>(`${api}action=query&list=search&srlimit=1&srsearch=${encodeURIComponent(name)}`);
-    const t = s?.query?.search?.[0]?.title;
-    if (t && (sameName(t, name) || t.toLowerCase().includes(name.split(" ")[0].toLowerCase()))) p = await page(t);
+  const first = name.split(" ")[0].toLowerCase();
+  const s = await wikiJson<{ query?: { search?: { title: string }[] } }>(`${api}action=query&list=search&srlimit=8&srsearch=${encodeURIComponent(name)}`);
+  const titles = [name, ...(s?.query?.search ?? []).map((x) => x.title).filter((t) => !t.includes("/") && (sameName(t, name) || t.toLowerCase().includes(first)))];
+  const out: WikiPage[] = [];
+  for (const t of [...new Set(titles)].slice(0, 4)) {
+    const p = await page(t);
+    // Перенаправление на страницу без этого имени в названии — чужая страница
+    if (!p?.parse || out.some((x) => x.title === p.parse!.title) || !(sameName(p.parse.title, name) || p.parse.title.toLowerCase().includes(first))) continue;
+    out.push({ title: p.parse.title, debut: parseAnimeDebut(p.parse.text), images: parseInfoboxImages(p.parse.text) });
   }
-  return p?.parse ? parseInfoboxImages(p.parse.text) : [];
+  return out.filter((x) => x.images.length);
 }
 
 /**
@@ -97,25 +106,28 @@ export async function fandomLooks(anilistId: number, signal?: AbortSignal): Prom
   const url = db.prepare<[number], { url: string }>("SELECT url FROM episode_text WHERE anilist_id = ? AND source = 'fandom' AND url IS NOT NULL LIMIT 1").get(anilistId)?.url;
   if (!url) return 0;
   const host = new URL(url).host;
-  // Связанные с AniList — первыми: при двух персонажах с одним именем страница вики достаётся им
-  const chars = db.prepare<[number], { id: number; name: string }>(`
-    SELECT e.id, e.name FROM plot_entity e JOIN plot_appearance a ON a.entity_id = e.id
-    WHERE a.anilist_id = ? AND a.first_ep IS NOT NULL AND e.kind = 'character' ORDER BY e.anilist_char_id IS NULL, a.first_ep`).all(anilistId);
+  const chars = db.prepare<[number], { id: number; name: string; first_ep: number }>(`
+    SELECT e.id, e.name, a.first_ep FROM plot_entity e JOIN plot_appearance a ON a.entity_id = e.id
+    WHERE a.anilist_id = ? AND a.first_ep IS NOT NULL AND e.kind = 'character' ORDER BY a.first_ep`).all(anilistId);
   const put = db.prepare("INSERT INTO plot_image (entity_id, url, source, label, updated_at) VALUES (?, ?, 'fandom', ?, ?) ON CONFLICT (entity_id, url) DO NOTHING");
-  let added = 0;
-  // Одна картинка — одному персонажу тайтла: страница ищется по имени, и двое «Гельдов» получали одну и ту же
-  const taken = new Map<string, number>();
+  const mine = db.prepare<[number], { url: string }>("SELECT url FROM plot_image WHERE entity_id = ? AND source = 'fandom'");
   const drop = db.prepare("DELETE FROM plot_image WHERE entity_id = ? AND url = ? AND source = 'fandom'");
+  let added = 0;
+  // Одна страница вики — одному персонажу тайтла; страница выбирается по дебюту в аниме, а не по имени
+  // (страница «Geld» ведёт на сына, а отец — «Geld Senior»)
+  const taken = new Set<string>();
   for (const c of chars) {
     signal?.throwIfAborted();
     // Вики меняются редко — месяц из кэша
-    const imgs = await cached(`fandom-img:v1:${host}:${c.name}`, 30 * 86400, () => infobox(host, c.name)).catch(() => []);
-    for (const im of imgs) {
-      const owner = taken.get(im.url);
-      if (owner !== undefined && owner !== c.id) { drop.run(c.id, im.url); continue; }
-      taken.set(im.url, c.id);
-      added += Number(put.run(c.id, im.url, im.label || null, now()).changes);
-    }
+    const pages = await cached(`fandom-pages:v2:${host}:${c.name}`, 30 * 86400, () => wikiPages(host, c.name)).catch(() => null);
+    // Вики не ответила — прежние картинки остаются
+    if (!pages) continue;
+    const page = pickWikiPage(pages.filter((p) => !taken.has(p.title)), c.name, c.first_ep);
+    if (page) taken.add(page.title);
+    const urls = new Set(page?.images.map((im) => im.url) ?? []);
+    // Картинки прежнего выбора (другая страница) — убрать
+    for (const r of mine.all(c.id)) if (!urls.has(r.url)) drop.run(c.id, r.url);
+    for (const im of page?.images ?? []) added += Number(put.run(c.id, im.url, im.label || null, now()).changes);
   }
   return added;
 }

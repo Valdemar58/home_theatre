@@ -6,6 +6,7 @@ import { useAnime, useEvent } from "@/lib/client";
 import { CORPUS_SOURCE_LABELS } from "@/lib/labels";
 import { displayTitle } from "@/lib/schedule";
 import type { EventBrief, EventLinkInfo } from "@/lib/types";
+import { Breadcrumbs, useRememberTitle } from "./Breadcrumbs";
 import { EpisodePicker } from "./Characters";
 import { Img } from "./Img";
 import { NamedText, useNames } from "./NamedText";
@@ -130,13 +131,17 @@ export function EventView({ id, eventKey }: { id: number; eventKey: string }) {
   const { data: anime } = useAnime(id);
   const { data: e, error, isLoading } = useEvent(id, eventKey);
   const names = useNames(e?.hiddenUntil === null ? id : 0, e?.epTo ?? e?.epFrom ?? null);
+  useRememberTitle(id);
   if (error) return <ErrorBox error={error} />;
   if (isLoading || !e) return <Spinner />;
-  const back = <Link href={`/anime/${id}/events`} className="text-sm text-gray-400 hover:text-gray-200">{anime ? displayTitle(anime.title) : "Тайтл"} · События</Link>;
+  const back = <Breadcrumbs items={[
+    { label: anime ? displayTitle(anime.title) : "Тайтл", href: `/anime/${id}` }, { label: "Карта событий", href: `/anime/${id}/events` },
+    ...(e.arc ? [{ label: `арка «${e.arc}»` }] : []), { label: e.hiddenUntil !== null ? "Событие" : e.title },
+  ]} />;
   if (e.hiddenUntil !== null) {
     return (
       <div className="mx-auto max-w-xl space-y-3 p-6 text-center">
-        {back}
+        <div className="flex justify-center">{back}</div>
         <p className="text-lg font-semibold">Это событие случится позже</p>
         <p className="text-gray-400">Оно раскроется в {e.hiddenUntil} серии — вы на {e.cursor.ep}.</p>
         <div className="flex justify-center"><EpisodePicker anilistId={id} cursor={e.cursor} /></div>
@@ -147,7 +152,7 @@ export function EventView({ id, eventKey }: { id: number; eventKey: string }) {
   return (
     <div className="mx-auto max-w-4xl space-y-8 p-4 sm:p-6">
       <div className="flex flex-wrap items-center gap-3">
-        <div className="mr-auto">{back}{e.arc && <span className="text-sm text-gray-500"> · арка «{e.arc}»</span>}</div>
+        <div className="mr-auto min-w-0">{back}</div>
         <EpisodePicker anilistId={id} cursor={e.cursor} />
       </div>
       <div className="space-y-2">

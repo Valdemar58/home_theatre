@@ -179,3 +179,54 @@ describe("метки говорящих", () => {
     expect(consistent(1, people[2])).toBe(false);
   });
 });
+
+// Эталон из «Слизи»: два Гельда (отец съеден Римуру, сын получил имя в его память), безымянный генерал, «Орк-лорд»
+describe("Гельды: тёзки, имя позже первого появления", () => {
+  it("лента имён: генерал орков до серии, где ему дали имя", () => {
+    const g = foldGraph([
+      { eps: [13, 14, 15], delta: delta({
+        personas: [{ ...persona("orc-general", 13, "Гельд"), name_before_ru: "Генерал орков" }],
+        aliases: [{ key: "orc-general", alias: "Гельд", kind: "имя", who_ru: "", ep: 15 }],
+      }) },
+    ]);
+    expect(g.names).toEqual([
+      { key: "orc-general", name_ru: "Генерал орков", from: 13, title: 0 },
+      { key: "orc-general", name_ru: "Гельд", from: 15, title: 0 },
+    ]);
+  });
+  it("полное имя узнано, когда прозвучало его начало; прошлое имя — не серия раскрытия", () => {
+    const g = foldGraph([
+      { eps: [1, 2, 3, 4], delta: delta({
+        personas: [{ ...persona("rimuru", 1, "Римуру Темпест"), name_before_ru: "Сатору Миками" }],
+        aliases: [{ key: "rimuru", alias: "Римуру", kind: "имя", who_ru: "", ep: 2 }, { key: "rimuru", alias: "Сатору Миками", kind: "имя", who_ru: "", ep: 1 }],
+      }) },
+    ]);
+    expect(g.names.map((n) => [n.name_ru, n.from])).toEqual([["Сатору Миками", 1], ["Римуру Темпест", 2]]);
+  });
+  it("смена имени в следующей порции без серии в aliases — с конца порции; то же имя — без новой строки", () => {
+    const g = foldGraph([
+      { eps: [10, 11], delta: delta({ personas: [persona("orc-lord", 10, "Орк-лорд")] }) },
+      { eps: [12, 13, 14], delta: delta({ personas: [persona("orc-lord", 10, "Гельд")] }) },
+      { eps: [15], delta: delta({ personas: [persona("orc-lord", 10, "Гельд")] }) },
+    ]);
+    expect(g.names.map((n) => [n.name_ru, n.from])).toEqual([["Орк-лорд", 10], ["Гельд", 14]]);
+  });
+  it("двое «Geld» в AniList — спорно, однозначные — сразу", async () => {
+    const { anilistCandidates } = await import("./plot-graph");
+    const chars = [
+      { id: 133522, name: "Geld", native: "ゲルド", nameRu: "Гельд" },
+      { id: 302556, name: "Geld", native: "ゲルド", nameRu: "Гельд" },
+      { id: 1, name: "Rimuru Tempest", native: null, nameRu: "Римуру Темпест" },
+    ];
+    const { sure, open } = anilistCandidates([persona("geld", 8, "Geld"), persona("orc-general", 13, "Geld"), persona("rimuru", 1, "Rimuru Tempest")], chars);
+    expect([...sure]).toEqual([["rimuru", 1]]);
+    expect([...open.keys()]).toEqual(["geld", "orc-general"]);
+    expect(open.get("geld")!.map((c) => c.id)).toEqual([133522, 302556]);
+  });
+  it("один персонаж AniList на двоих в графе — тоже спорно", async () => {
+    const { anilistCandidates } = await import("./plot-graph");
+    const { sure, open } = anilistCandidates([persona("geld", 8, "Geld"), persona("geld-son", 13, "Geld")], [{ id: 133522, name: "Geld", native: null, nameRu: null }]);
+    expect(sure.size).toBe(0);
+    expect(open.size).toBe(2);
+  });
+});

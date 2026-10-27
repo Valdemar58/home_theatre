@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useAnime, useCharacter, usePlotView, useTitleCast } from "@/lib/client";
 import { displayTitle } from "@/lib/schedule";
 import type { AnimeDetails, CastMember, CharacterDetails, GalleryImage, PlotCursor, TitleCast } from "@/lib/types";
+import { Breadcrumbs, useRememberedTitle, useRememberTitle, type Crumb } from "./Breadcrumbs";
 import { ROLE_LABEL } from "./CharacterHover";
 import { Gallery } from "./Gallery";
 import { useCharacterHover } from "./HoverCard";
@@ -136,6 +137,7 @@ function CastNotice({ cast }: { cast: TitleCast }) {
 export function TitleCharactersView({ id }: { id: number }) {
   const { data: anime } = useAnime(id);
   const { data: cast, error, isLoading } = useTitleCast(id);
+  useRememberTitle(id);
   const [q, setQ] = useState("");
   const [group, setGroup] = useState<number | null>(null);
   const list = useMemo(() => {
@@ -150,7 +152,7 @@ export function TitleCharactersView({ id }: { id: number }) {
     <div className="mx-auto max-w-6xl space-y-6 p-4 sm:p-6">
       <div className="flex flex-wrap items-end gap-3">
         <div className="mr-auto">
-          <Link href={`/anime/${id}`} className="text-sm text-gray-400 hover:text-gray-200">{anime ? displayTitle(anime.title) : "Тайтл"}</Link>
+          <Breadcrumbs items={[{ label: anime ? displayTitle(anime.title) : "Тайтл", href: `/anime/${id}` }, { label: "Персонажи" }]} />
           <h1 className="mt-1 text-2xl font-bold">Персонажи {cast && <span className="text-lg font-normal text-gray-500">{cast.members.length}</span>}</h1>
         </div>
         {cast?.built && <EpisodePicker anilistId={id} cursor={cast.cursor} />}
@@ -233,22 +235,31 @@ const epRange = (from: number | null, to?: number | null) => (from ? `с. ${from
 export function CharacterView({ param }: { param: string }) {
   const router = useRouter();
   const { data: c, error, isLoading } = useCharacter(param);
+  const remembered = useRememberedTitle();
   useEffect(() => { if (c?.redirect) router.replace(c.redirect); }, [c?.redirect, router]);
   if (error) return <ErrorBox error={error} />;
   if (isLoading || !c || c.redirect) return <Spinner />;
+  // Путь — через тайтл, откуда пришли (если персонаж в нём есть), иначе через первое появление
+  const from = c.appearances.find((a) => a.media.id === remembered)?.media
+    ?? c.appearances.find((a) => a.media.id === c.hiddenUntil?.anilistId)?.media ?? c.appearances[0]?.media;
+  const crumbs = (name: string): Crumb[] => [
+    ...(from ? [{ label: displayTitle(from.title), href: `/anime/${from.id}` }, { label: "Персонажи", href: `/anime/${from.id}/characters` }] : []),
+    { label: name },
+  ];
   if (c.hiddenUntil) {
     return (
       <div className="mx-auto max-w-xl space-y-3 p-6 text-center">
+        <div className="flex justify-center"><Breadcrumbs items={crumbs("Персонаж")} /></div>
         <p className="text-lg font-semibold">Этот персонаж появится позже</p>
         <p className="text-gray-400">Он появится в {c.hiddenUntil.ep} серии — вы её ещё не видели.</p>
         <Link href={`/anime/${c.hiddenUntil.anilistId}/characters`} className="text-accent-300 hover:text-accent-200">К персонажам тайтла</Link>
       </div>
     );
   }
-  return <CharacterPage key={c.href} c={c} />;
+  return <CharacterPage key={c.href} c={c} crumbs={crumbs(c.nameRu ?? c.name)} />;
 }
 
-function CharacterPage({ c }: { c: CharacterDetails }) {
+function CharacterPage({ c, crumbs }: { c: CharacterDetails; crumbs: Crumb[] }) {
   const [shot, setShot] = useState(Math.max(0, c.looks.length - 1));
   const [viewer, setViewer] = useState<number | null>(null);
   const [allNames, setAllNames] = useState(false);
@@ -263,7 +274,9 @@ function CharacterPage({ c }: { c: CharacterDetails }) {
   const events = [...c.events].sort((a, b) => b.anilistId - a.anilistId || (b.epFrom ?? 0) - (a.epFrom ?? 0));
   const mainNames = [...new Map(c.names.filter((n) => n.kind === "имя").map((n) => [n.name, n])).values()].slice(0, 3);
   return (
-    <div className="mx-auto max-w-6xl space-y-8 p-4 sm:p-6">
+    <div className="mx-auto max-w-6xl space-y-4 p-4 sm:p-6">
+      <Breadcrumbs items={crumbs} />
+      <div className="space-y-8">
       <div className="flex flex-col gap-6 md:flex-row">
         <div className="w-full shrink-0 md:w-80">
           {images.length ? (
@@ -390,6 +403,7 @@ function CharacterPage({ c }: { c: CharacterDetails }) {
       {c.description && <AnilistDescription text={c.description} gated={c.entityId !== null && (Boolean(c.plotDescription) || c.names.some((n) => n.fromEp !== null) || c.looks.length > 0)} />}
 
       {viewer !== null && images.length > 0 && <Lightbox images={images} index={Math.min(viewer, images.length - 1)} onIndex={setViewer} onClose={() => setViewer(null)} />}
+      </div>
     </div>
   );
 }
