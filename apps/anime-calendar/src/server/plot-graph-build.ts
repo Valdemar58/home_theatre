@@ -12,7 +12,7 @@ import { bestOutput, hashOf, recordOutput, type Known } from "./knowledge";
 import { bestRouteTier, runTask } from "./llm";
 import { getLlmConfig } from "./llm-config";
 import { prequelChain } from "./plot";
-import { checkLooks } from "./plot-looks";
+import { checkLooks, fandomLooks } from "./plot-looks";
 import { deepPlan, type DeepPlan } from "./plot-deep";
 import { seedCharacters, titleCharacters } from "./plot-graph";
 import { registerHandler } from "./tasks";
@@ -295,6 +295,7 @@ registerHandler("graph", {
     const r = await materializeGraph(id);
     if (failed) p.errors.push(`Персонажи и события: ${failed instanceof Error ? failed.message : String(failed)}`);
     touch({ step: "Облики на портретах" });
+    await fandomLooks(id, signal).catch((e) => { if (signal.aborted) throw e; p.errors.push(`Fandom: ${e instanceof Error ? e.message : String(e)}`); });
     await checkLooks(id, signal).catch((e) => { if (signal.aborted) throw e; p.errors.push(`Облики: ${e instanceof Error ? e.message : String(e)}`); });
     touch({ step: "готово", finished: true, etaSec: 0 });
     if (failed && !r.entities) throw failed;

@@ -18,13 +18,15 @@ const clean = (s: string) => s.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g,
 /** Описание: у заглушки Shikimori («Второй сезон …») — синопсис, составленный ИИ. */
 export function Description({ media }: { media: AnimeDetails }) {
   const { data: plot } = usePlot(media.id);
+  // Описание — про весь сезон: имена, которых зритель ещё не видел, открывают размытую карточку
+  const names = useNames(plot?.season ? media.id : 0, null);
   const ai = plot?.stub && plot.synopsis;
   const text = ai ? plot.synopsis! : media.description ? clean(media.description) : null;
   if (!text && !plot?.pending) return null;
   return (
     <section>
       <h2 className="mb-3 text-xl font-bold">Описание</h2>
-      {text && <p className="whitespace-pre-line leading-relaxed text-gray-300">{text}</p>}
+      {text && <p className="whitespace-pre-line leading-relaxed text-gray-300"><NamedText text={text} anilistId={media.id} upTo={null} names={names} /></p>}
       {ai && (
         <p className="mt-2 flex items-center gap-1.5 text-xs text-gray-500">
           {plot.synopsisBy === "ai" && <SparklesIcon className="h-3.5 w-3.5 shrink-0" />}
@@ -216,6 +218,8 @@ const sourceLabel = (s: string) => SOURCE_LABEL[s] ?? s;
 function EpisodeDetail({ id, ep, detail }: { id: number; ep: number; detail: NonNullable<EpisodeInfo["detail"]> }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState(0);
+  // Имена в русском тексте серии — только раскрытые к этой серии
+  const names = useNames(open ? id : 0, ep);
   const { data: texts, isLoading } = useQuery({
     queryKey: ["episode-texts", id, ep], queryFn: () => api<EpisodeTexts>(`/api/anime/${id}/corpus?ep=${ep}`), enabled: open, staleTime: 3600_000,
   });
@@ -268,7 +272,9 @@ function EpisodeDetail({ id, ep, detail }: { id: number; ep: number; detail: Non
               {translate.error && <span className="text-negative-300">{String((translate.error as Error).message)}</span>}
             </div>
           )}
-          <p className="max-h-[60vh] overflow-y-auto whitespace-pre-line text-sm leading-relaxed text-gray-300">{ru ? ru.text : cur.text}</p>
+          <p className="max-h-[60vh] overflow-y-auto whitespace-pre-line text-sm leading-relaxed text-gray-300">
+            {ru || cur.lang === "ru" ? <NamedText text={ru ? ru.text : cur.text} anilistId={id} upTo={ep} names={names} /> : cur.text}
+          </p>
           <p className="mt-2 flex flex-wrap items-center gap-x-1 text-xs text-gray-500">
             {cur.url ? <a href={cur.url} target="_blank" rel="noreferrer" className="hover:text-gray-300">{sourceLabel(cur.source)}</a> : sourceLabel(cur.source)}
             {cur.source === "wiki-en" || cur.source === "fandom" ? " — текст под лицензией CC BY-SA" : ""}

@@ -11,7 +11,7 @@ import { fetchWithRetry, RateLimiter } from "./http";
 import { episodesOf } from "./plot";
 import { buildSeasonPlot } from "./plot-deep";
 import { buildGraph, materializeGraph } from "./plot-graph-build";
-import { checkLooks } from "./plot-looks";
+import { checkLooks, fandomLooks } from "./plot-looks";
 import { latestTask, registerHandler } from "./tasks";
 
 // Корпус сюжета: тексты о каждой серии из всех источников (docs/plot-analysis-design.md, TASKS 7.12).
@@ -487,6 +487,7 @@ export async function graphStep(p: CorpusProgress, signal: AbortSignal) {
     await materializeGraph(p.anilistId);
     if (failed) p.errors.push(`Персонажи и события: ${failed instanceof Error ? failed.message : String(failed)}`);
     touch(p, { step: "Облики на портретах" });
+    await fandomLooks(p.anilistId, signal).catch((e) => { if (signal.aborted) throw e; p.errors.push(`Fandom: ${e instanceof Error ? e.message : String(e)}`); });
     await checkLooks(p.anilistId, signal);
   } catch (e) {
     if (signal.aborted) throw e;

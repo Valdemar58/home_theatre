@@ -65,7 +65,8 @@ function touch(row: Row) {
 async function fetchOriginal(key: string, url: string): Promise<Row> {
   return once(`${key}:orig`, async () => {
     const get = (u: string) => fetch(u, {
-      headers: { "User-Agent": "Mozilla/5.0 (anime-calendar image cache)", Accept: "image/*" },
+      // CDN Fandom отдаёт картинку только со ссылкой с вики (иначе 403)
+      headers: { "User-Agent": "Mozilla/5.0 (anime-calendar image cache)", Accept: "image/*", ...(u.includes("wikia.nocookie.net") ? { Referer: "https://www.fandom.com/" } : {}) },
       signal: AbortSignal.timeout(30_000),
     });
     // Крупной версии может не быть (старые обложки AniList «b12345-…» — только medium) — тогда как есть

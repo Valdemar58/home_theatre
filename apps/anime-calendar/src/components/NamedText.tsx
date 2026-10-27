@@ -43,7 +43,7 @@ function NameLink({ text, anilistId, ref_, member }: { text: string; anilistId: 
   const hover = useCharacterHover({ anilistId: ref_.anilistId ?? anilistId, entity: ref_.entity, member: spoiler ? null : member, spoilerEp: spoiler ? ref_.revealedEp : null });
   return (
     <Link {...hover} href={spoiler ? "#" : ref_.href} onClick={(e) => { hover.onClick?.(e); if (spoiler) e.preventDefault(); }}
-      className="text-accent-200 decoration-accent-400/60 decoration-dashed underline-offset-4 hover:underline">
+      className="text-accent-200 underline decoration-accent-400/70 decoration-dashed underline-offset-4 hover:decoration-solid">
       {text}
     </Link>
   );

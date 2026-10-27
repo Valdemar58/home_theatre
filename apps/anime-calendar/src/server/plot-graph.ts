@@ -146,20 +146,22 @@ const seen = (cursor: Map<number, number>, anilistId: number | null, ep: number 
 
 // ---------------------------------------------------------------- облики и «это один человек»
 
-type ImageRow = { entity_id: number; url: string; label: string | null; anilist_id: number | null; from_ep: number | null };
+type ImageRow = { entity_id: number; url: string; label: string | null; anilist_id: number | null; from_ep: number | null; source: string };
 
 /**
  * Картинки персонажа, которые зритель может видеть. Портрет без проверки облика показываем осторожно:
  * с последнего облика первого тайтла (у персонажа без смены обликов это его первое появление).
  */
 function imagesOf(entityId: number, cursor: Map<number, number>): { visible: ImageRow[]; future: number } {
-  const rows = db.prepare<[number], ImageRow>("SELECT entity_id, url, label, anilist_id, from_ep FROM plot_image WHERE entity_id = ?").all(entityId);
+  const rows = db.prepare<[number], ImageRow>("SELECT entity_id, url, label, anilist_id, from_ep, source FROM plot_image WHERE entity_id = ?").all(entityId);
   const fallback = db.prepare<[number], { anilist_id: number; ep: number }>(`
     SELECT a.anilist_id, COALESCE((SELECT MAX(from_ep) FROM plot_look l WHERE l.entity_id = a.entity_id AND l.anilist_id = a.anilist_id AND l.kind != 'прошлое'), a.first_ep) AS ep
     FROM plot_appearance a WHERE a.entity_id = ? AND a.first_ep IS NOT NULL ORDER BY a.first_ep LIMIT 1`).get(entityId);
   const out: ImageRow[] = [];
   let future = 0;
   for (const r of rows) {
+    // Картинка с вики, в которой модель не узнала ни одного облика из сериала, — не показываем: вероятно, облик из будущего
+    if (r.source === "fandom" && r.from_ep === null) { future++; continue; }
     const at = r.from_ep !== null ? r : fallback ? { ...r, anilist_id: fallback.anilist_id, from_ep: fallback.ep } : r;
     if (seen(cursor, at.anilist_id, at.from_ep)) out.push(at);
     else future++;

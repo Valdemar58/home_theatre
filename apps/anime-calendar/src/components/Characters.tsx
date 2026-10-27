@@ -382,7 +382,7 @@ function CharacterPage({ c }: { c: CharacterDetails }) {
         </section>
       )}
 
-      {c.description && <AnilistDescription text={c.description} gated={Boolean(c.plotDescription)} />}
+      {c.description && <AnilistDescription text={c.description} gated={c.entityId !== null && (Boolean(c.plotDescription) || c.names.some((n) => n.fromEp !== null) || c.looks.length > 0)} />}
 
       {viewer !== null && images.length > 0 && <Lightbox images={images} index={Math.min(viewer, images.length - 1)} onIndex={setViewer} onClose={() => setViewer(null)} />}
     </div>
