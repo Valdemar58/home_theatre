@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAnime, usePlotMap } from "@/lib/client";
 import { imgSrc } from "@/lib/img";
-import { FOG_RADIUS } from "@/lib/plot-map";
+import { FOG_RADIUS, placeLabels } from "@/lib/plot-map";
 import { displayTitle } from "@/lib/schedule";
 import type { PlotMap } from "@/lib/types";
 import { Breadcrumbs, useRememberTitle } from "./Breadcrumbs";
@@ -55,6 +55,8 @@ function Scene({ id, data }: { id: number; data: PlotMap }) {
   const [layers, setLayers] = useState({ paths: true, events: true, fog: true });
   const [person, setPerson] = useState<number | null>(data.people[0]?.id ?? null);
   const [selected, setSelected] = useState<number | null>(null);
+  // Пришли со страницы места («Показать на карте») — оно сразу выбрано
+  useEffect(() => { const p = Number(new URLSearchParams(window.location.search).get("place")); if (p) setSelected(p); }, []);
   const [view, setView] = useState({ k: 1, x: 0, y: 0 });
   const box = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; y: number; vx: number; vy: number; moved: boolean } | null>(null);
@@ -91,6 +93,23 @@ function Scene({ id, data }: { id: number; data: PlotMap }) {
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
 
+  // Ширина карты на экране — чтобы подписи мест не наезжали (на масштабе сравниваем их прямоугольники)
+  const [boxW, setBoxW] = useState(900);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setBoxW(el.clientWidth || 900));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const KIND_RANK: Record<string, number> = { "континент": 6, "страна": 5, "лес": 4, "горы": 3, "водоём": 3, "город": 3, "деревня": 2, "пещера": 2 };
+  const labelled = useMemo(() => {
+    const W = boxW * view.k, Hpx = boxW * ratio * view.k;
+    return placeLabels(places.map((p) => {
+      const w = Math.min(144, p.name.length * 6.2 + 16) / W, h = 18 / Hpx;
+      return { id: p.id, x: p.x - w / 2, y: p.y + 9 / Hpx, w, h, priority: (p.id === selected ? 1000 : 0) + (eventsAt.get(p.id)?.length ?? 0) * 2 + (KIND_RANK[p.kind] ?? 1) };
+    }));
+  }, [places, boxW, ratio, view.k, selected, eventsAt]); // eslint-disable-line react-hooks/exhaustive-deps
   const sel = selected !== null ? byId.get(selected) ?? null : null;
   const selEvents = sel ? eventsAt.get(sel.id) ?? [] : [];
   const visitors = sel ? data.people.filter((p) => stops(p).some((s) => s.placeId === sel.id)) : [];
@@ -158,7 +177,8 @@ function Scene({ id, data }: { id: number; data: PlotMap }) {
                 <button key={p.id} onClick={() => { if (!drag.current?.moved) setSelected(p.id); }}
                   className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5" style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%` }}>
                   <span className={cx("block h-3.5 w-3.5 rounded-full ring-2", p.approx ? "bg-transparent ring-violet-300 [outline:2px_dashed_rgba(196,181,253,0.6)] outline-offset-2" : "bg-indigo-400 ring-indigo-100", selected === p.id && "ring-4")} />
-                  <span className="max-w-36 truncate rounded bg-gray-950/75 px-1.5 text-[11px] font-medium leading-snug text-gray-100">
+                  {/* Подпись, которая наехала бы на более важную, скрыта — видна при наведении и приближении */}
+                  <span title={p.name} className={cx("max-w-36 truncate rounded bg-gray-950/75 px-1.5 text-[11px] font-medium leading-snug text-gray-100", !labelled.has(p.id) && "pointer-events-none opacity-0")}>
                     {p.name}{layers.events && n > 0 && <span className="ml-1 text-rose-300">· {n}</span>}
                   </span>
                 </button>
@@ -183,7 +203,7 @@ function Scene({ id, data }: { id: number; data: PlotMap }) {
           <div className="space-y-2">
             <div className="flex items-start gap-2">
               <div className="min-w-0 flex-1">
-                <p className="font-semibold">{sel.name}</p>
+                <Link href={`/anime/${id}/places/${sel.id}`} className="font-semibold hover:text-accent-200">{sel.name}</Link>
                 <p className="text-xs text-gray-400">{[sel.kind, sel.inside ? `в «${sel.inside}»` : null, `с ${sel.firstEp} серии`].filter(Boolean).join(" · ")}</p>
               </div>
               <button onClick={() => setSelected(null)} className="text-xs text-gray-400 hover:text-gray-200">закрыть</button>

@@ -2,7 +2,7 @@ import "server-only";
 import { readFile } from "node:fs/promises";
 import sharp from "sharp";
 import type { JsonSchema } from "@/lib/json-lite";
-import { dedupeLabels, insidePoint, matchLabel, mergeLines, tiles, type Box, type MapLabel } from "@/lib/plot-map";
+import { dedupeLabels, dropLegend, insidePoint, isLegendText, legendEdge, matchLabel, mergeLines, plausibleLabel, tiles, type Box, type MapLabel } from "@/lib/plot-map";
 import type { PlotMap } from "@/lib/types";
 import { getDetails } from "./anilist";
 import { db, now } from "./db";
@@ -78,7 +78,8 @@ async function buildMap(rootId: number, anilistId: number, signal: AbortSignal, 
   if (!found) return false;
   const old = db.prepare<[number], { url: string }>("SELECT url FROM plot_map WHERE root_id = ?").get(rootId);
   const hasLabels = db.prepare<[number], { n: number }>("SELECT COUNT(*) AS n FROM plot_map_label WHERE root_id = ?").get(rootId)!.n > 0;
-  if (old?.url === found.url && hasLabels) return true;
+  // Карта уже прочитана — только дочистить легенду (правило могло появиться позже чтения)
+  if (old?.url === found.url && hasLabels) { cleanLegend(rootId); return true; }
   const img = await readFile((await originalFile(found.url)).file);
   const meta = await sharp(img).metadata();
   const width = meta.width ?? found.width, height = meta.height ?? found.height;
@@ -95,7 +96,11 @@ async function buildMap(rootId: number, anilistId: number, signal: AbortSignal, 
     }
     onTile?.(i + 1, parts.length);
   }
-  const labels = dedupeLabels(all);
+  // Легенду справа модель отрезает не всегда — граница карты по столбику абзацев легенды
+  const raw = dedupeLabels(all);
+  const edge = legendEdge(raw);
+  const labels = dropLegend(raw, edge);
+  if (edge !== null) area.w = Math.round(area.w * edge);
   db.exec("BEGIN");
   try {
     db.prepare(`INSERT INTO plot_map (root_id, url, width, height, crop, built_at) VALUES (?, ?, ?, ?, ?, ?)
@@ -110,6 +115,28 @@ async function buildMap(rootId: number, anilistId: number, signal: AbortSignal, 
     throw e;
   }
   return true;
+}
+
+/** Убрать из прочитанных подписей легенду и подрезать рамку карты по ней (повторный вызов ничего не меняет). */
+function cleanLegend(rootId: number) {
+  const labels = db.prepare<[number], MapLabel>("SELECT text, x, y, w, h FROM plot_map_label WHERE root_id = ?").all(rootId);
+  if (!labels.some((l) => isLegendText(l.text))) return;
+  const edge = legendEdge(labels);
+  const kept = dropLegend(labels, edge);
+  const map = db.prepare<[number], { crop: string | null; width: number; height: number }>("SELECT crop, width, height FROM plot_map WHERE root_id = ?").get(rootId)!;
+  const crop: Box = map.crop ? JSON.parse(map.crop) : { x: 0, y: 0, w: map.width, h: map.height };
+  if (edge !== null) crop.w = Math.round(crop.w * edge);
+  db.exec("BEGIN");
+  try {
+    db.prepare("UPDATE plot_map SET crop = ? WHERE root_id = ?").run(JSON.stringify(crop), rootId);
+    db.prepare("DELETE FROM plot_map_label WHERE root_id = ?").run(rootId);
+    const ins = db.prepare("INSERT INTO plot_map_label (root_id, text, x, y, w, h) VALUES (?, ?, ?, ?, ?, ?)");
+    for (const l of kept) ins.run(rootId, l.text, l.x, l.y, l.w, l.h);
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
 }
 
 // ---------------------------------------------------------------- места на карте
@@ -129,11 +156,16 @@ async function placePositions(rootId: number): Promise<number> {
     JOIN plot_place p ON p.entity_id = e.id WHERE k.root_id = ? AND k.key LIKE 'place-%' GROUP BY e.id`).all(rootId);
   const labels = db.prepare<[number], MapLabel>("SELECT text, x, y, w, h FROM plot_map_label WHERE root_id = ?").all(rootId);
   if (!places.length || !labels.length) return 0;
+  // Одна подпись — одному месту (Филтвуда на карте нет — он не должен сесть на подпись Фальмуса)
   const hit = new Map<number, MapLabel>();
-  for (const p of places) { const l = matchLabel(p.name, labels); if (l) hit.set(p.id, l); }
+  const taken = new Set<string>();
+  for (const p of places) {
+    const l = matchLabel(p.name, labels.filter((x) => !taken.has(x.text)));
+    if (l) { hit.set(p.id, l); taken.add(l.text); }
+  }
   const open = places.filter((p) => !hit.has(p.id) && ["страна", "область", "лес", "горы", "пещера", "водоём", "город", "континент"].includes(p.kind));
   if (open.length) {
-    const texts = [...new Set(labels.map((l) => l.text))];
+    const texts = [...new Set(labels.map((l) => l.text))].filter((t) => !taken.has(t));
     const schema: JsonSchema = {
       type: "object", required: ["map"],
       properties: { map: { type: "array", items: { type: "object", required: ["id", "label"], properties: { id: { type: "integer" }, label: { type: "string", enum: [...texts, NONE] } } } } },
@@ -153,7 +185,9 @@ async function placePositions(rootId: number): Promise<number> {
     }
     for (const m of value.map) {
       const l = labels.find((x) => x.text === m.label);
-      if (l && open.some((p) => p.id === m.id)) hit.set(m.id, l);
+      const p = open.find((x) => x.id === m.id);
+      // Проверка ответа: подпись свободна и похожа на название (одна буква начала значимого слова)
+      if (l && p && !taken.has(l.text) && !hit.has(m.id) && plausibleLabel(p.name, l.text)) { hit.set(m.id, l); taken.add(l.text); }
     }
   }
   // Точки: по подписи; без подписи — рядом с родителем (родителя ставим раньше детей)

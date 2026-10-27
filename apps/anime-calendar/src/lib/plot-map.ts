@@ -58,21 +58,69 @@ export function dedupeLabels(labels: MapLabel[], near = 0.03): MapLabel[] {
 }
 
 // Служебные слова в подписях стран: «Kingdom of Brumund», «Warrior Nation Dwargon», «Great Jura Forest»
-const FILLER = new Set(["kingdom", "of", "the", "nation", "warrior", "great", "country", "empire", "republic", "dynasty", "land", "lands", "holy", "beast", "sorcerous", "sorceous", "village", "city", "town"]);
+const FILLER = new Set(["kingdom", "of", "the", "nation", "warrior", "great", "country", "empire", "republic", "dynasty", "land", "lands", "holy", "beast", "sorcerous", "sorceous", "village", "city", "town", "capital", "royal"]);
 const core = (s: string) => normText(s).split(" ").filter((w) => w.length >= 3 && !FILLER.has(w));
 
+/** Расстояние правки (вставка, удаление, замена) — для разного написания одного названия. */
+function edits(a: string, b: string): number {
+  const d = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = d[0];
+    d[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const t = d[j];
+      d[j] = Math.min(d[j] + 1, d[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = t;
+    }
+  }
+  return d[b.length];
+}
+
+/** Одно слово по-разному: Farmus ≈ Farmas, Blumund ≈ Brumund, Ingrassia ≈ Ingrasia (длинные слова, до двух правок). */
+const sameWord = (a: string, b: string) => a === b || (a.length >= 5 && b.length >= 5 && edits(a, b) <= 2);
+
 /**
- * Подпись для места по английскому названию: все значимые слова названия есть в подписи (или наоборот).
+ * Может ли подпись называть это место: хоть одно значимое слово начинается на ту же букву. Отсекает явные промахи
+ * модели («Farmus» → «Kingdom of Siltrozzo»), не мешая переводу названия («Urgray» → «Ulgreisia»).
+ */
+export function plausibleLabel(name: string, label: string): boolean {
+  const a = core(name), b = core(label);
+  return a.some((w) => b.some((v) => v[0] === w[0]));
+}
+
+/**
+ * Подпись для места по английскому названию: все значимые слова названия есть в подписи.
  * «Dwargon» → «Warrior Nation Dwargon», «Jura Forest» → «Great Jura Forest». Несколько подходящих — самая короткая.
+ * Обратного нет: «Dwargon mine» не садится на подпись Дваргона (у шахты своей подписи нет).
  */
 export function matchLabel(name: string, labels: MapLabel[]): MapLabel | null {
   const words = core(name);
   if (!words.length) return null;
-  const hits = labels.filter((l) => {
-    const lw = core(l.text);
-    return lw.length > 0 && (words.every((w) => lw.includes(w)) || lw.every((w) => words.includes(w)));
-  });
-  return hits.sort((a, b) => a.text.length - b.text.length)[0] ?? null;
+  // Сначала точные слова, и только без них — с допуском: «Dwargon» ≈ «Dragon» (две правки), но есть «Warrior Nation Dwargon»
+  for (const same of [(a: string, b: string) => a === b, sameWord]) {
+    const hits = labels.filter((l) => { const lw = core(l.text); return lw.length > 0 && words.every((w) => lw.some((v) => same(w, v))); });
+    if (hits.length) return hits.sort((a, b) => a.text.length - b.text.length)[0];
+  }
+  return null;
+}
+
+/** Текст легенды, а не подпись места: «cap: Rondo», «pop: 1,000,000», абзац описания страны. */
+export const isLegendText = (t: string) => /\b(cap|pop)\s*:/i.test(t) || t.trim().split(/\s+/).length > 6;
+
+/**
+ * Легенда рядом с картой (столбик абзацев о странах справа) — граница карты по ней: доля ширины, где легенда
+ * начинается, или null (легенды нет). Модель не всегда отрезает её сама, а подписи из легенды путают места.
+ */
+export function legendEdge(labels: MapLabel[]): number | null {
+  const legend = labels.filter((l) => isLegendText(l.text) && l.x > 0.5);
+  if (legend.length < 4) return null;
+  return Math.max(0.5, Math.min(...legend.map((l) => l.x)) - 0.01);
+}
+
+/** Подписи без легенды, в долях новой (подрезанной справа по edge) карты. */
+export function dropLegend(labels: MapLabel[], edge: number | null): MapLabel[] {
+  const kept = labels.filter((l) => !isLegendText(l.text) && (edge === null || l.x + l.w / 2 < edge));
+  return edge === null ? kept : kept.map((l) => ({ ...l, x: l.x / edge, w: l.w / edge }));
 }
 
 /** Точка места без подписи — рядом с родителем, по кругу (у каждого своё место: по номеру среди детей родителя). */
@@ -80,6 +128,19 @@ export function insidePoint(parent: { x: number; y: number }, index: number, rad
   const angle = index * 2.399963; // золотой угол: соседи не налезают друг на друга
   const r = radius * (0.6 + 0.4 * ((index % 3) / 2));
   return { x: Math.min(0.98, Math.max(0.02, parent.x + Math.cos(angle) * r)), y: Math.min(0.98, Math.max(0.02, parent.y + Math.sin(angle) * r)) };
+}
+
+/**
+ * Какие подписи мест показать, чтобы они не наезжали: по убыванию важности, подпись, задевающая уже показанную,
+ * скрывается (точка остаётся). Прямоугольники — в долях карты на текущем масштабе.
+ */
+export function placeLabels<T extends Box & { id: number; priority: number }>(items: T[]): Set<number> {
+  const shown: T[] = [];
+  for (const it of [...items].sort((a, b) => b.priority - a.priority)) {
+    const hit = shown.some((s) => it.x < s.x + s.w && s.x < it.x + it.w && it.y < s.y + s.h && s.y < it.y + it.h);
+    if (!hit) shown.push(it);
+  }
+  return new Set(shown.map((s) => s.id));
 }
 
 /** Радиус открытого тумана вокруг места — по виду: страна и лес открывают больше, здание — пятачок. */

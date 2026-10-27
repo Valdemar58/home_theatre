@@ -105,7 +105,7 @@ export type AnimeDetails = MediaLite & {
   tags: { name: string; rank: number; spoiler: boolean }[];
   externalIds: { tmdbTv: number | null; tmdbMovie: number | null; tvdb: number | null; tmdbSeason: number | null };
   /** Что есть из разбора серий — чтобы блок «Сюжет» сразу знал свою форму (заглушка того же вида, без сдвига) */
-  plotHub?: { built: boolean; map: boolean };
+  plotHub?: { built: boolean; places: boolean; map: boolean };
 };
 
 /** Серия: название и описание из TMDB (русские, иначе английские) или Kitsu */
@@ -572,7 +572,7 @@ export type TitleCast = {
   /** Сколько персонажей появится после курсора */
   hidden: number;
   /** Для блока «Сюжет»: связей, событий и арок на курсор */
-  stats: { relations: number; events: number; arcs: number; /** Мест на карте франшизы, известных к серии; 0 — карты нет */ places: number };
+  stats: { relations: number; events: number; arcs: number; /** Мест тайтла, известных к серии */ places: number; /** Из них на карте франшизы; 0 — карты нет */ mapPlaces: number };
 };
 
 /** Событие сюжета на курсор зрителя: участники, причины и последствия, которые он уже видел */
@@ -602,6 +602,26 @@ export type EventDetails = EventBrief & {
   /** Событие после курсора зрителя — не показываем */
   hiddenUntil: number | null;
   cursor: PlotCursor;
+  /** Где это произошло (имя — на курсор), и во что это место вложено */
+  place?: { id: number; name: string; inside: string | null } | null;
+};
+
+/** Место в списке мест тайтла (на курсор зрителя) */
+export type PlaceBrief = { id: number; name: string; kind: string; inside: string | null; firstEp: number; description: string | null; events: number };
+export type TitlePlaces = { cursor: PlotCursor; places: PlaceBrief[]; hidden: number; map: boolean };
+/** Страница места: названия по сериям, вложенность, что внутри и рядом, события, кто бывал */
+export type PlaceDetails = {
+  cursor: PlotCursor;
+  /** Место появится позже курсора — показываем только серию */
+  hiddenUntil: number | null;
+  id: number; name: string; nameEn: string; kind: string; firstEp: number; description: string | null;
+  names: { name: string; fromEp: number }[]; futureNames: number;
+  path: { id: number; name: string }[];
+  children: { id: number; name: string; kind: string; firstEp: number }[];
+  links: { id: number; name: string; kind: string; distance: string | null; ep: number }[];
+  events: { key: string | null; title: string; summary: string | null; kind: string | null; ep: number; major: boolean }[];
+  people: { id: number; name: string; href: string; image: string | null; firstEp: number }[];
+  onMap: boolean;
 };
 /** Карта персонажей на курсор: узлы — персонажи состава, рёбра — отношения, которые зритель уже видел */
 export type RelationMap = {

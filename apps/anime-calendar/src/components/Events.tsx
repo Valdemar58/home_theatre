@@ -169,6 +169,13 @@ export function EventView({ id, eventKey }: { id: number; eventKey: string }) {
         <div className="flex flex-wrap items-center gap-2 text-sm text-gray-400">
           {e.kind && <Badge tone={EVENT_TONE[e.kind] ?? "neutral"}>{e.kind}</Badge>}
           <span>{eps(e.epFrom, e.epTo)}</span>
+          {e.place && (
+            <span className="flex items-center gap-1.5">
+              · где:
+              <Link href={`/anime/${id}/places/${e.place.id}`} className="rounded-full px-2.5 py-0.5 tone-positive soft hover:brightness-125">{e.place.name}</Link>
+              {e.place.inside && <span className="text-gray-500">в «{e.place.inside}»</span>}
+            </span>
+          )}
         </div>
         <h1 className="text-2xl font-bold sm:text-3xl">{e.title}</h1>
         {e.summary && <p className="text-lg leading-relaxed text-gray-300">{text(e.summary)}</p>}

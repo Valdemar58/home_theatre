@@ -27,8 +27,40 @@ describe("карта мест", () => {
     ];
     expect(matchLabel("Dwargon", labels)?.text).toBe("Warrior Nation Dwargon");
     expect(matchLabel("Jura Forest", labels)?.text).toBe("Great Jura Forest");
-    expect(matchLabel("Blumund", labels)).toBeNull();
+    expect(matchLabel("Blumund", labels)?.text).toBe("Kingdom of Brumund");
     expect(matchLabel("Goblin village", labels)).toBeNull();
+  });
+
+  it("легенда справа от карты отрезается, подписи пересчитываются", async () => {
+    const { legendEdge, dropLegend } = await import("./plot-map");
+    const L = (text: string, x: number) => ({ text, x, y: 0.3, w: 0.05, h: 0.02 });
+    const labels = [
+      L("Great Jura Forest", 0.4), L("Kingdom of Brumund", 0.3),
+      L("Kingdom of Brumund cap: Rondo", 0.705), L("Warrior Nation of Dwargon cap: Central", 0.706),
+      L("A country more commonly known as the Dwarf Kingdom, carved into mountains", 0.706), L("Holy Ruberian Empire cap: Rune", 0.796),
+      L("Eastern Empire", 0.545),
+    ];
+    const edge = legendEdge(labels);
+    expect(edge).toBeCloseTo(0.695, 3);
+    const kept = dropLegend(labels, edge);
+    expect(kept.map((l) => l.text)).toEqual(["Great Jura Forest", "Kingdom of Brumund", "Eastern Empire"]);
+    expect(kept[0].x).toBeCloseTo(0.4 / 0.695, 3);
+  });
+
+  it("разное написание одного названия; явный промах модели отсекается", async () => {
+    const { plausibleLabel } = await import("./plot-map");
+    const labels = [{ text: "Kingdom of Brumund", x: 0, y: 0, w: 0, h: 0 }, { text: "Kingdom of Siltrozso Kingdom of Farmas", x: 0, y: 0, w: 0, h: 0 }];
+    expect(matchLabel("Kingdom of Blumund", labels)?.text).toBe("Kingdom of Brumund");
+    expect(matchLabel("Farmus Kingdom", labels)?.text).toBe("Kingdom of Siltrozso Kingdom of Farmas");
+    expect(matchLabel("Dwargon", [{ text: "Dragon's Peak", x: 0, y: 0, w: 0, h: 0 }, { text: "Warrior Nation Dwargon", x: 0, y: 0, w: 0, h: 0 }])?.text).toBe("Warrior Nation Dwargon");
+    expect(plausibleLabel("Farmus Kingdom", "Kingdom of Siltrozzo")).toBe(false);
+    expect(plausibleLabel("Ingrassia Royal Capital", "Capital of the Forgotten Dragon")).toBe(false);
+    expect(plausibleLabel("Urgray Republic", "Republic of Ulgreisia")).toBe(true);
+  });
+
+  it("место внутри страны не садится на подпись страны", () => {
+    const labels = [{ text: "Warrior Nation Dwargon", x: 0, y: 0, w: 0, h: 0 }];
+    expect(matchLabel("Dwargon mine", labels)).toBeNull();
   });
 
   it("места без подписи вокруг родителя не совпадают", () => {

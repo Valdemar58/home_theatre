@@ -55,6 +55,16 @@ function MapPreview() {
   );
 }
 
+function PlacesPreview() {
+  return (
+    <svg viewBox="0 0 120 64" className="h-16 w-full" aria-hidden>
+      <rect x="8" y="8" width="104" height="48" rx="14" className="fill-none stroke-positive-400/50" strokeWidth="1.5" />
+      <rect x="40" y="18" width="62" height="30" rx="9" className="fill-none stroke-accent-400/60" strokeWidth="1.5" />
+      <circle cx="24" cy="34" r="3.5" className="fill-gray-500" /><circle cx="62" cy="34" r="4" className="fill-accent-300" /><circle cx="86" cy="30" r="3" className="fill-gray-400" />
+    </svg>
+  );
+}
+
 function Tile({ href, title, count, text, preview, soon }: { href?: string; title: string; count: React.ReactNode; text: string; preview: React.ReactNode; soon?: boolean }) {
   const body = (
     <>
@@ -82,7 +92,8 @@ export function PlotHub({ media }: { media: AnimeDetails }) {
   if (!built) return <CharacterStrip media={media} />;
   const faces = cast?.members.slice(0, 3) ?? [];
   const count = (f: (c: NonNullable<typeof cast>) => string) => (cast ? f(cast) : <span className="inline-flex align-middle"><Skel className="h-3.5 w-16" /></span>);
-  const hasMap = cast ? cast.stats.places > 0 : Boolean(media.plotHub?.map);
+  const hasMap = cast ? cast.stats.mapPlaces > 0 : Boolean(media.plotHub?.map);
+  const hasPlaces = cast ? cast.stats.places > 0 : Boolean(media.plotHub?.places);
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -123,8 +134,12 @@ export function PlotHub({ media }: { media: AnimeDetails }) {
           text="Кто кому союзник, слуга, враг — и как это менялось от серии к серии." preview={<GraphPreview />} />
         <Tile href={`/anime/${media.id}/events`} title="Карта событий" count={count((c) => `${plural(c.stats.arcs, "арка", "арки", "арок")} · ${plural(c.stats.events, "событие", "события", "событий")}`)}
           text="Арки и события по сериям: что из чего вытекло, причины и последствия." preview={<LanesPreview />} />
+        {hasPlaces && (
+          <Tile href={`/anime/${media.id}/places`} title="Места" count={count((c) => plural(c.stats.places, "место", "места", "мест"))}
+            text="Страны, города, пещеры: что где находится, что там произошло и кто бывал." preview={<PlacesPreview />} />
+        )}
         {hasMap && (
-          <Tile href={`/anime/${media.id}/map`} title="Карта мест" count={count((c) => plural(c.stats.places, "место", "места", "мест"))}
+          <Tile href={`/anime/${media.id}/map`} title="Карта мест" count={count((c) => plural(c.stats.mapPlaces, "место", "места", "мест"))}
             text="Где что произошло и кто куда ходил — на карте мира, без того, что вы ещё не видели." preview={<MapPreview />} />
         )}
       </div>

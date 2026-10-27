@@ -340,11 +340,12 @@ export async function characterDetails(param: string, cursor: Map<number, number
 }
 
 /** Форма блока «Сюжет» без курсора: есть ли разбор серий и карта мест (для заглушки того же вида). */
-export function plotHubShape(anilistId: number): { built: boolean; map: boolean } {
+export function plotHubShape(anilistId: number): { built: boolean; places: boolean; map: boolean } {
   const built = Boolean(db.prepare<[number], { n: number }>("SELECT 1 AS n FROM plot_title WHERE anilist_id = ?").get(anilistId));
   const map = built && Boolean(db.prepare<[number], { n: number }>(`
     SELECT 1 AS n FROM plot_place_pos pos JOIN plot_appearance a ON a.entity_id = pos.entity_id WHERE a.anilist_id = ? LIMIT 1`).get(anilistId));
-  return { built, map };
+  const places = built && Boolean(db.prepare<[number], { n: number }>("SELECT 1 AS n FROM plot_place WHERE anilist_id = ? LIMIT 1").get(anilistId));
+  return { built, places, map };
 }
 
 // ---------------------------------------------------------------- состав тайтла
@@ -366,7 +367,7 @@ export async function titleCast(userId: number, anilistId: number, at?: number):
       id: 0, entities: [], href: `/characters/${c.id}`, anilistCharId: c.id, name: c.nameRu ?? c.name, native: c.native, role: c.role, image: c.image, lookLabel: null,
       description: null, goal: null, groups: [], aka: [], firstEp: null, voice: c.voice,
     }));
-    return { cursor: cursorInfo, built: false, upTo: 0, groupWord: null, powerSystem: false, members, groups: [], hidden: 0, stats: { relations: 0, events: 0, arcs: 0, places: 0 } };
+    return { cursor: cursorInfo, built: false, upTo: 0, groupWord: null, powerSystem: false, members, groups: [], hidden: 0, stats: { relations: 0, events: 0, arcs: 0, places: 0, mapPlaces: 0 } };
   }
   type App = { entity_id: number; role: CharacterRole | null; first_ep: number | null; kind: string; anilist_char_id: number | null; name: string; name_ru: string | null; name_ja: string | null };
   const apps = db.prepare<[number], App>(`
@@ -411,14 +412,15 @@ export async function titleCast(userId: number, anilistId: number, at?: number):
   const hidden = apps.filter((a) => a.kind === "character" && !visible.includes(a)).length;
   const events = visibleEvents(anilistId, k);
   const relations = db.prepare<[number, number], { n: number }>("SELECT COUNT(*) AS n FROM plot_relation WHERE anilist_id = ? AND COALESCE(revealed_ep, from_ep, 0) <= ?").get(anilistId, k)!.n;
-  // Места на карте франшизы этого тайтла, известные к серии (карты нет — 0)
-  const places = db.prepare<[number, number], { n: number }>(`
+  // Места тайтла, известные к серии, и сколько из них на карте франшизы (карты нет — 0)
+  const places = db.prepare<[number, number], { n: number }>("SELECT COUNT(*) AS n FROM plot_place WHERE anilist_id = ? AND from_ep <= ?").get(anilistId, k)!.n;
+  const mapPlaces = db.prepare<[number, number], { n: number }>(`
     SELECT COUNT(DISTINCT pos.entity_id) AS n FROM plot_place_pos pos JOIN plot_appearance a ON a.entity_id = pos.entity_id
     WHERE a.anilist_id = ? AND a.first_ep IS NOT NULL AND a.first_ep <= ?`).get(anilistId, k)!.n;
   return {
     cursor: cursorInfo, built: true, upTo: title.up_to, groupWord: title.group_word, powerSystem: Boolean(title.power_system),
     members, groups: [...groupCount].map(([id, g]) => ({ id, ...g })).sort((a, b) => b.count - a.count), hidden,
-    stats: { relations, events: events.length, arcs: new Set(events.map((e) => e.data.arc).filter(Boolean)).size, places },
+    stats: { relations, events: events.length, arcs: new Set(events.map((e) => e.data.arc).filter(Boolean)).size, places, mapPlaces },
   };
 }
 
@@ -608,7 +610,13 @@ export async function eventDetails(userId: number, anilistId: number, key: strin
   const sources = db.prepare<[number, number, number], { source: string }>(
     "SELECT DISTINCT source FROM episode_text WHERE anilist_id = ? AND ep BETWEEN ? AND ? AND retracted_at IS NULL AND depth != 'teaser'")
     .all(anilistId, e.ep_from ?? 0, e.ep_to ?? e.ep_from ?? 0).map((r) => r.source);
-  return { ...b, course: e.data.course || null, motives, sources, hiddenUntil: null, cursor: cursorInfo };
+  // Место события — с названием на курсор и родителем (деревня — «в лесу Джура»)
+  const pl = db.prepare<[number], { place_id: number | null }>("SELECT place_id FROM plot_event WHERE id = ?").get(e.id)?.place_id ?? null;
+  const placeEnt = pl !== null ? entity(pl) : null;
+  const parentId = pl !== null ? db.prepare<[number, number], { inside_id: number | null }>("SELECT inside_id FROM plot_place WHERE entity_id = ? AND anilist_id = ?").get(pl, anilistId)?.inside_id ?? null : null;
+  const parent = parentId !== null ? entity(parentId) : null;
+  const place = placeEnt ? { id: placeEnt.id, name: nameAt(placeEnt, cursor), inside: parent ? nameAt(parent, cursor) : null } : null;
+  return { ...b, course: e.data.course || null, motives, sources, hiddenUntil: null, cursor: cursorInfo, place };
 }
 
 // ---------------------------------------------------------------- карта персонажей
