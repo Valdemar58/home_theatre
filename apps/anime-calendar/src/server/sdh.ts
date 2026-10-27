@@ -7,6 +7,7 @@ import { TIER } from "@/lib/llm-tier";
 import { heardGlossary, maskUnheard, matchFiles, parseSubs, spokenText, type ParsedSubs } from "@/lib/sdh";
 import type { CorpusProgress } from "@/lib/types";
 import { getDetails } from "./anilist";
+import { graphStep } from "./plot-corpus";
 import { cached } from "./cache";
 import { characterGlossary } from "./characters";
 import { corpusOf, putTexts, type Found } from "./corpus-store";
@@ -219,6 +220,7 @@ export async function deepDive(id: number, signal: AbortSignal): Promise<CorpusP
     if (signal.aborted) throw e;
     p.errors.push(`Пересказ сезона: ${e instanceof Error ? e.message : String(e)}`);
   }
+  await graphStep(p, signal);
   touch(p, { step: "готово", done: p.total, finished: true, etaSec: 0 });
   return p;
 }

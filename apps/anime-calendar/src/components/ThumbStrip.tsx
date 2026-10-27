@@ -90,10 +90,10 @@ export function ThumbStrip({ images, active, onSelect, shown, onMore, tone = "pa
       {/* w-max + mx-auto: короткая лента по центру, длинная прокручивается с самого начала */}
       <div className="mx-auto flex w-max gap-2 px-1">
         {images.slice(0, shown).map((im, n) => (
-          <button key={`${n}:${im.url}`} data-n={n} onClick={() => onSelect(n)} title={`${n + 1} / ${images.length}`}
+          <button key={`${n}:${im.url}`} data-n={n} onClick={() => onSelect(n)} title={im.caption ?? `${n + 1} / ${images.length}`}
             className={cx(
               "h-16 shrink-0 overflow-hidden rounded-md ring-2 transition",
-              im.kind === "poster" ? "aspect-2/3" : "aspect-video",
+              im.kind === "poster" || im.kind === "portrait" ? "aspect-2/3" : "aspect-video",
               tone === "dark" ? "bg-white/5" : "bg-gray-800",
               n === active ? "ring-indigo-400" : "opacity-60 ring-transparent hover:opacity-100",
             )}>

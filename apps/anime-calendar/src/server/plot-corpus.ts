@@ -10,6 +10,8 @@ import { db } from "./db";
 import { fetchWithRetry, RateLimiter } from "./http";
 import { episodesOf } from "./plot";
 import { buildSeasonPlot } from "./plot-deep";
+import { buildGraph, materializeGraph } from "./plot-graph-build";
+import { checkLooks } from "./plot-looks";
 import { latestTask, registerHandler } from "./tasks";
 
 // Корпус сюжета: тексты о каждой серии из всех источников (docs/plot-analysis-design.md, TASKS 7.12).
@@ -468,6 +470,27 @@ async function deepStep(p: CorpusProgress, signal: AbortSignal) {
   } catch (e) {
     if (signal.aborted) throw e;
     p.errors.push(`Пересказ сезона: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  await graphStep(p, signal);
+}
+
+/** Персонажи и события сезона — по готовому пересказу, теми же порциями; потом запись в таблицы графа. */
+export async function graphStep(p: CorpusProgress, signal: AbortSignal) {
+  const base = p.done;
+  touch(p, { step: "Персонажи и события" });
+  try {
+    // Готовые порции записываются, даже если следующая сорвалась
+    const failed = await buildGraph(p.anilistId, signal, (done, total) => {
+      touch(p, { done: base + done, total: base + total, etaSec: (total - done) * DEEP_SEC });
+    }).then(() => null, (e: unknown) => e);
+    if (signal.aborted) throw failed;
+    await materializeGraph(p.anilistId);
+    if (failed) p.errors.push(`Персонажи и события: ${failed instanceof Error ? failed.message : String(failed)}`);
+    touch(p, { step: "Облики на портретах" });
+    await checkLooks(p.anilistId, signal);
+  } catch (e) {
+    if (signal.aborted) throw e;
+    p.errors.push(`Персонажи и события: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 

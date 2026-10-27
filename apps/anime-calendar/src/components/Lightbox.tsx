@@ -46,7 +46,7 @@ export function Lightbox({ images, index, onIndex, onClose }: {
     <div className="fixed inset-0 z-60 flex flex-col bg-black/95" onClick={onClose}>
       <div className="flex items-center justify-between px-4 py-3 text-sm text-gray-300" onClick={(e) => e.stopPropagation()}>
         <span>
-          {index + 1} / {images.length} · {IMAGE_KIND_LABELS[img.kind]} · {img.source}
+          {index + 1} / {images.length} · {img.caption ?? `${IMAGE_KIND_LABELS[img.kind]} · ${img.source}`}
         </span>
         <div className="flex items-center gap-3">
           <UpscaleBadge src={img.url} />

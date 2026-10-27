@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import type { Me } from "@/app/api/me/route";
-import type { AnimeDetails, CharacterDetails, CharacterLite, AnimeImages, MatchInfo, PlotInfo, SimilarItem, CalendarResponse, ListEntryWithMedia, ListStatus, MediaLite, SeerrStatus, Notice, NoticeCounts, FriendOpinion, FriendPick, Person, SharedListDetail, SharedListSummary, TogetherState, Profile, TaskInfo, VoicesState } from "./types";
+import type { AnimeDetails, CharacterDetails, NameRef, PlotViewMode, TitleCast, AnimeImages, MatchInfo, PlotInfo, SimilarItem, CalendarResponse, ListEntryWithMedia, ListStatus, MediaLite, SeerrStatus, Notice, NoticeCounts, FriendOpinion, FriendPick, Person, SharedListDetail, SharedListSummary, TogetherState, Profile, TaskInfo, VoicesState } from "./types";
 import { applyProgress } from "./entry-rules";
 
 export async function api<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
@@ -44,11 +44,30 @@ export const usePlot = (id: number) =>
     refetchInterval: (q) => (q.state.data?.pending ? 5000 : false),
   });
 
-export const useTitleCharacters = (id: number) =>
-  useQuery({ queryKey: ["characters", id], queryFn: () => api<CharacterLite[]>(`/api/anime/${id}/characters`), staleTime: 3600_000, enabled: id > 0 });
 
-export const useCharacter = (id: number) =>
-  useQuery({ queryKey: ["character", id], queryFn: () => api<CharacterDetails>(`/api/characters/${id}`), staleTime: 600_000, enabled: id > 0 });
+export const useCharacter = (param: string) =>
+  useQuery({ queryKey: ["character", param], queryFn: () => api<CharacterDetails>(`/api/characters/${param}`), staleTime: 600_000, enabled: Boolean(param) });
+
+/** Персонажи тайтла на серию курсора; at — «показать спойлер» (весь сезон) */
+export const useTitleCast = (id: number, at?: "all") =>
+  useQuery({ queryKey: ["cast", id, at ?? "cursor"], queryFn: () => api<TitleCast>(`/api/anime/${id}/cast${at ? `?at=${at}` : ""}`), staleTime: 600_000, enabled: id > 0 });
+
+/** «Сюжет на серию»: прогресс по списку не меняется, меняется всё, что показано о сюжете тайтла */
+export function usePlotView(id: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { mode: PlotViewMode; ep?: number | null }) => api<TitleCast>(`/api/anime/${id}/cast`, { method: "PUT", json: v }),
+    onSuccess: (cast) => {
+      qc.setQueryData(["cast", id, "cursor"], cast);
+      void qc.invalidateQueries({ queryKey: ["names", id] });
+      void qc.invalidateQueries({ queryKey: ["character"] });
+    },
+  });
+}
+
+/** Имена для подсветки в тексте о сериях до upTo */
+export const useNameRefs = (id: number, upTo: number | null) =>
+  useQuery({ queryKey: ["names", id, upTo], queryFn: () => api<NameRef[]>(`/api/anime/${id}/names${upTo !== null ? `?upTo=${upTo}` : ""}`), staleTime: 600_000, enabled: id > 0 });
 
 export const useSimilar = (id: number) =>
   useQuery({ queryKey: ["similar", id], queryFn: () => api<SimilarItem[]>(`/api/anime/${id}/similar`), staleTime: 30 * 60_000 });
@@ -176,6 +195,10 @@ export function useListMutation() {
       setTimeout(() => void qc.invalidateQueries({ queryKey: ["notices"] }), 2000);
       void qc.invalidateQueries({ queryKey: ["together"] });
       void qc.invalidateQueries({ queryKey: ["shared-list"] });
+      // Прогресс сдвинул курсор сюжета — персонажи и имена на новую серию
+      void qc.invalidateQueries({ queryKey: ["cast"] });
+      void qc.invalidateQueries({ queryKey: ["names"] });
+      void qc.invalidateQueries({ queryKey: ["character"] });
     },
   });
 

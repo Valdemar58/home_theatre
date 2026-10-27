@@ -3,11 +3,12 @@ import { BookOpenIcon, CheckIcon, DocumentTextIcon, EyeIcon, EyeSlashIcon, Spark
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { api, useMe, usePlot } from "@/lib/client";
+import { api, useMe, usePlot, useTitleCast } from "@/lib/client";
 import { stateAt } from "@/lib/plot-deep";
 import type { AnimeDetails, CorpusState, EpisodeInfo, EpisodeTexts, ListEntry, PlotInfo } from "@/lib/types";
 import { formatDate, formatTime, relative } from "@/lib/time";
 import { Img } from "./Img";
+import { NamedText, useNames } from "./NamedText";
 import { Badge, cx, Spinner } from "./ui";
 
 // Сюжет на странице тайтла: описание (синопсис ИИ вместо заглушки), «Что было раньше», серии.
@@ -48,6 +49,8 @@ function Recap({ id, plot }: { id: number; plot: PlotInfo }) {
     onSuccess: (p) => { qc.setQueryData(["plot", id], p); setOpen(true); },
   });
   const r = plot.recap;
+  // Имена в пересказе предысторий — персонажи последней из них (она целиком позади)
+  const names = useNames(open && r ? r.prequels.at(-1)?.id ?? 0 : 0, null);
   if (!r) return (
     <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl bg-gray-800/40 px-4 py-3 ring-1 ring-gray-700">
       <BookOpenIcon className="h-5 w-5 shrink-0 text-gray-400" />
@@ -72,7 +75,7 @@ function Recap({ id, plot }: { id: number; plot: PlotInfo }) {
               <Link key={p.id} href={`/anime/${p.id}`}><Badge tone="neutral" className="transition hover:brightness-125">{i + 1}. {p.title}</Badge></Link>
             ))}
           </div>
-          <p className="whitespace-pre-line leading-relaxed text-gray-300">{r.text}</p>
+          <p className="whitespace-pre-line leading-relaxed text-gray-300"><NamedText text={r.text} anilistId={r.prequels.at(-1)?.id ?? 0} upTo={null} names={names} /></p>
           {r.thin && (
             <p className="tone-warning soft rounded-lg px-3 py-2 text-xs">
               Описаний серий «{r.prequels.at(-1)?.title}» нигде нет — пересказ доходит только до её завязки.
@@ -82,7 +85,7 @@ function Recap({ id, plot }: { id: number; plot: PlotInfo }) {
             <div>
               <p className="mb-1.5 text-xs uppercase tracking-wider text-gray-500">Важно помнить</p>
               <ul className="space-y-1 text-sm text-gray-300">
-                {r.points.map((p, i) => <li key={i} className="flex gap-2"><span className="text-accent-300">•</span>{p}</li>)}
+                {r.points.map((p, i) => <li key={i} className="flex gap-2"><span className="text-accent-300">•</span><span><NamedText text={p} anilistId={r.prequels.at(-1)?.id ?? 0} upTo={null} names={names} /></span></li>)}
               </ul>
             </div>
           )}
@@ -116,11 +119,18 @@ export function Episodes({ media, entry, now }: { media: AnimeDetails; entry?: L
   const eps = plot?.episodes ?? [];
   const airing = new Map(media.schedule.map((s) => [s.episode, s.airingAt]));
   const total = Math.max(eps.at(-1)?.number ?? 0, media.schedule.at(-1)?.episode ?? 0);
+  // «Сюжет на серию N» (выбор на странице тайтла) важнее прогресса: весь сезон — без скрытых описаний
+  const cursor = useTitleCast(media.id).data?.cursor;
+  const seenEp = cursor ? Math.min(total, cursor.ep) : entry?.status === "completed" ? total : entry?.episodes ?? 0;
+  // Имена — до серий, тексты которых видны (спойлеры открыты — до конца)
+  const names = useNames(plot?.season ? media.id : 0, spoilers || opened.size ? total : seenEp);
   if (!total) return null;
   const byNum = new Map(eps.map((e) => [e.number, e]));
   const rows: Row[] = Array.from({ length: total }, (_, i) => ({ number: i + 1, info: byNum.get(i + 1) ?? null, airingAt: airing.get(i + 1) ?? null }));
   // Досмотрено: всё — у «Просмотрено», иначе по прогрессу
-  const seen = entry?.status === "completed" ? total : entry?.episodes ?? 0;
+  const seen = seenEp;
+  // Галочки «просмотрено» — по списку, а не по выбору серии сюжета
+  const listSeen = entry?.status === "completed" ? total : entry?.episodes ?? 0;
   const aired = (r: Row) => (r.airingAt ? r.airingAt * 1000 <= now : r.info?.airDate ? Date.parse(r.info.airDate) <= now : true);
   // Окно по умолчанию: пара досмотренных и дальше; у выходящих — до ближайших анонсов
   const start = Math.max(0, Math.min(seen - 2, total - 10));
@@ -145,9 +155,9 @@ export function Episodes({ media, entry, now }: { media: AnimeDetails; entry?: L
       <div className="overflow-hidden rounded-xl ring-1 ring-gray-700">
         {shown.map((r) => {
           const past = aired(r);
-          const watched = r.number <= seen;
+          const watched = r.number <= listSeen;
           const isFinale = media.episodes === r.number;
-          const hidden = !spoilers && !watched && !opened.has(r.number);
+          const hidden = !spoilers && r.number > seen && !opened.has(r.number);
           const date = r.airingAt ? `${formatDate(r.airingAt)} ${formatTime(r.airingAt)}` : r.info?.airDate ? formatDate(Date.parse(r.info.airDate) / 1000) : null;
           return (
             <div key={r.number} className={cx("flex gap-3 border-b border-gray-700/60 px-3 py-3 last:border-0 sm:gap-4 sm:px-4",
@@ -176,7 +186,7 @@ export function Episodes({ media, entry, now }: { media: AnimeDetails; entry?: L
                     <span className="ml-1 whitespace-nowrap text-xs">— спойлер, показать</span>
                   </button>
                 ) : beats[r.number] ? (
-                  <Overview text={beats[r.number]} en={false} ai />
+                  <Overview text={beats[r.number]} en={false} ai named={(t) => <NamedText text={t} anilistId={media.id} upTo={r.number} names={names} />} />
                 ) : (
                   <Overview text={r.info!.overview!} en={r.info!.lang === "en"} />
                 ))}
@@ -192,7 +202,7 @@ export function Episodes({ media, entry, now }: { media: AnimeDetails; entry?: L
         )}
         {plot?.source && <span className="ml-auto">{hasText ? "Названия и описания" : eps.some((e) => e.title) ? "Названия и кадры" : "Кадры"} — {plot.source}</span>}
       </div>
-      {plot?.season && <SeasonRetelling season={plot.season} seen={spoilers ? Infinity : seen} total={total} />}
+      {plot?.season && <SeasonRetelling season={plot.season} seen={spoilers ? Infinity : seen} total={total} anilistId={media.id} names={names} />}
       <CorpusBar id={media.id} />
       <SdhBar id={media.id} />
     </section>
@@ -338,7 +348,9 @@ function CorpusBar({ id }: { id: number }) {
  * Пересказ сезона ИИ на момент досмотренной серии: состояние последней порции, целиком просмотренной
  * (модель шла слепо по порядку — дальше этой серии она ничего не знала).
  */
-function SeasonRetelling({ season, seen, total }: { season: NonNullable<PlotInfo["season"]>; seen: number; total: number }) {
+function SeasonRetelling({ season, seen, total, anilistId, names }: {
+  season: NonNullable<PlotInfo["season"]>; seen: number; total: number; anilistId: number; names: ReturnType<typeof useNames>;
+}) {
   const [open, setOpen] = useState(false);
   const { state } = stateAt(season.states, seen);
   const last = season.states.at(-1)!.upTo;
@@ -353,8 +365,8 @@ function SeasonRetelling({ season, seen, total }: { season: NonNullable<PlotInfo
       </button>
       {open && state && (
         <div className="space-y-3 border-t border-gray-700/60 px-4 py-4 text-sm">
-          <p className="whitespace-pre-line leading-relaxed text-gray-300">{state.retelling_ru}</p>
-          <p className="text-gray-400"><span className="text-gray-500">На конец серии {state.upTo}: </span>{state.ending_state_ru}</p>
+          <p className="whitespace-pre-line leading-relaxed text-gray-300"><NamedText text={state.retelling_ru} anilistId={anilistId} upTo={state.upTo} names={names} /></p>
+          <p className="text-gray-400"><span className="text-gray-500">На конец серии {state.upTo}: </span><NamedText text={state.ending_state_ru} anilistId={anilistId} upTo={state.upTo} names={names} /></p>
           {state.characters.length > 0 && (
             <div>
               <p className="mb-1.5 text-xs uppercase tracking-wider text-gray-500">Персонажи</p>
@@ -434,13 +446,13 @@ function SdhBar({ id }: { id: number }) {
   );
 }
 
-function Overview({ text, en, ai }: { text: string; en: boolean; ai?: boolean }) {
+function Overview({ text, en, ai, named }: { text: string; en: boolean; ai?: boolean; named?: (text: string) => React.ReactNode }) {
   const [full, setFull] = useState(false);
   return (
     <p onClick={() => setFull((v) => !v)} className={cx("mt-1 cursor-pointer whitespace-pre-line text-sm text-gray-400", !full && "line-clamp-2")}>
       {ai && <SparklesIcon className="mr-1.5 inline h-3.5 w-3.5 align-[-2px] text-gray-500" />}
       {en && <span className="mr-1.5 rounded bg-gray-700 px-1 py-px align-middle text-[10px] font-medium text-gray-300">EN</span>}
-      {text}
+      {named ? named(text) : text}
     </p>
   );
 }

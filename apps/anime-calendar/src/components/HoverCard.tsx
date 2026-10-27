@@ -7,7 +7,8 @@ import { useAnime, useList, useMatch } from "@/lib/client";
 import { FORMAT_LABELS, GENRE_LABELS, SEASON_LABELS, STATUS_LABELS, label } from "@/lib/labels";
 import { displayTitle } from "@/lib/schedule";
 import { pluralEpisodes } from "@/lib/time";
-import type { MediaLite } from "@/lib/types";
+import type { CastMember, MediaLite } from "@/lib/types";
+import { CharacterHoverBody } from "./CharacterHover";
 import { Img } from "./Img";
 import { ListControl } from "./ListControl";
 import { NextEpisode } from "./NextEpisode";
@@ -24,7 +25,10 @@ import { Badge, TONE_CLASS, cx, matchTone, modalsOpen } from "./ui";
 /** reason — почему советуем (полный текст рекомендации в «Для тебя»). */
 export type HoverExtra = { similarity?: { value: number; to: string }; reason?: string };
 
-type Shown = { id: number; media?: MediaLite; rect: DOMRect; extra?: HoverExtra };
+/** Карточка персонажа (имя в тексте, карточка в составе): данные на курсор зрителя или размытый спойлер */
+export type CharacterHoverData = { anilistId: number; entity: number; member: CastMember | null; spoilerEp: number | null };
+
+type Shown = { id: number; media?: MediaLite; rect: DOMRect; extra?: HoverExtra; character?: CharacterHoverData };
 type Ctx = { show: (s: Shown) => void; hide: () => void; keep: () => void; close: () => void };
 
 const HoverCtx = createContext<Ctx | null>(null);
@@ -32,6 +36,7 @@ const HoverCtx = createContext<Ctx | null>(null);
 const OPEN_DELAY = 400;
 const CLOSE_DELAY = 200;
 const WIDTH = 440;
+const CHAR_WIDTH = 380;
 
 const canHover = () => typeof window !== "undefined" && window.matchMedia("(hover: hover) and (pointer: fine)").matches;
 
@@ -39,6 +44,15 @@ const canHover = () => typeof window !== "undefined" && window.matchMedia("(hove
 type AnchorHandlers = Partial<Pick<React.DOMAttributes<HTMLElement>, "onPointerEnter" | "onPointerLeave" | "onClick">>;
 
 export function useHoverCard(media: MediaLite | number, extra?: HoverExtra): AnchorHandlers {
+  return useAnchor(() => (typeof media === "number" ? { id: media, extra } : { id: media.id, media, extra }));
+}
+
+/** Карточка персонажа при наведении — та же механика, что у тайтла (задержка, закрытие, позиция). */
+export function useCharacterHover(character: CharacterHoverData): AnchorHandlers {
+  return useAnchor(() => ({ id: -character.entity, character }));
+}
+
+function useAnchor(make: () => Omit<Shown, "rect">): AnchorHandlers {
   const ctx = useContext(HoverCtx);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
@@ -48,8 +62,8 @@ export function useHoverCard(media: MediaLite | number, extra?: HoverExtra): Anc
       if (e.pointerType !== "mouse" || !canHover()) return;
       const el = e.currentTarget;
       if (timer.current) clearTimeout(timer.current);
-      const s = typeof media === "number" ? { id: media } : { id: media.id, media };
-      timer.current = setTimeout(() => ctx.show({ ...s, rect: el.getBoundingClientRect(), extra }), OPEN_DELAY);
+      const s = make();
+      timer.current = setTimeout(() => ctx.show({ ...s, rect: el.getBoundingClientRect() }), OPEN_DELAY);
     },
     onPointerLeave: () => {
       if (timer.current) clearTimeout(timer.current);
@@ -105,6 +119,7 @@ function Floating({ ref, shown, onEnter, onLeave, onClose }: {
 }) {
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const { rect } = shown;
+  const width = shown.character ? CHAR_WIDTH : WIDTH;
 
   // Справа от якоря, если влезает, иначе слева; по вертикали — не вылезая за окно
   useLayoutEffect(() => {
@@ -112,16 +127,22 @@ function Floating({ ref, shown, onEnter, onLeave, onClose }: {
     const gap = 12;
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const left = rect.right + gap + WIDTH <= vw - 8 ? rect.right + gap : Math.max(8, rect.left - gap - WIDTH);
-    const top = Math.min(Math.max(8, rect.top), Math.max(8, vh - h - 8));
+    // Имя в строке текста — карточка под ним (сбоку от слова мешает читать), постер — справа или слева
+    const inline = Boolean(shown.character) && rect.height < 40;
+    const left = inline ? Math.min(Math.max(8, rect.left), vw - width - 8)
+      : rect.right + gap + width <= vw - 8 ? rect.right + gap : Math.max(8, rect.left - gap - width);
+    const below = rect.bottom + 6 + h <= vh - 8;
+    const top = inline ? (below ? rect.bottom + 6 : Math.max(8, rect.top - 6 - h)) : Math.min(Math.max(8, rect.top), Math.max(8, vh - h - 8));
     setPos({ left, top });
-  }, [rect]);
+  }, [rect, width, shown.character, ref]);
 
   return (
     <div ref={ref} onPointerEnter={onEnter} onPointerLeave={onLeave}
       className="fixed z-50 rounded-xl bg-gray-800/97 p-4 shadow-2xl ring-1 ring-gray-600 backdrop-blur"
-      style={{ width: WIDTH, left: pos?.left ?? -9999, top: pos?.top ?? 0, visibility: pos ? "visible" : "hidden" }}>
-      <HoverBody id={shown.id} media={shown.media} extra={shown.extra} onNavigate={onClose} />
+      style={{ width, left: pos?.left ?? -9999, top: pos?.top ?? 0, visibility: pos ? "visible" : "hidden" }}>
+      {shown.character
+        ? <CharacterHoverBody data={shown.character} onNavigate={onClose} />
+        : <HoverBody id={shown.id} media={shown.media} extra={shown.extra} onNavigate={onClose} />}
     </div>
   );
 }

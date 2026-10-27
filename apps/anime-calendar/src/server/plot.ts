@@ -279,7 +279,7 @@ function runSynopsis(input: SynopsisInput): Promise<string | null> {
 // ---------------------------------------------------------------- «что было раньше»
 
 /** Предыстории по порядку (от ранней к поздней), до 4: идём по PREQUEL, предпочитая сериалы. */
-async function prequelChain(d: AnilistDetails): Promise<AnilistDetails[]> {
+export async function prequelChain(d: AnilistDetails): Promise<AnilistDetails[]> {
   const chain: AnilistDetails[] = [];
   const seen = new Set([d.id]);
   let cur = d;

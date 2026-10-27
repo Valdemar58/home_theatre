@@ -67,8 +67,10 @@ export type ListEntryWithMedia = ListEntry & { media: MediaLite | null };
 export type GalleryImage = {
   url: string;
   thumb: string;
-  kind: "poster" | "banner" | "backdrop" | "screenshot";
-  source: "AniList" | "TMDB" | "Shikimori";
+  kind: "poster" | "banner" | "backdrop" | "screenshot" | "portrait";
+  source: "AniList" | "TMDB" | "Shikimori" | "Fandom";
+  /** Подпись вместо «вид · источник» (облик персонажа: «Облик Сидзу · с 8 серии») */
+  caption?: string;
 };
 
 /** Видео с Shikimori: опенинги, эндинги, трейлеры, клипы (YouTube / VK). */
@@ -492,23 +494,79 @@ export type CharacterLite = {
   voice: string | null;
 };
 
-/** Отношение персонажа в тайтле (граф сюжета; со сроком действия по сериям) */
+/** На какую серию показывать сюжет: мой прогресс, выбранная серия или весь сезон */
+export type PlotViewMode = "progress" | "ep" | "all";
+export type PlotCursor = {
+  /** Досмотрено до серии (весь сезон — 1e6) */
+  ep: number;
+  mode: PlotViewMode;
+  /** Мой прогресс по списку */
+  watched: number;
+  inList: boolean;
+  total: number | null;
+};
+
+/** Отношение персонажа (граф сюжета; со сроком действия по сериям) */
 export type PlotRelationInfo = {
   otherId: number;
-  otherAnilistId: number | null;
+  otherHref: string;
   otherName: string;
   otherImage: string | null;
   kind: string;
   label: string | null;
   anilistId: number;
   fromEp: number | null;
-  toEp: number | null;
+  /** Кончилось в серии (если зритель это уже видел) */
+  endedEp: number | null;
 };
 
-export type PlotEventInfo = { id: number; anilistId: number; title: string; summary: string | null; kind: string | null; epFrom: number | null; epTo: number | null };
+export type PlotEventInfo = {
+  id: number; key: string | null; anilistId: number; title: string; summary: string | null; kind: string | null;
+  epFrom: number | null; epTo: number | null; major: boolean; role: string | null;
+};
+
+/** Персонаж в составе тайтла на серию курсора */
+export type CastMember = {
+  /** Сущность графа (главная из склеенных) */
+  id: number;
+  /** Все склеенные с ним сущности, раскрытые к курсору (для имён в тексте) */
+  entities: number[];
+  href: string;
+  anilistCharId: number | null;
+  name: string;
+  native: string | null;
+  role: CharacterRole;
+  image: string | null;
+  lookLabel: string | null;
+  description: string | null;
+  goal: string | null;
+  groups: { id: number; name: string; role: string | null }[];
+  /** Другие имена, раскрытые к курсору («он же …») */
+  aka: string[];
+  firstEp: number | null;
+  voice: string | null;
+};
+
+export type TitleCast = {
+  cursor: PlotCursor;
+  /** Граф построен (иначе — состав из AniList без сюжета) */
+  built: boolean;
+  upTo: number;
+  groupWord: string | null;
+  powerSystem: boolean;
+  members: CastMember[];
+  groups: { id: number; name: string; count: number }[];
+  /** Сколько персонажей появится после курсора */
+  hidden: number;
+};
+
+/** Имя в тексте → персонаж (spoiler — зритель его ещё не видел) */
+export type NameRef = { alias: string; entity: number; href: string; spoiler: boolean; anilistId: number | null; revealedEp: number };
 
 export type CharacterDetails = {
-  id: number;
+  id: number | null;
+  entityId: number | null;
+  href: string;
   name: string;
   nameRu: string | null;
   native: string | null;
@@ -516,9 +574,26 @@ export type CharacterDetails = {
   image: string | null;
   /** Описание AniList; спойлеры размечены ~!…!~ */
   description: string | null;
+  /** Кто это — по разбору серий, на серию курсора */
+  plotDescription: string | null;
+  goal: string | null;
   gender: string | null;
   age: string | null;
+  /** Облики, показанные к курсору; future — сколько ещё будет */
+  looks: { image: string; label: string | null; anilistId: number | null; fromEp: number | null }[];
+  futureLooks: number;
+  names: { name: string; kind: string; who: string | null; fromEp: number | null; anilistId: number | null }[];
+  futureNames: number;
+  /** Склеенные с ним персонажи («он же»), раскрытые к курсору */
+  aka: { name: string; href: string; revealedEp: number; anilistId: number }[];
+  /** Страница склеена с другой — перейти туда */
+  redirect: string | null;
+  /** Персонаж ещё не появлялся у зрителя */
+  hiddenUntil: { anilistId: number; ep: number } | null;
+  groups: { id: number; name: string; role: string | null; past: boolean }[];
   appearances: { media: MediaLite; role: CharacterRole }[];
   relations: PlotRelationInfo[];
   events: PlotEventInfo[];
+  /** Только если в тайтле есть система сил */
+  abilities: { name: string; text: string | null; status: string; fromEp: number; anilistId: number }[] | null;
 };

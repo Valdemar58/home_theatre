@@ -90,4 +90,5 @@ export const IMAGE_KIND_LABELS: Record<GalleryImage["kind"], string> = {
   banner: "Баннер",
   backdrop: "Фон",
   screenshot: "Кадр",
+  portrait: "портрет",
 };
