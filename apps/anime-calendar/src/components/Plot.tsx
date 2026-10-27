@@ -9,7 +9,7 @@ import type { AnimeDetails, CorpusState, EpisodeInfo, EpisodeTexts, ListEntry, P
 import { CORPUS_SOURCE_LABELS } from "@/lib/labels";
 import { formatDate, formatTime, relative } from "@/lib/time";
 import { Img } from "./Img";
-import { NamedText, useNames } from "./NamedText";
+import { NamedText, paragraphEps, useNames } from "./NamedText";
 import { Badge, cx, Spinner } from "./ui";
 
 // Сюжет на странице тайтла: описание (синопсис ИИ вместо заглушки), «Что было раньше», серии.
@@ -371,7 +371,7 @@ function SeasonRetelling({ season, seen, total, anilistId, names }: {
       </button>
       {open && state && (
         <div className="space-y-3 border-t border-gray-700/60 px-4 py-4 text-sm">
-          <p className="whitespace-pre-line leading-relaxed text-gray-300"><NamedText text={state.retelling_ru} anilistId={anilistId} upTo={state.upTo} names={names} /></p>
+          <p className="whitespace-pre-line leading-relaxed text-gray-300"><NamedText text={state.retelling_ru} anilistId={anilistId} upTo={state.upTo} names={names} byParagraph={paragraphEps(state.arcs, state.retelling_ru)} /></p>
           <p className="text-gray-400"><span className="text-gray-500">На конец серии {state.upTo}: </span><NamedText text={state.ending_state_ru} anilistId={anilistId} upTo={state.upTo} names={names} /></p>
           {state.characters.length > 0 && (
             <div>

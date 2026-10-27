@@ -7,7 +7,7 @@ import { stateAt } from "@/lib/plot-deep";
 import type { AnimeDetails } from "@/lib/types";
 import { CharacterStrip, EpisodePicker } from "./Characters";
 import { Img } from "./Img";
-import { NamedText, useNames } from "./NamedText";
+import { NamedText, paragraphEps, useNames } from "./NamedText";
 import { Badge, cx } from "./ui";
 
 // Блок «Сюжет» на странице тайтла: выбор серии, начало пересказа сезона на эту серию и входы — персонажи,
@@ -79,7 +79,7 @@ export function PlotHub({ media }: { media: AnimeDetails }) {
         <div className="rounded-xl bg-gray-800/40 px-4 py-3 ring-1 ring-gray-700">
           <p className="mb-1 text-[11px] uppercase tracking-wider text-gray-500">Пересказ сезона · серии 1–{state.upTo}</p>
           <p className={cx("whitespace-pre-line text-sm leading-relaxed text-gray-300", !full && "line-clamp-3")}>
-            <NamedText text={state.retelling_ru} anilistId={media.id} upTo={state.upTo} names={names} />
+            <NamedText text={state.retelling_ru} anilistId={media.id} upTo={state.upTo} names={names} byParagraph={paragraphEps(state.arcs, state.retelling_ru)} />
           </p>
           <button onClick={() => setFull(!full)} className="mt-1 text-sm text-accent-300 hover:text-accent-200">{full ? "Свернуть" : "Читать дальше"}</button>
         </div>
@@ -100,9 +100,9 @@ export function PlotHub({ media }: { media: AnimeDetails }) {
               <UserGroupIcon className="ml-auto h-5 w-5 text-gray-600" />
             </div>
           } />
-        <Tile title="Карта персонажей" count={plural(cast.stats.relations, "связь", "связи", "связей")} soon
+        <Tile href={`/anime/${media.id}/relations`} title="Карта персонажей" count={plural(cast.stats.relations, "связь", "связи", "связей")}
           text="Кто кому союзник, слуга, враг — и как это менялось от серии к серии." preview={<GraphPreview />} />
-        <Tile href={`/anime/${media.id}/events`} title="События" count={`${plural(cast.stats.arcs, "арка", "арки", "арок")} · ${plural(cast.stats.events, "событие", "события", "событий")}`}
+        <Tile href={`/anime/${media.id}/events`} title="Карта событий" count={`${plural(cast.stats.arcs, "арка", "арки", "арок")} · ${plural(cast.stats.events, "событие", "события", "событий")}`}
           text="Арки и события по сериям: что из чего вытекло, причины и последствия." preview={<LanesPreview />} />
       </div>
       {cast.hidden > 0 && <p className="text-sm text-gray-500">Ещё {plural(cast.hidden, "персонаж появится", "персонажа появятся", "персонажей появятся")} после {cast.cursor.ep} серии.</p>}

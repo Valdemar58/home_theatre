@@ -1,8 +1,8 @@
-import { TitleEventsView } from "@/components/Events";
+import { EventMapView } from "@/components/EventMap";
 
-export const metadata = { title: "События" };
+export const metadata = { title: "Карта событий" };
 
 export default async function TitleEventsPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  return <TitleEventsView id={Number(id)} />;
+  return <EventMapView id={Number(id)} />;
 }

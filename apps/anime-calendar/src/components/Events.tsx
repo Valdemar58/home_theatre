@@ -2,7 +2,7 @@
 import { MagnifyingGlassIcon, UserIcon } from "@heroicons/react/24/outline";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useAnime, useEvent, useTitleEvents } from "@/lib/client";
+import { useAnime, useEvent } from "@/lib/client";
 import { CORPUS_SOURCE_LABELS } from "@/lib/labels";
 import { displayTitle } from "@/lib/schedule";
 import type { EventBrief, EventLinkInfo } from "@/lib/types";
@@ -110,36 +110,6 @@ export function EventCard({ e }: { e: EventBrief }) {
         </dl>
       )}
       <Participants list={e.participants} />
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------- список событий тайтла
-
-/** События тайтла по аркам — пока нет карты событий, это её место. */
-export function TitleEventsView({ id }: { id: number }) {
-  const { data: anime } = useAnime(id);
-  const { data, error, isLoading } = useTitleEvents(id);
-  if (error) return <ErrorBox error={error} />;
-  const total = data?.arcs.reduce((a, x) => a + x.events.length, 0) ?? 0;
-  return (
-    <div className="mx-auto max-w-6xl space-y-6 p-4 sm:p-6">
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="mr-auto">
-          <Link href={`/anime/${id}`} className="text-sm text-gray-400 hover:text-gray-200">{anime ? displayTitle(anime.title) : "Тайтл"}</Link>
-          <h1 className="mt-1 text-2xl font-bold">События {data && <span className="text-lg font-normal text-gray-500">{total}</span>}</h1>
-        </div>
-        {data && <EpisodePicker anilistId={id} cursor={data.cursor} />}
-      </div>
-      {isLoading && <Spinner />}
-      {data && data.hidden > 0 && <p className="text-sm text-gray-400">Ещё {data.hidden} — после вашей серии.</p>}
-      {data?.arcs.map((a, i) => (
-        <section key={i}>
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-gray-400">{a.name ?? "Без арки"} <span className="text-gray-600">{a.events.length}</span></h2>
-          <div className="grid gap-3 md:grid-cols-2">{a.events.map((e) => <EventCard key={e.key} e={e} />)}</div>
-        </section>
-      ))}
-      {data && !total && <p className="text-gray-400">На эту серию событий пока нет.</p>}
     </div>
   );
 }

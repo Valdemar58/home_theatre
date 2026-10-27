@@ -23,8 +23,8 @@ import { registerHandler } from "./tasks";
 // от хэша пересказа: поменялся текст серии — пересчитывается её порция и всё после. Таблицы plot_* — производные:
 // materializeGraph переписывает строки тайтла с source = 'graph' целиком.
 
-const PROMPT_V = 3;
-const INPUT_V = 3;
+const PROMPT_V = 4;
+const INPUT_V = 4;
 const SOURCE = "graph";
 
 const subject = (id: number, upTo: number) => `graph:${id}:${upTo}`;
@@ -51,7 +51,7 @@ const SCHEMA: JsonSchema = obj({
     key: str(), alias: str("по-русски"), kind: en(ALIAS_KINDS), who_ru: str("кто так зовёт; все — пусто"), ep: int(),
     look: str("ключ облика из looks, если имя относится к особому облику (прошлая жизнь, маскировка, форма); иначе пусто"),
   }), 60,
-    "новые имена, прозвища, титулы и названия обликов, с серии, где зритель их узнал"),
+    "новые собственные имена, прозвища и титулы, с серии, где зритель их узнал; нарицательные слова («слизень», «перерожденец») — не имена"),
   looks: arr(obj({
     key: str(), look: str("ключ облика латиницей: slime, human-form, armored-titan"), label_ru: str(), label_en: str("коротко по-английски, как подписали бы на вики: Slime, Human form"),
     appearance_en: str("как выглядит в кадре, по-английски, 5–12 слов: «blue slime blob», «silver-haired youth in a mask»"),
@@ -59,7 +59,8 @@ const SCHEMA: JsonSchema = obj({
   }), 20, "облики, которые показаны впервые: как персонаж выглядит в кадре сейчас, другая форма, маскировка, прошлая жизнь"),
   identities: arr(obj({ a: str(), b: str(), ep: int("серия, где зритель это узнал"), note_ru: str() }), 10,
     "раскрыто, что два персонажа из списка — одно лицо (например, человек в маске оказался известным героем)"),
-  members: arr(obj({ key: str(), group: str("ключ группы"), role_ru: str(), from_ep: int(), to_ep: int("ушёл из группы в серии; иначе 0") }), 40),
+  members: arr(obj({ key: str(), group: str("ключ группы"), role_ru: str(), from_ep: int(), to_ep: int("ушёл из группы в серии; иначе 0") }), 40,
+    "кто в какой группе: каждый участник названной организации, союза, клана, отряда, команды"),
   relations: arr(obj({
     a: str(), b: str(), kind: en(RELATION_KINDS, "a по отношению к b: «служит» — a служит b"), label_ru: str("уточнение: «брат», «приёмный отец»"),
     from_ep: int(), ended_ep: int("отношение кончилось в серии; иначе 0"),
@@ -87,6 +88,8 @@ const SYSTEM = `Ты ведёшь граф сюжета аниме серия з
 - Ключ персонажа не меняется никогда. У известных — ключ из состояния, у новых — новый.
 - name_en — как в английском тексте; если персонаж есть в списке AniList — ровно как там.
 - Имена из словаря Shikimori — строго как там; остальные японские — по Поливанову; одного персонажа везде одинаково.
+- Организации, союзы, кланы, отряды, команды, гильдии, государства с правителями — персонажи kind «группа» (например, «Умеренная клоунада»), и members для каждого известного участника. Группа без участников не нужна.
+- aliases — только собственные имена, прозвища и титулы, которыми персонажа называют вместо имени. Описание («слизень», «дракон», «уникальный») — не имя.
 - looks — как персонаж выглядит в кадре. Первый облик заметного персонажа — kind «обычный». Новый облик — только с серии, где его показали: «принял человеческий облик», «превратился в титана». Прошлая жизнь, воспоминание, другой человек до перерождения — kind «прошлое», это не нынешний облик.
 - events — 2–4 на серию, главное. Ключ — новый для каждого события. links — только если связь видна из текста.
 - Пиши сжато: описания и уточнения — коротко, без повторов. Не повторяй того, что уже есть в графе: имена, облики, отношения, события — только новое.
@@ -181,22 +184,34 @@ export async function materializeGraph(id: number): Promise<{ entities: number; 
   const chars = await titleCharacters(id, me.d.idMal).catch(() => []);
   seedCharacters(id, chars);
   const keyRows = new Map(db.prepare<[number], { key: string; entity_id: number }>("SELECT key, entity_id FROM plot_key WHERE root_id = ?").all(root).map((r) => [r.key, r.entity_id]));
-  const claimed = new Set(keyRows.values());
   const t = now();
   const entityOf = new Map<string, number>();
   const newEntity = db.prepare<[string, string, string | null, string | null, number, number], { id: number }>(
     "INSERT INTO plot_entity (kind, name, name_ru, name_ja, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id");
-  for (const p of g.personas.values()) {
-    let e = keyRows.get(p.key) ?? null;
-    if (e === null && p.kind === "персонаж") {
-      const c = chars.find((c) => (sameName(p.name_en, c.name) || (c.native !== null && sameName(p.name_ja, c.native)) || (c.nameRu !== null && sameName(p.name_ru, c.nameRu))));
-      const hit = c ? db.prepare<[number], { id: number }>("SELECT id FROM plot_entity WHERE anilist_char_id = ?").get(c.id)?.id ?? null : null;
-      if (hit !== null && !claimed.has(hit)) e = hit;
-    }
-    if (e === null) e = newEntity.get(p.kind === "группа" ? "group" : "character", p.name_en || p.name_ru, p.name_ru || null, p.name_ja || null, t, t)!.id;
-    if (!keyRows.has(p.key)) db.prepare("INSERT OR IGNORE INTO plot_key (root_id, key, entity_id) VALUES (?, ?, ?)").run(root, p.key, e);
-    claimed.add(e);
+  // Сначала персонажи, совпавшие с AniList (по основному имени): пересборка может дать персонажу новый ключ, и старая
+  // привязка ключа не должна плодить второго «Клеймана». Занятость — только среди персонажей текущего графа
+  const claimed = new Set<number>();
+  const anilistHit = (p: GPersona) => {
+    if (p.kind !== "персонаж") return null;
+    const c = chars.find((c) => (sameName(p.name_en, c.name) || (c.native !== null && sameName(p.name_ja, c.native)) || (c.nameRu !== null && sameName(p.name_ru, c.nameRu))));
+    return c ? db.prepare<[number], { id: number }>("SELECT id FROM plot_entity WHERE anilist_char_id = ?").get(c.id)?.id ?? null : null;
+  };
+  const personas = [...g.personas.values()];
+  for (const p of personas) {
+    const hit = anilistHit(p);
+    if (hit !== null && !claimed.has(hit)) { entityOf.set(p.key, hit); claimed.add(hit); }
+  }
+  for (const p of personas) {
+    if (entityOf.has(p.key)) continue;
+    const old = keyRows.get(p.key);
+    const e = old !== undefined && !claimed.has(old) ? old
+      : newEntity.get(p.kind === "группа" ? "group" : "character", p.name_en || p.name_ru, p.name_ru || null, p.name_ja || null, t, t)!.id;
     entityOf.set(p.key, e);
+    claimed.add(e);
+  }
+  for (const p of personas) {
+    const e = entityOf.get(p.key)!;
+    if (keyRows.get(p.key) !== e) db.prepare("INSERT OR REPLACE INTO plot_key (root_id, key, entity_id) VALUES (?, ?, ?)").run(root, p.key, e);
     // Своё имя — у сущностей без AniList; у AniList-персонажей русское имя Shikimori, иначе из графа
     db.prepare("UPDATE plot_entity SET name_ru = CASE WHEN anilist_char_id IS NULL OR name_ru IS NULL THEN ? ELSE name_ru END, updated_at = ? WHERE id = ?")
       .run(p.name_ru || null, t, e);
@@ -216,6 +231,9 @@ export async function materializeGraph(id: number): Promise<{ entities: number; 
     }
     db.prepare("DELETE FROM plot_note WHERE anilist_id = ?").run(id);
 
+    // Появления — заново: персонаж прошлой сборки (другой ключ, дубль) не должен остаться в составе тайтла
+    db.prepare("DELETE FROM plot_appearance WHERE anilist_id = ? AND source = ?").run(id, SOURCE);
+    db.prepare("UPDATE plot_appearance SET first_ep = NULL WHERE anilist_id = ?").run(id);
     // Появление в тайтле — с первой порции, где персонаж был; роль — из AniList, если он там есть
     const firstHere = new Map<string, number>();
     for (const n of mine(g.notes)) firstHere.set(n.key, Math.min(firstHere.get(n.key) ?? Infinity, n.from));

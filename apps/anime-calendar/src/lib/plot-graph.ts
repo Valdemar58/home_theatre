@@ -205,43 +205,93 @@ export function lookAt<L extends Look>(looks: L[], at: number): L | null {
 export type NameRef = { alias: string; entity: number };
 export type TextPart = string | { text: string; entity: number; alias: string };
 
-const LETTER = "\\p{L}";
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const CONSONANT = /[бвгджзйклмнпрстфхцчшщ]/;
+
+/** Имя, которое стоит размечать: собственное (с большой буквы), а не «слизень», «дракон бури», «уникальный». */
+export const isProperName = (alias: string) => /^\p{Lu}/u.test(alias.trim());
+
+/**
+ * Буквы имени → нестрогий шаблон: одно японское имя модели пишут по-разному (Сидзуэ / Шизуэ, Идзава / Изава,
+ * Клэйман / Клейман, Карион / Каррион) — си/ши, ти/чи, дзи/зи/джи, дз/з, е/э/ё, удвоенные согласные.
+ */
+function fuzzy(stem: string): string {
+  const s = stem.toLowerCase();
+  let out = "";
+  for (let i = 0; i < s.length; ) {
+    const rest = s.slice(i);
+    const m = rest.match(/^(?:дзи|джи|зи)/) ?? rest.match(/^(?:ши|си)/) ?? rest.match(/^(?:чи|ти)/) ?? rest.match(/^д?з/);
+    if (m) {
+      out += /и$/.test(m[0]) ? (m[0].startsWith("ш") || m[0].startsWith("с") ? "(?:ши|си)" : m[0].startsWith("ч") || m[0].startsWith("т") ? "(?:чи|ти)" : "(?:д?зи|джи)") : "д?з";
+      i += m[0].length;
+      continue;
+    }
+    const c = s[i];
+    if ("еэё".includes(c)) out += "[еэё]";
+    else if (CONSONANT.test(c)) {
+      out += `${c}+`;
+      while (s[i + 1] === c) i++;
+    } else out += escapeRe(c);
+    i++;
+  }
+  return out;
+}
 
 /** Слово имени с русскими окончаниями: «Вельдора» ловит «Вельдоры», «Вельдорой»; несклоняемые («Римуру») — как есть. */
 function wordPattern(w: string): string {
-  if (!/^[а-яё]/i.test(w) || w.length < 4) return escapeRe(w);
+  if (!/^[а-яё]/i.test(w)) return escapeRe(w);
   // На гласную, кроме «а/я», японские имена не склоняются
-  if (/[уюоеиэы]$/i.test(w)) return escapeRe(w);
-  if (/[аяйь]$/i.test(w)) return `${escapeRe(w.slice(0, -1))}[а-яё]{1,3}`;
-  return `${escapeRe(w)}[а-яё]{0,3}`;
+  if (w.length < 4 || /[уюоеиэы]$/i.test(w)) return fuzzy(w);
+  if (/[аяйь]$/i.test(w)) return `${fuzzy(w.slice(0, -1))}[а-яё]{1,3}`;
+  return `${fuzzy(w)}[а-яё]{0,3}`;
 }
 
 /**
  * Текст → куски с именами персонажей (для карточки при наведении). Длинные имена — раньше коротких:
  * «Сатору Миками» не разбивается на «Сатору». Одно имя у двух персонажей — не размечается (неясно, кто).
+ * Ссылка — только на первое упоминание персонажа в абзаце; два его имени подряд («дриада Трейни») — одна ссылка.
+ * Слово внутри составного названия через дефис («Джура-Темпест») — не имя.
  */
 export function linkNames(text: string, refs: NameRef[]): TextPart[] {
   const byAlias = new Map<string, Set<number>>();
+  const proper = new Set<string>();
   for (const r of refs) {
     const k = norm(r.alias);
     if (k.length < 2) continue;
     byAlias.set(k, (byAlias.get(k) ?? new Set()).add(r.entity));
+    if (isProperName(r.alias)) proper.add(k);
   }
-  const usable = [...byAlias.entries()].filter(([, s]) => s.size === 1).map(([alias, s]) => ({ alias, entity: [...s][0] }))
+  const usable = [...byAlias.entries()].filter(([, s]) => s.size === 1).map(([alias, s]) => ({ alias, entity: [...s][0], proper: proper.has(alias) }))
     .sort((a, b) => b.alias.length - a.alias.length);
   if (!usable.length) return [text];
   const pats = usable.map((u) => `(${u.alias.split(" ").map(wordPattern).join("\\s+")})`);
-  const re = new RegExp(`(?<!${LETTER})(?:${pats.join("|")})(?!${LETTER})`, "giu");
+  const re = new RegExp(`(?<![\\p{L}-])(?:${pats.join("|")})(?![\\p{L}-])`, "giu");
   const out: TextPart[] = [];
+  const push = (s: string) => { if (s) out.push(s); };
   let last = 0;
+  let seen = new Set<number>();
   for (const m of text.matchAll(re)) {
     const i = m.slice(1).findIndex((x) => x !== undefined);
     if (i < 0) continue;
-    if (m.index > last) out.push(text.slice(last, m.index));
-    out.push({ text: m[0], entity: usable[i].entity, alias: usable[i].alias });
+    const gap = text.slice(last, m.index);
+    // Новый абзац — заново ссылки на первое упоминание
+    if (/\n\s*\n/.test(gap)) seen = new Set();
+    const { entity, alias } = usable[i];
+    // Имя пишется с большой буквы: «официантка» в тексте — не персонаж «Официантка»
+    if (usable[i].proper && !/^\p{Lu}/u.test(m[0])) continue;
+    const prev = out.at(-1);
+    if (prev && typeof prev !== "string" && prev.entity === entity && /^\s+$/.test(gap)) {
+      prev.text += gap + m[0];
+    } else if (seen.has(entity)) {
+      push(gap + m[0]);
+    } else {
+      push(gap);
+      out.push({ text: m[0], entity, alias });
+      seen.add(entity);
+    }
     last = m.index + m[0].length;
   }
-  if (last < text.length) out.push(text.slice(last));
-  return out;
+  push(text.slice(last));
+  // Соседние обычные куски — в один
+  return out.reduce<TextPart[]>((a, p) => (typeof p === "string" && typeof a.at(-1) === "string" ? [...a.slice(0, -1), (a.at(-1) as string) + p] : [...a, p]), []);
 }

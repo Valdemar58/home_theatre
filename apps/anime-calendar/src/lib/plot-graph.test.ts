@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aliasLook, foldGraph, graphForPrompt, identityGroups, linkNames, lookAt, sameName, type GraphDelta } from "./plot-graph";
+import { aliasLook, foldGraph, graphForPrompt, identityGroups, isProperName, linkNames, lookAt, sameName, type GraphDelta } from "./plot-graph";
 
 const delta = (d: Partial<GraphDelta>): GraphDelta => ({
   personas: [], aliases: [], looks: [], identities: [], members: [], relations: [], events: [], links: [], abilities: [],
@@ -98,5 +98,68 @@ describe("aliasLook", () => {
     expect(aliasLook("слизень", null, looks)).toBe("slime");
     expect(aliasLook("Римуру Темпест", null, looks)).toBeNull();
     expect(aliasLook("Римуру", "human-shizu", looks)).toBe("human-shizu");
+  });
+});
+
+describe("linkNames: находки пользователя", () => {
+  const links = (text: string, refs: { alias: string; entity: number }[]) =>
+    linkNames(text, refs).filter((p) => typeof p !== "string").map((p) => (p as { text: string; entity: number }).text);
+  it("разное написание японского имени: си/ши, дз/з, е/э, удвоенные согласные", () => {
+    const refs = [{ alias: "Сидзуэ Идзава", entity: 1 }, { alias: "Клэйман", entity: 2 }, { alias: "Карион", entity: 3 }, { alias: "Фрей", entity: 4 }];
+    expect(links("привела призванная в этот мир Шизуэ Изава", refs)).toEqual(["Шизуэ Изава"]);
+    expect(links("Клейман, Каррион, Фрей", refs)).toEqual(["Клейман", "Каррион", "Фрей"]);
+  });
+  it("слово внутри составного названия — не имя", () => {
+    expect(links("Федерация Джура-Темпест растёт", [{ alias: "Темпест", entity: 1 }])).toEqual([]);
+  });
+  it("первое упоминание в абзаце, в новом абзаце — снова", () => {
+    const refs = [{ alias: "Римуру", entity: 1 }];
+    expect(links("Римуру ушёл. Римуру вернулся.\n\nРимуру спит.", refs)).toEqual(["Римуру", "Римуру"]);
+  });
+  it("два имени одного персонажа подряд — одна ссылка", () => {
+    expect(links("Дриада Трейни пришла", [{ alias: "Дриада", entity: 7 }, { alias: "Трейни", entity: 7 }])).toEqual(["Дриада Трейни"]);
+  });
+  it("собственное имя — с большой буквы", () => {
+    expect(isProperName("слизень")).toBe(false);
+    expect(isProperName("дракон бури")).toBe(false);
+    expect(isProperName("Орк-лорд")).toBe(true);
+  });
+});
+
+describe("ringLayout", () => {
+  it("ближний круг, союзники, враги; не связанные — скрыты", async () => {
+    const { ringLayout } = await import("./relation-layout");
+    const nodes = [1, 2, 3, 4, 5, 6].map((id) => ({ id, groups: [] }));
+    const edges = [
+      { a: 2, b: 1, kind: "служит", endedEp: null }, { a: 1, b: 3, kind: "союзник", endedEp: null },
+      { a: 1, b: 4, kind: "враг", endedEp: null }, { a: 2, b: 5, kind: "друг", endedEp: null },
+    ];
+    const r = ringLayout(1, nodes, edges);
+    expect([1, 2, 3, 4, 5, 6].map((id) => r.get(id)!.ring)).toEqual([0, 1, 2, 3, 2, null]);
+  });
+});
+
+describe("laneLayout и chainLayout", () => {
+  const ev = (key: string, ep: number, ids: number[], causes: string[] = []) => ({
+    key, epFrom: ep, epTo: ep, participants: ids.map((id) => ({ id, name: `p${id}` })), causes: causes.map((k) => ({ key: k })), consequences: [] as { key: string }[],
+  });
+  it("событие — на дорожку самого узкого участника, совпавшие по серии — в разные ряды", async () => {
+    const { laneLayout } = await import("./event-layout");
+    const { lanes, items } = laneLayout([ev("a", 1, [1]), ev("b", 1, [1, 2]), ev("c", 2, [1]), ev("d", 2, [1, 2]), ev("e", 3, [1])]);
+    expect(lanes.map((l) => l.id)).toEqual([1, 2]);
+    expect(items.find((i) => i.key === "b")!.lane).toBe(1);
+    expect(items.find((i) => i.key === "a")!.lane).toBe(0);
+  });
+  it("цепочка: причины слева по шагам", async () => {
+    const { chainLayout } = await import("./event-layout");
+    const cells = chainLayout([ev("a", 1, []), ev("b", 2, [], ["a"]), ev("c", 3, [], ["b"])], "c");
+    expect(cells.map((c) => [c.key, c.col])).toEqual([["a", -2], ["b", -1], ["c", 0]]);
+  });
+});
+
+describe("linkNames: регистр", () => {
+  it("имя с большой буквы не ловит нарицательное слово в тексте", () => {
+    const parts = linkNames("Римуру зовёт официантку. Официантка улыбается.", [{ alias: "Официантка", entity: 1 }]);
+    expect(parts.filter((p) => typeof p !== "string").map((p) => (p as { text: string }).text)).toEqual(["Официантка"]);
   });
 });

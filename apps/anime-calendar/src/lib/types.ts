@@ -590,7 +590,32 @@ export type EventDetails = EventBrief & {
   hiddenUntil: number | null;
   cursor: PlotCursor;
 };
+/** Карта персонажей на курсор: узлы — персонажи состава, рёбра — отношения, которые зритель уже видел */
+export type RelationMap = {
+  cursor: PlotCursor;
+  groupWord: string | null;
+  nodes: { id: number; name: string; href: string; image: string | null; role: CharacterRole; groups: { id: number; name: string }[]; description: string | null }[];
+  edges: { a: number; b: number; kind: string; label: string | null; fromEp: number | null; endedEp: number | null }[];
+};
+
 export type TitleEvents = { cursor: PlotCursor; arcs: { name: string | null; events: EventBrief[] }[]; hidden: number };
+
+/** Карточка персонажа для имени в тексте — сам этот персонаж (не тот, с кем его потом склеили), картинки по сериям */
+export type NameCard = {
+  name: string;
+  native: string | null;
+  href: string;
+  role: CharacterRole;
+  description: string | null;
+  goal: string | null;
+  groups: { id: number; name: string; role: string | null }[];
+  firstEp: number | null;
+  /** Облики, которые зритель может видеть: с какой серии этого тайтла (0 — из предыстории) */
+  images: { url: string; label: string | null; ep: number }[];
+  /** Раскрыто, что это тот же человек, — с какой серии этого тайтла */
+  mergedInto: { name: string; href: string; ep: number } | null;
+};
+export type NameRefs = { refs: NameRef[]; cards: Record<number, NameCard>; cursor: number };
 
 /** Имя в тексте → персонаж (spoiler — зритель его ещё не видел) */
 export type NameRef = {
