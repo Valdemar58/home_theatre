@@ -256,13 +256,22 @@ async function crop(frame: Buffer, w: number, h: number, box: number[]): Promise
 
 // ---------------------------------------------------------------- сверка с эталоном
 
-/** Эталон персонажа — его картинка с AniList или Fandom (любой облик), PNG 512 px; нет — null. */
-async function reference(entity: number): Promise<string | null> {
-  const r = db.prepare<[number], { url: string }>(
-    "SELECT url FROM plot_image WHERE entity_id = ? AND source IN ('anilist', 'fandom') ORDER BY source = 'anilist' DESC, from_ep IS NULL LIMIT 1").get(entity);
+/**
+ * Эталон персонажа, PNG 512 px; нет — null. Ближе всего к облику — проверенная картинка с той же или более ранней серии
+ * (в том числе кадр, найденный в этом проходе): портрет AniList рисует поздний облик (хобгоблин вместо старого гоблина),
+ * и облик до эволюции с ним не сходится. Её нет — AniList или Fandom (любой облик).
+ */
+async function reference(entity: number, ep = Infinity, dir?: string): Promise<string | null> {
+  const near = db.prepare<[number, number], { url: string; source: string }>(`
+    SELECT url, source FROM plot_image WHERE entity_id = ? AND from_ep IS NOT NULL AND from_ep <= ? AND look IS NOT NULL
+      AND look NOT IN (SELECT look FROM plot_look l WHERE l.entity_id = plot_image.entity_id AND l.kind = 'прошлое')
+    ORDER BY from_ep DESC, source = 'frame' DESC LIMIT 1`).get(entity, Number.isFinite(ep) ? ep : 1e6);
+  const r = near ?? db.prepare<[number], { url: string; source: string }>(
+    "SELECT url, source FROM plot_image WHERE entity_id = ? AND source IN ('anilist', 'fandom') ORDER BY source = 'anilist' DESC, from_ep IS NULL LIMIT 1").get(entity);
   if (!r) return null;
   try {
-    const file = (await originalFile(r.url)).file;
+    // Кадр — файл в папке тайтла, остальное — из кэша картинок
+    const file = r.source === "frame" && dir ? path.join(dir, r.url.split("/").pop()!.split("?")[0]) : (await originalFile(r.url)).file;
     return (await sharp(await readFile(file)).resize(512, 512, { fit: "inside" }).png().toBuffer()).toString("base64");
   } catch {
     return null;
@@ -289,6 +298,39 @@ Is image 2 the same character as image 1? In image 2 the character may look diff
 Answer JSON {"same": true|false, "confidence": 0-10}.`,
   });
   return res.value.same && res.value.confidence >= 7;
+}
+
+type Candidate = { img: Buffer; score: number; t: number };
+
+/** Сколько найденных лиц сверять между собой: 4 — шесть сравнений, хватает, чтобы случайное лицо осталось в меньшинстве */
+const CANDIDATES = 4;
+
+/**
+ * Лучший кадр из кандидатов. От трёх кандидатов — согласие: каждый сверяется с каждым, побеждает лицо, которое совпадает
+ * чаще (случайный прохожий в кадре ни с кем не совпадает и отпадает). Победителя проверяет эталон; но кадры по меткам
+ * говорящего, согласные хотя бы с двумя другими, перевешивают несовпадение с эталоном — эталон бывает поздним обликом.
+ * Без эталона на победителе не должен узнаваться никто из известных героев.
+ */
+async function choose(cands: Candidate[], l: Look, ref: string | null, byLabels: boolean, someoneKnown: (img: Buffer) => Promise<boolean>): Promise<Candidate | null> {
+  if (!cands.length) return null;
+  const votes = cands.map(() => 0);
+  if (cands.length >= 3) {
+    const b64 = await Promise.all(cands.map(async (c) => (await sharp(c.img).png().toBuffer()).toString("base64")));
+    for (let i = 0; i < cands.length; i++) for (let j = i + 1; j < cands.length; j++) {
+      if (await sameCharacter(b64[i], cands[j].img, l)) { votes[i]++; votes[j]++; }
+    }
+  }
+  const order = cands.map((c, i) => ({ c, v: votes[i] })).sort((a, b) => b.v - a.v || b.c.score - a.c.score);
+  for (const { c, v } of order) {
+    if (cands.length >= 3 && v === 0) break;
+    if (ref) {
+      if (await sameCharacter(ref, c.img, l)) return c;
+      if (byLabels && v >= 2) return c;
+      continue;
+    }
+    if (!(await someoneKnown(c.img))) return c;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------- что искать
@@ -326,7 +368,8 @@ export async function findFrames(anilistId: number, signal: AbortSignal): Promis
   const d = await getDetails(anilistId);
   // Кадры пересчитываются целиком: прежние (в том числе ошибочные) не должны остаться
   db.prepare(`DELETE FROM plot_image WHERE source = 'frame' AND entity_id IN (SELECT entity_id FROM plot_appearance WHERE anilist_id = ?)`).run(anilistId);
-  const looks = missingLooks(anilistId);
+  // По порядку серий: найденный кадр раннего облика — эталон для следующих
+  const looks = missingLooks(anilistId).sort((a, b) => a.ep - b.ep);
   const p: CorpusProgress = { anilistId, step: "Кадры из серий", done: 0, total: looks.length, startedAt: Date.now(), updatedAt: Date.now(), finished: false, found: {}, errors: [], etaSec: null };
   progress.set(anilistId, p);
   const sources = new Map<number, Source | null>();
@@ -361,12 +404,13 @@ export async function findFrames(anilistId: number, signal: AbortSignal): Promis
     const exact = mine.filter(([, v]) => l.look !== null && v.look === l.look).map(([k]) => k);
     const labels = exact.length ? exact : mine.filter(([, v]) => !v.look).map(([k]) => k);
     const times = pickTimes(await speechTimes(anilistId, l.ep, labels, l.namesJa).catch(() => []), d.duration || 24, PER_LOOK);
-    let best: { img: Buffer; score: number; t: number } | null = null;
-    const ref = await reference(l.entity);
+    const ref = await reference(l.entity, l.ep, dir);
     // Ни эталона, ни реплик в субтитрах — угадывать по описанию в случайных кадрах бессмысленно
     if (!ref && !labels.length) continue;
+    const cands: Candidate[] = [];
     for (const t of times) {
       signal.throwIfAborted();
+      if (cands.length >= CANDIDATES) break;
       try {
         const frame = await grab(src, t);
         const sq = await square(frame);
@@ -379,24 +423,25 @@ export async function findFrames(anilistId: number, signal: AbortSignal): Promis
         if (v.box.length !== 4 || v.score < (ref ? KEEP_SCORE : KEEP_SCORE + 2)) continue;
         const img = await crop(frame, sq.w, sq.h, v.box);
         if (!img) continue;
-        if (ref && !(await sameCharacter(ref, img, l))) continue;
-        // Без эталона: на кадре не должен узнаваться никто из известных героев (иначе это Римуру вместо «официантки»)
-        if (!ref) {
-          let other = false;
-          for (const o of known.filter((k) => k.entity !== l.entity && k.from <= l.ep)) if ((other = await sameCharacter(o.ref, img, { ...l, name: o.name, label: "", appearance: "" }))) break;
-          if (other) continue;
-        }
         // Резкость портрета — при равной оценке модели лучше чёткий кадр
         const sharpness = (await sharp(img).stats()).sharpness;
-        const score = v.score + Math.min(2, sharpness / 4);
-        if (!best || score > best.score) best = { img, score, t };
-        if (v.score >= 9) break;
+        cands.push({ img, score: v.score + Math.min(2, sharpness / 4), t });
       } catch (e) {
         if (e instanceof LlmUnavailable) throw e;
         if (signal.aborted) throw e;
         p.errors.push(`${l.name}, с. ${l.ep}: ${e instanceof Error ? e.message : String(e)}`.slice(0, 200));
       }
     }
+    const others = known.filter((k) => k.entity !== l.entity && k.from <= l.ep);
+    const best = await choose(cands, l, ref, labels.length > 0, async (img) => {
+      // Без эталона: на кадре не должен узнаваться никто из известных героев (иначе это Римуру вместо «официантки»)
+      for (const o of others) if (await sameCharacter(o.ref, img, { ...l, name: o.name, label: "", appearance: "" })) return true;
+      return false;
+    }).catch((e: unknown) => {
+      if (e instanceof LlmUnavailable || signal.aborted) throw e;
+      p.errors.push(`${l.name}, с. ${l.ep}: ${e instanceof Error ? e.message : String(e)}`.slice(0, 200));
+      return null;
+    });
     if (best) {
       const file = `${l.entity}-${l.look ?? "base"}.jpg`;
       await writeFile(path.join(dir, file), best.img);
