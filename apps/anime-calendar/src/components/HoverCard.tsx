@@ -7,7 +7,7 @@ import { useAnime, useList, useMatch } from "@/lib/client";
 import { FORMAT_LABELS, GENRE_LABELS, SEASON_LABELS, STATUS_LABELS, label } from "@/lib/labels";
 import { displayTitle } from "@/lib/schedule";
 import { pluralEpisodes } from "@/lib/time";
-import type { CastMember, MediaLite } from "@/lib/types";
+import type { CastMember, MediaLite, NameRef } from "@/lib/types";
 import { CharacterHoverBody } from "./CharacterHover";
 import { Img } from "./Img";
 import { ListControl } from "./ListControl";
@@ -26,7 +26,11 @@ import { Badge, TONE_CLASS, cx, matchTone, modalsOpen } from "./ui";
 export type HoverExtra = { similarity?: { value: number; to: string }; reason?: string };
 
 /** Карточка персонажа (имя в тексте, карточка в составе): данные на курсор зрителя или размытый спойлер */
-export type CharacterHoverData = { anilistId: number; entity: number; member: CastMember | null; spoilerEp: number | null };
+export type CharacterHoverData = {
+  anilistId: number; entity: number; member: CastMember | null; spoilerEp: number | null;
+  /** Имя из текста привязано к особому облику — карточка под этим именем и с этим обликом */
+  as?: NameRef["as"];
+};
 
 type Shown = { id: number; media?: MediaLite; rect: DOMRect; extra?: HoverExtra; character?: CharacterHoverData };
 type Ctx = { show: (s: Shown) => void; hide: () => void; keep: () => void; close: () => void };

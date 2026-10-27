@@ -509,6 +509,7 @@ function migrate(db: Db) {
   if (!columns("plot_event").has("major")) db.exec("ALTER TABLE plot_event ADD COLUMN major INTEGER NOT NULL DEFAULT 0");
   db.exec("CREATE INDEX IF NOT EXISTS plot_event_key ON plot_event (anilist_id, key)");
   if (!columns("plot_relation").has("ended_ep")) db.exec("ALTER TABLE plot_relation ADD COLUMN ended_ep INTEGER");
+  if (!columns("plot_alias").has("look")) db.exec("ALTER TABLE plot_alias ADD COLUMN look TEXT");
   if (!columns("plot_alias").has("kind")) {
     db.exec("ALTER TABLE plot_alias ADD COLUMN kind TEXT");
     db.exec("ALTER TABLE plot_alias ADD COLUMN who TEXT");

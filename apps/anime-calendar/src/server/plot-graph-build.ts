@@ -3,7 +3,7 @@ import type { JsonSchema } from "@/lib/json-lite";
 import { TIER } from "@/lib/llm-tier";
 import {
   ABILITY_STATUS, ALIAS_KINDS, ENTITY_KINDS, EVENT_KINDS, IMPORTANCE, LINK_KINDS, LOOK_KINDS, RELATION_KINDS,
-  emptyGraph, foldGraph, graphForPrompt, sameName, type Graph, type GraphDelta, type GPersona,
+  emptyGraph, foldGraph, graphForPrompt, sameName, slug, type Graph, type GraphDelta, type GPersona,
 } from "@/lib/plot-graph";
 import type { CharacterRole, CorpusProgress } from "@/lib/types";
 import { getDetails, type AnilistDetails } from "./anilist";
@@ -47,7 +47,10 @@ const SCHEMA: JsonSchema = obj({
     goal_ru: str("чего хочет сейчас, коротко; не ясно — пусто"),
     first_ep: int("серия первого появления"),
   }), 40, "только те, кто действует в новых сериях: новые и прежние, у прежних — обновлённое описание; остальных не повторяй"),
-  aliases: arr(obj({ key: str(), alias: str("по-русски"), kind: en(ALIAS_KINDS), who_ru: str("кто так зовёт; все — пусто"), ep: int() }), 60,
+  aliases: arr(obj({
+    key: str(), alias: str("по-русски"), kind: en(ALIAS_KINDS), who_ru: str("кто так зовёт; все — пусто"), ep: int(),
+    look: str("ключ облика из looks, если имя относится к особому облику (прошлая жизнь, маскировка, форма); иначе пусто"),
+  }), 60,
     "новые имена, прозвища, титулы и названия обликов, с серии, где зритель их узнал"),
   looks: arr(obj({
     key: str(), look: str("ключ облика латиницей: slime, human-form, armored-titan"), label_ru: str(), label_en: str("коротко по-английски, как подписали бы на вики: Slime, Human form"),
@@ -223,8 +226,8 @@ export async function materializeGraph(id: number): Promise<{ entities: number; 
 
     const note = db.prepare("INSERT OR REPLACE INTO plot_note (entity_id, anilist_id, up_to, description, goal) VALUES (?, ?, ?, ?, ?)");
     for (const n of mine(g.notes)) note.run(E(n.key), id, n.upTo, n.description_ru, n.goal_ru || null);
-    const alias = db.prepare("INSERT OR IGNORE INTO plot_alias (entity_id, alias, lang, anilist_id, from_ep, revealed_ep, source, kind, who) VALUES (?, ?, 'ru', ?, ?, ?, ?, ?, ?)");
-    for (const a of mine(g.aliases)) alias.run(E(a.key), a.alias, id, a.ep, a.revealed, SOURCE, a.kind, a.who_ru || null);
+    const alias = db.prepare("INSERT OR IGNORE INTO plot_alias (entity_id, alias, lang, anilist_id, from_ep, revealed_ep, source, kind, who, look) VALUES (?, ?, 'ru', ?, ?, ?, ?, ?, ?, ?)");
+    for (const a of mine(g.aliases)) alias.run(E(a.key), a.alias, id, a.ep, a.revealed, SOURCE, a.kind, a.who_ru || null, a.look ? slug(a.look) : null);
     const look = db.prepare("INSERT OR IGNORE INTO plot_look (entity_id, anilist_id, look, label, label_en, appearance, kind, from_ep, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
     for (const l of mine(g.looks)) look.run(E(l.key), id, l.look, l.label_ru, l.label_en || null, l.appearance_en || null, l.kind, l.revealed, SOURCE);
     const ident = db.prepare("INSERT OR IGNORE INTO plot_identity (a, b, anilist_id, revealed_ep, note, source) VALUES (?, ?, ?, ?, ?, ?)");

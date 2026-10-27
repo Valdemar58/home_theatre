@@ -16,11 +16,11 @@ export const ROLE_LABEL = { MAIN: "главный", SUPPORTING: "второй п
 export function CharacterHoverBody({ data, onNavigate }: { data: CharacterHoverData; onNavigate: () => void }) {
   const [open, setOpen] = useState(false);
   const all = useTitleCast(open ? data.anilistId : 0, "all");
-  if (data.member) return <MemberCard m={data.member} onNavigate={onNavigate} />;
+  if (data.member) return <MemberCard m={data.as ? asLook(data.member, data.as) : data.member} onNavigate={onNavigate} />;
   if (open) {
     const m = all.data?.members.find((x) => x.id === data.entity || x.entities.includes(data.entity));
     if (all.isLoading) return <div className="h-36 animate-pulse rounded-lg bg-gray-700/40" />;
-    return m ? <MemberCard m={m} onNavigate={onNavigate} spoiler /> : <p className="text-sm text-gray-400">О персонаже пока ничего нет.</p>;
+    return m ? <MemberCard m={data.as ? asLook(m, data.as) : m} onNavigate={onNavigate} spoiler /> : <p className="text-sm text-gray-400">О персонаже пока ничего нет.</p>;
   }
   return (
     <div className="relative">
@@ -38,6 +38,14 @@ export function CharacterHoverBody({ data, onNavigate }: { data: CharacterHoverD
       </div>
     </div>
   );
+}
+
+/**
+ * Персонаж под именем из текста: «Сатору Миками» — его облик (прошлая жизнь), а не нынешний слизень;
+ * нынешнее имя — в «он же», описание нынешнего облика не показываем.
+ */
+function asLook(m: CastMember, as: NonNullable<CharacterHoverData["as"]>): CastMember {
+  return { ...m, name: as.name, image: as.image, lookLabel: as.lookLabel, aka: [m.name, ...m.aka.filter((a) => a !== as.name)], description: null, goal: null, native: null };
 }
 
 function MemberCard({ m, onNavigate, spoiler }: { m: CastMember; onNavigate: () => void; spoiler?: boolean }) {

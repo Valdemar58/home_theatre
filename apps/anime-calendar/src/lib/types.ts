@@ -561,7 +561,11 @@ export type TitleCast = {
 };
 
 /** Имя в тексте → персонаж (spoiler — зритель его ещё не видел) */
-export type NameRef = { alias: string; entity: number; href: string; spoiler: boolean; anilistId: number | null; revealedEp: number };
+export type NameRef = {
+  alias: string; entity: number; href: string; spoiler: boolean; anilistId: number | null; revealedEp: number;
+  /** Имя привязано к особому облику (прошлая жизнь, маскировка): карточка — под этим именем и с этим обликом */
+  as: { name: string; image: string | null; lookLabel: string } | null;
+};
 
 export type CharacterDetails = {
   id: number | null;

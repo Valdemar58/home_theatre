@@ -1,6 +1,6 @@
 import "server-only";
 import { ruNameOf } from "@/lib/characters";
-import { identityGroups } from "@/lib/plot-graph";
+import { aliasLook, identityGroups } from "@/lib/plot-graph";
 import type {
   CastMember, CharacterDetails, CharacterLite, CharacterRole, MediaLite, NameRef, PlotCursor, PlotEventInfo, PlotRelationInfo, PlotViewMode, TitleCast,
 } from "@/lib/types";
@@ -385,19 +385,28 @@ export async function titleCast(userId: number, anilistId: number, at?: number):
 export async function nameRefs(userId: number, anilistId: number, upTo: number): Promise<NameRef[]> {
   const cursor = viewerCursor(userId);
   const own = (await titleCursor(userId, anilistId)).ep;
-  type Row = { entity_id: number; alias: string; anilist_id: number | null; revealed_ep: number | null; anilist_char_id: number | null };
+  type Row = { entity_id: number; alias: string; anilist_id: number | null; revealed_ep: number | null; anilist_char_id: number | null; look: string | null };
   const rows = db.prepare<[number], Row>(`
-    SELECT al.entity_id, al.alias, al.anilist_id, al.revealed_ep, e.anilist_char_id FROM plot_alias al JOIN plot_entity e ON e.id = al.entity_id
+    SELECT al.entity_id, al.alias, al.anilist_id, al.revealed_ep, e.anilist_char_id, al.look FROM plot_alias al JOIN plot_entity e ON e.id = al.entity_id
     WHERE al.entity_id IN (SELECT entity_id FROM plot_appearance WHERE anilist_id = ?1) AND e.kind = 'character'
     UNION ALL
-    SELECT e.id, COALESCE(e.name_ru, e.name), a.anilist_id, a.first_ep, e.anilist_char_id FROM plot_entity e JOIN plot_appearance a ON a.entity_id = e.id
+    SELECT e.id, COALESCE(e.name_ru, e.name), a.anilist_id, a.first_ep, e.anilist_char_id, NULL FROM plot_entity e JOIN plot_appearance a ON a.entity_id = e.id
     WHERE a.anilist_id = ?1 AND a.first_ep IS NOT NULL AND e.kind = 'character'`).all(anilistId);
+  type LookRow = { look: string; label: string; label_en: string | null };
+  const looksOf = new Map<number, LookRow[]>();
+  const looks = (e: number) => looksOf.get(e) ?? looksOf.set(e, db.prepare<[number], LookRow>("SELECT look, label, label_en FROM plot_look WHERE entity_id = ?").all(e)).get(e)!;
+  // Картинка облика, которую зритель уже может видеть
+  const imageOf = (e: number, look: string) => db.prepare<[number, string], { url: string; anilist_id: number | null; from_ep: number | null }>(
+    "SELECT url, anilist_id, from_ep FROM plot_image WHERE entity_id = ? AND look = ? ORDER BY source = 'fandom' DESC").all(e, look)
+    .find((i) => i.from_ep !== null && seen(cursor, i.anilist_id, i.from_ep))?.url ?? null;
   const out: NameRef[] = [];
   for (const r of rows) {
     const ep = r.revealed_ep ?? 0;
+    const look = aliasLook(r.alias, r.look, looks(r.entity_id));
+    const as = look ? { name: r.alias, image: imageOf(r.entity_id, look), lookLabel: looks(r.entity_id).find((l) => l.look === look)!.label } : null;
     // Текст о серии upTo этого тайтла не может знать имён, раскрытых позже; предыстории — целиком
     if (r.anilist_id === anilistId && ep > upTo) continue;
-    out.push({ alias: r.alias, entity: r.entity_id, href: hrefOf({ id: r.entity_id, anilist_char_id: r.anilist_char_id }), spoiler: r.anilist_id === anilistId ? ep > own : !seen(cursor, r.anilist_id, ep), anilistId: r.anilist_id, revealedEp: ep });
+    out.push({ alias: r.alias, entity: r.entity_id, href: hrefOf({ id: r.entity_id, anilist_char_id: r.anilist_char_id }), spoiler: r.anilist_id === anilistId ? ep > own : !seen(cursor, r.anilist_id, ep), anilistId: r.anilist_id, revealedEp: ep, as });
   }
   return out;
 }

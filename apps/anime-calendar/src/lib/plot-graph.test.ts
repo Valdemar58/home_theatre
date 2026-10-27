@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { foldGraph, graphForPrompt, identityGroups, linkNames, lookAt, sameName, type GraphDelta } from "./plot-graph";
+import { aliasLook, foldGraph, graphForPrompt, identityGroups, linkNames, lookAt, sameName, type GraphDelta } from "./plot-graph";
 
 const delta = (d: Partial<GraphDelta>): GraphDelta => ({
   personas: [], aliases: [], looks: [], identities: [], members: [], relations: [], events: [], links: [], abilities: [],
@@ -81,12 +81,22 @@ describe("linkNames", () => {
   it("склонения, длинные имена раньше коротких", () => {
     const parts = linkNames("Сатору Миками получает от Вельдоры имя Римуру.", refs);
     expect(parts.filter((p) => typeof p !== "string")).toEqual([
-      { text: "Сатору Миками", entity: 3 }, { text: "Вельдоры", entity: 1 }, { text: "Римуру", entity: 2 },
+      { text: "Сатору Миками", entity: 3, alias: "сатору миками" }, { text: "Вельдоры", entity: 1, alias: "вельдора" }, { text: "Римуру", entity: 2, alias: "римуру" },
     ]);
     expect(parts.map((p) => (typeof p === "string" ? p : p.text)).join("")).toBe("Сатору Миками получает от Вельдоры имя Римуру.");
   });
   it("не внутри слова и не при совпадении у двух персонажей", () => {
     expect(linkNames("Римурушка", refs)).toEqual(["Римурушка"]);
     expect(linkNames("Ранга пришёл", [{ alias: "Ранга", entity: 1 }, { alias: "Ранга", entity: 2 }])).toEqual(["Ранга пришёл"]);
+  });
+});
+
+describe("aliasLook", () => {
+  const looks = [{ look: "slime", label: "Слизень" }, { look: "human-satoru", label: "Сатору Миками (прошлая жизнь)" }, { look: "human-shizu", label: "Человеческий облик" }];
+  it("имя прошлой жизни и название облика — к своему облику, обычное имя — ни к какому", () => {
+    expect(aliasLook("Сатору Миками", null, looks)).toBe("human-satoru");
+    expect(aliasLook("слизень", null, looks)).toBe("slime");
+    expect(aliasLook("Римуру Темпест", null, looks)).toBeNull();
+    expect(aliasLook("Римуру", "human-shizu", looks)).toBe("human-shizu");
   });
 });

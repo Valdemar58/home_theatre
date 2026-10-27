@@ -17,7 +17,7 @@ export type GPersona = {
   /** Кто это — на конец порции, только по увиденному */
   description_ru: string; goal_ru: string; first_ep: number;
 };
-export type GAlias = { key: string; alias: string; kind: (typeof ALIAS_KINDS)[number]; who_ru: string; ep: number };
+export type GAlias = { key: string; alias: string; kind: (typeof ALIAS_KINDS)[number]; who_ru: string; ep: number; look?: string };
 export type GLook = { key: string; look: string; label_ru: string; label_en: string; appearance_en?: string; kind: (typeof LOOK_KINDS)[number]; ep: number };
 export type GIdentity = { a: string; b: string; ep: number; note_ru: string };
 export type GMember = { key: string; group: string; role_ru: string; from_ep: number; to_ep: number };
@@ -181,6 +181,19 @@ export function identityGroups<T extends number | string>(links: { a: T; b: T; r
 
 export type Look = { image: string | null; label: string; kind: string; from: number };
 
+const plain = (s: string) => s.normalize("NFKC").toLowerCase().replace(/ё/g, "е").replace(/\([^)]*\)/g, " ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+/**
+ * Облик, к которому привязано имя: явная привязка из разбора, иначе подпись облика совпадает с именем
+ * («Сатору Миками» → облик «Сатору Миками (прошлая жизнь)», «слизень» → «Слизень»). Нет такого — null: имя общее.
+ */
+export function aliasLook(alias: string, explicit: string | null, looks: { look: string; label: string; label_en?: string | null }[]): string | null {
+  if (explicit && looks.some((l) => l.look === explicit)) return explicit;
+  const a = plain(alias);
+  if (a.length < 3) return null;
+  return looks.find((l) => { const b = plain(l.label); return b === a || (b.length >= 4 && a.length >= 4 && (b.startsWith(`${a} `) || a.startsWith(`${b} `))); })?.look ?? null;
+}
+
 /** Облик на серию at: последний показанный к этой серии (с картинкой); раньше всех — ничего. */
 export function lookAt<L extends Look>(looks: L[], at: number): L | null {
   return looks.filter((l) => l.image && l.from <= at).sort((a, b) => a.from - b.from).at(-1) ?? null;
@@ -189,7 +202,7 @@ export function lookAt<L extends Look>(looks: L[], at: number): L | null {
 // ---------------------------------------------------------------- разметка имён в тексте
 
 export type NameRef = { alias: string; entity: number };
-export type TextPart = string | { text: string; entity: number };
+export type TextPart = string | { text: string; entity: number; alias: string };
 
 const LETTER = "\\p{L}";
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -225,7 +238,7 @@ export function linkNames(text: string, refs: NameRef[]): TextPart[] {
     const i = m.slice(1).findIndex((x) => x !== undefined);
     if (i < 0) continue;
     if (m.index > last) out.push(text.slice(last, m.index));
-    out.push({ text: m[0], entity: usable[i].entity });
+    out.push({ text: m[0], entity: usable[i].entity, alias: usable[i].alias });
     last = m.index + m[0].length;
   }
   if (last < text.length) out.push(text.slice(last));
