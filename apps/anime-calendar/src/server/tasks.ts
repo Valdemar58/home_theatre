@@ -261,7 +261,8 @@ async function runOne(row: Row) {
     db.prepare("UPDATE tasks SET status = ?, error = ?, finished_at = ? WHERE id = ?")
       .run(aborted ? "cancelled" : "error", aborted ? "отменено" : message, now(), row.id);
     if (!aborted) {
-      console.warn(`[tasks] ${row.kind} ${row.key}: ${message}`);
+      // Трассировка — чтобы найти место ошибки без повторного запуска
+      console.warn(`[tasks] ${row.kind} ${row.key}: ${message}`, err instanceof Error ? err.stack?.split("\n").slice(1, 6).join(" | ") : "");
       const anilistId = await h.anilistId?.(row.key).catch(() => null) ?? null;
       for (const w of waitersOf(getRow(row.id)!)) {
         if (w.notify) notify(w.u, { kind: row.kind, anilistId, subject: anilistId ? null : row.title, title: `${h.noun} — не получилось`, body: message, href: h.href(row.key), error: true });

@@ -90,9 +90,9 @@ export function foldGraph(batches: { eps: number[]; delta: GraphDelta; title?: n
     }
     const has = (k: string) => g.personas.has(slug(k));
     const once = <T,>(list: T[], item: T, same: (x: T) => boolean) => { if (!list.some(same)) list.push(item); };
-    for (const a of d.aliases) if (has(a.key) && a.alias.trim())
+    for (const a of d.aliases) if (a.alias && a.kind && has(a.key) && a.alias.trim())
       once(g.aliases, { ...a, key: slug(a.key), alias: a.alias.trim(), revealed: at(a.ep), title }, (x) => x.key === slug(a.key) && norm(x.alias) === norm(a.alias));
-    for (const l of d.looks) if (has(l.key))
+    for (const l of d.looks) if (l.kind && l.label_ru !== undefined && has(l.key))
       once(g.looks, { ...l, key: slug(l.key), look: slug(l.look || l.label_en || l.label_ru), revealed: at(l.ep), title }, (x) => x.key === slug(l.key) && x.look === slug(l.look || l.label_en || l.label_ru));
     for (const i of d.identities) if (has(i.a) && has(i.b) && slug(i.a) !== slug(i.b))
       once(g.identities, { ...i, a: slug(i.a), b: slug(i.b), revealed: at(i.ep), title }, (x) => [x.a, x.b].sort().join() === [slug(i.a), slug(i.b)].sort().join());
@@ -101,7 +101,7 @@ export function foldGraph(batches: { eps: number[]; delta: GraphDelta; title?: n
       if (old) { if (m.to_ep) old.to_ep = at(m.to_ep); continue; }
       g.members.push({ ...m, key: slug(m.key), group: slug(m.group), from_ep: at(m.from_ep), to_ep: m.to_ep ? at(m.to_ep) : 0, revealed: at(m.from_ep), title });
     }
-    for (const r of d.relations) if (has(r.a) && has(r.b) && slug(r.a) !== slug(r.b)) {
+    for (const r of d.relations) if (r.kind && has(r.a) && has(r.b) && slug(r.a) !== slug(r.b)) {
       const pair = (x: GRelation & At) => x.title === title && x.kind === r.kind && [x.a, x.b].sort().join() === [slug(r.a), slug(r.b)].sort().join() && !x.ended_ep;
       const old = g.relations.find(pair);
       // Отношение кончилось — у прежней записи появляется серия конца; новое отношение — новая запись
@@ -113,11 +113,12 @@ export function foldGraph(batches: { eps: number[]; delta: GraphDelta; title?: n
       if (!key || g.events.has(key)) continue;
       const participants = e.participants.filter((p) => has(p.key)).map((p) => ({ ...p, key: slug(p.key) }));
       const from = at(e.ep_from);
-      g.events.set(key, { ...e, key, participants, ep_from: from, ep_to: Math.max(from, at(e.ep_to || e.ep_from)), revealed: Math.max(from, at(e.ep_to || e.ep_from)), title });
+      g.events.set(key, { ...e, kind: e.kind ?? "другое", key, participants, ep_from: from, ep_to: Math.max(from, at(e.ep_to || e.ep_from)), revealed: Math.max(from, at(e.ep_to || e.ep_from)), title });
     }
-    for (const l of d.links) if (g.events.has(slug(l.from)) && g.events.has(slug(l.to)) && slug(l.from) !== slug(l.to))
+    // Старые ответы в журнале бывают с дырами (поле не прошло проверку) — такие записи пропускаем
+    for (const l of d.links) if (l.kind && g.events.has(slug(l.from)) && g.events.has(slug(l.to)) && slug(l.from) !== slug(l.to))
       once(g.links, { ...l, from: slug(l.from), to: slug(l.to), revealed: hi, title }, (x) => x.from === slug(l.from) && x.to === slug(l.to));
-    for (const a of d.abilities) if (has(a.key) && a.name_ru.trim()) {
+    for (const a of d.abilities) if (a.status && a.name_ru && has(a.key) && a.name_ru.trim()) {
       const old = g.abilities.findLast((x) => x.title === title && x.key === slug(a.key) && norm(x.name_ru) === norm(a.name_ru));
       // Статус способности меняется со временем — новая запись со своей серией, прежняя остаётся для ранних курсоров
       if (old?.status === a.status) continue;
