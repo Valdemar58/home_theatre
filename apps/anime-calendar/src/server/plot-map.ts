@@ -79,8 +79,16 @@ const MAPVEC = (process.env.MAPVEC_URL ?? "").replace(/\/+$/, "");
 /** Подпись от OCR: рамка и строки в пикселях обрезки карты. */
 type VecLabel = { text: string; x0: number; y0: number; x1: number; y1: number; lines: [number, number, number, number, string][] };
 type Poly = [number, number][];
-/** Хранимый вектор: подписи (вход векторизации) и контуры в пикселях обрезки; alias — подпись лежит поверх этой страны. */
-type MapVector = { width: number; height: number; labels: VecLabel[]; land: Poly[]; regions: { label: number; alias: number | null; polys: Poly[] }[] };
+/**
+ * Хранимый вектор: подписи (вход векторизации) и контуры в пикселях обрезки; alias — подпись лежит поверх этой страны;
+ * color — номер цвета (у соседей разные), anchor — место для названия [x, y, отступ от краёв].
+ */
+type MapVector = {
+  v?: number; width: number; height: number; labels: VecLabel[]; land: Poly[];
+  regions: { label: number; alias: number | null; polys: Poly[]; color?: number; anchor?: [number, number, number] }[];
+};
+// 2 — второе чтение подписей по центру, раскраска соседей, место для названия страны
+const VECTOR_V = 2;
 
 let vecHealth: { ok: boolean; at: number } | null = null;
 async function mapvecUp(): Promise<boolean> {
@@ -103,16 +111,19 @@ async function buildMap(rootId: number, anilistId: number, signal: AbortSignal, 
   const host = await fandomHost(anilistId);
   const found = host ? await wikiMap(host) : null;
   if (!found) return false;
-  const old = db.prepare<[number], { url: string }>("SELECT url FROM plot_map WHERE root_id = ?").get(rootId);
+  const old = db.prepare<[number], { url: string; crop: string | null }>("SELECT url, crop FROM plot_map WHERE root_id = ?").get(rootId);
   const hasLabels = db.prepare<[number], { n: number }>("SELECT COUNT(*) AS n FROM plot_map_label WHERE root_id = ?").get(rootId)!.n > 0;
-  const hasVector = Boolean(db.prepare<[number], { root_id: number }>("SELECT root_id FROM plot_map_vector WHERE root_id = ?").get(rootId));
+  const stored = db.prepare<[number], { data: string }>("SELECT data FROM plot_map_vector WHERE root_id = ?").get(rootId);
+  const hasVector = Boolean(stored) && ((JSON.parse(stored!.data) as MapVector).v ?? 1) >= VECTOR_V;
   const vec = await mapvecUp();
-  // Карта уже прочитана — только дочистить легенду (правило могло появиться позже чтения); появился mapvec — перечитать
+  // Карта уже прочитана — только дочистить легенду (правило могло появиться позже чтения); появился mapvec или
+  // вектор устарел — перечитать
   if (old?.url === found.url && hasLabels && (hasVector || !vec)) { cleanLegend(rootId); return true; }
   const img = await readFile((await originalFile(found.url)).file);
   const meta = await sharp(img).metadata();
   const width = meta.width ?? found.width, height = meta.height ?? found.height;
-  const area = await mapArea(img, width, height);
+  // Та же карта — та же рамка (уже без легенды): модель ставит её каждый раз чуть иначе, а от рамки зависят куски OCR
+  const area: Box = old?.url === found.url && old.crop ? JSON.parse(old.crop) : await mapArea(img, width, height);
   const crop = sharp(img).extract({ left: area.x, top: area.y, width: area.w, height: area.h });
   const cropped = await crop.png().toBuffer();
   type Read = MapLabel & { ocr?: VecLabel };
@@ -148,7 +159,7 @@ async function buildMap(rootId: number, anilistId: number, signal: AbortSignal, 
     const png = edge === null ? cropped : await sharp(cropped).extract({ left: 0, top: 0, width: area.w, height: area.h }).png().toBuffer();
     const v = await mapvec<Omit<MapVector, "labels">>("/vectorize", JSON.stringify({ image: png.toString("base64"), labels: ocrLabels }), signal)
       .catch((e: unknown) => { console.error(`[map] векторизация ${rootId}:`, e); return null; });
-    if (v) vector = { width: v.width, height: v.height, labels: ocrLabels, land: v.land, regions: v.regions };
+    if (v) vector = { v: VECTOR_V, width: v.width, height: v.height, labels: ocrLabels, land: v.land, regions: v.regions };
   }
   db.exec("BEGIN");
   try {
@@ -374,7 +385,10 @@ export async function mapView(userId: number, anilistId: number): Promise<PlotMa
       regions: v.regions.filter((r) => r.alias === null).map((r) => {
         const texts = [r.label, ...v.regions.filter((a) => a.alias === r.label).map((a) => a.label)].map((i) => v.labels[i]?.text);
         const p = texts.map((t) => (t ? placeOn.get(t) : undefined)).find(Boolean) ?? null;
-        return { d: path(r.polys), open: Boolean(p), placeId: p?.id ?? null, name: p ? nameAt(p, cursor) : null };
+        return {
+          d: path(r.polys), open: Boolean(p), placeId: p?.id ?? null, name: p ? nameAt(p, cursor) : null, color: r.color ?? 0,
+          anchor: r.anchor ? { x: r.anchor[0] / v.width, y: r.anchor[1] / v.height, r: r.anchor[2] / v.width } : null,
+        };
       }),
     };
   }

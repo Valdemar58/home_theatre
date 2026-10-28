@@ -161,12 +161,27 @@ def vectorize(img_bgr, labels):
         reg[reg == small] = big
     root = lambda i: root(alias[i]) if i in alias else i
 
+    # Раскраска: соседи по общей границе — разных цветов (жадно, начиная со стран с большим числом соседей)
+    nbr = {}
+    for i, j in tot:
+        nbr.setdefault(int(i), set()).add(int(j))
+        nbr.setdefault(int(j), set()).add(int(i))
+    color = {}
+    for i in sorted(nbr, key=lambda i: -len(nbr[i])):
+        used = {color[j] for j in nbr[i] if j in color}
+        color[i] = next(c for c in range(len(nbr) + 1) if c not in used)
+
     regions = []
     for i in seeds:
         if i in alias:
             regions.append(dict(label=i, alias=root(i), polys=[]))
         elif i in seed_xy:
-            polys = _contours((reg == i) & (land > 0))
-            if polys:
-                regions.append(dict(label=i, alias=None, polys=polys))
+            m = ((reg == i) & (land > 0)).astype(np.uint8)
+            polys = _contours(m)
+            if not polys:
+                continue
+            # Место для названия страны — самая удалённая от краёв точка (в широкой части, а не в перешейке)
+            d = cv2.distanceTransform(m, cv2.DIST_L2, 5)
+            y, x = np.unravel_index(int(d.argmax()), d.shape)
+            regions.append(dict(label=i, alias=None, polys=polys, color=color.get(i, 0), anchor=[int(x), int(y), float(d[y, x])]))
     return dict(width=W, height=H, land=_contours(land), regions=regions)

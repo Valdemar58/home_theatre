@@ -139,16 +139,46 @@ def read_labels(img: Image.Image, progress=None):
                 lines.append(dict(text=t, x0=x0 + a, y0=y0 + b, x1=x0 + c, y1=y0 + d, cut=cut))
             if progress:
                 progress(i + 1, len(cells))
+        # Повторы из перекрытий: целая строка важнее обрезанной, длинная — короткой
+        lines.sort(key=lambda l: (l["cut"], -len(l["text"])))
+        uniq = []
+        for l in lines:
+            if not any(_iou_min(l, u) > 0.5 for u in uniq):
+                uniq.append(l)
+        # Мусор (рисунки, прочитанные как один-два знака) и обрезанные обрывки
+        uniq = [l for l in uniq if len(re.sub(r"[^\w]", "", l["text"])) > 2 and (not l["cut"] or len(l["text"]) > 3)]
+        labels = merge_lines(uniq)
+        _reread(model, proc, img, labels)
         _used = time.time()
-    # Повторы из перекрытий: целая строка важнее обрезанной, длинная — короткой
-    lines.sort(key=lambda l: (l["cut"], -len(l["text"])))
-    uniq = []
-    for l in lines:
-        if not any(_iou_min(l, u) > 0.5 for u in uniq):
-            uniq.append(l)
-    # Мусор (рисунки, прочитанные как один-два знака) и обрезанные обрывки
-    uniq = [l for l in uniq if len(re.sub(r"[^\w]", "", l["text"])) > 2 and (not l["cut"] or len(l["text"]) > 3)]
-    for l in uniq:
-        # Слипшееся «Kingdomof» — модель теряет узкий пробел
-        l["text"] = re.sub(r"([a-z]{3,})of\b", r"\1 of", l["text"])
-    return merge_lines(uniq)
+    for l in labels:
+        for ln in l["lines"]:
+            # Слипшееся «Kingdomof» — модель теряет узкий пробел
+            ln[4] = re.sub(r"([a-z]{3,})of\b", r"\1 of", ln[4])
+        l["text"] = " ".join(ln[4] for ln in l["lines"])
+    return labels
+
+
+def _iou(p, q):
+    ix = max(0, min(p[2], q[2]) - max(p[0], q[0]))
+    iy = max(0, min(p[3], q[3]) - max(p[1], q[1]))
+    union = (p[2] - p[0]) * (p[3] - p[1]) + (q[2] - q[0]) * (q[3] - q[1]) - ix * iy
+    return ix * iy / max(1, union)
+
+
+def _reread(model, proc, img, labels):
+    """Второе чтение: каждая подпись — в своём куске, по центру. Край куска сетки режет буквы («Land of Puppe»),
+    здесь подпись целиком и с запасом; текст строки берём отсюда, если рамки совпали."""
+    W, H = img.size
+    for l in labels:
+        w, h = l["x1"] - l["x0"], l["y1"] - l["y0"]
+        px, py = max(80, w // 2), max(60, h * 2)
+        x0, y0 = max(0, l["x0"] - px), max(0, l["y0"] - py)
+        x1, y1 = min(W, l["x1"] + px), min(H, l["y1"] + py)
+        found = [(t, (x0 + a, y0 + b, x0 + c, y0 + d)) for t, a, b, c, d in _spot(model, proc, img.crop((x0, y0, x1, y1)))]
+        for ln in l["lines"]:
+            best = max(found, key=lambda f: _iou(ln, f[1]), default=None)
+            if best and _iou(ln, best[1]) > 0.5 and len(re.sub(r"[^\w]", "", best[0])) > 2:
+                ln[:] = [*best[1], best[0]]
+        # Рамка подписи — по уточнённым строкам
+        l["x0"], l["y0"] = min(ln[0] for ln in l["lines"]), min(ln[1] for ln in l["lines"])
+        l["x1"], l["y1"] = max(ln[2] for ln in l["lines"]), max(ln[3] for ln in l["lines"])

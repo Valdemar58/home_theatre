@@ -511,9 +511,13 @@ export type PlotMap = {
   hidden: number;
   /**
    * Карта контурами (контейнер mapvec): SVG-пути в единицах 1000 × 1000·h/w. Страна открыта, если зрителю известно
-   * место на её подписи (или на подписи поверх неё); placeId — место для перехода по щелчку.
+   * место на её подписи (или на подписи поверх неё); placeId — место для перехода по щелчку; color — номер цвета
+   * (у соседей разные); anchor — место для названия (доли карты, r — отступ от краёв в долях ширины).
    */
-  vector: { land: string[]; regions: { d: string; open: boolean; placeId: number | null; name: string | null }[] } | null;
+  vector: {
+    land: string[];
+    regions: { d: string; open: boolean; placeId: number | null; name: string | null; color: number; anchor: { x: number; y: number; r: number } | null }[];
+  } | null;
 };
 
 export type PlotCursor = {

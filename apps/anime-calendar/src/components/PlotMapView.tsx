@@ -43,8 +43,10 @@ export function PlotMapView({ id }: { id: number }) {
 }
 
 const ALL = 1e6;
-// Оттенки стран на своей карте: приглушённые, соседние по списку различимы
-const REGION_FILL = ["fill-warning-700", "fill-positive-800", "fill-warning-800", "fill-special-800", "fill-positive-700", "fill-accent-800", "fill-warning-600", "fill-info-800"];
+// Оттенки стран на своей карте (номер цвета — раскраска соседей): приглушённые, первые четыре — разных тонов
+const REGION_FILL = ["fill-warning-700", "fill-positive-800", "fill-special-800", "fill-info-800", "fill-warning-800", "fill-accent-800", "fill-positive-700", "fill-special-700"];
+// Название страны: заглавные с разрядкой ~9.5 px на знак, перенос по ширине 192 px
+const countryBox = (name: string) => ({ w: Math.min(192, name.length * 9.5 + 8), h: 18 * Math.ceil((name.length * 9.5 + 8) / 192) });
 
 function Scene({ id, data }: { id: number; data: PlotMap }) {
   const map = data.map!;
@@ -73,7 +75,12 @@ function Scene({ id, data }: { id: number; data: PlotMap }) {
 
   // Ползунок — по сериям этого тайтла; предыстории видны целиком
   const upTo = (anilistId: number, ep: number) => anilistId !== id || ep <= at;
-  const places = useMemo(() => data.places.filter((p) => upTo(p.anilistId, p.firstEp)), [data.places, at]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Известная страна на своей карте: её место — не на подписи с картинки, а в широкой части страны, там и название
+  const countryAt = useMemo(() => new Map((vector?.regions ?? []).filter((r) => r.open && r.placeId !== null && r.anchor).map((r) => [r.placeId!, r.anchor!])), [vector]);
+  const places = useMemo(() => data.places.filter((p) => upTo(p.anilistId, p.firstEp)).map((p) => {
+    const a = countryAt.get(p.id);
+    return a ? { ...p, x: a.x, y: a.y } : p;
+  }), [data.places, countryAt, at]); // eslint-disable-line react-hooks/exhaustive-deps
   const byId = useMemo(() => new Map(places.map((p) => [p.id, p])), [places]);
   const events = useMemo(() => data.events.filter((e) => upTo(e.anilistId, e.ep) && byId.has(e.placeId)), [data.events, byId, at]); // eslint-disable-line react-hooks/exhaustive-deps
   const eventsAt = useMemo(() => {
@@ -121,8 +128,10 @@ function Scene({ id, data }: { id: number; data: PlotMap }) {
     const W = boxW, Hpx = boxW * ratio;
     return placeLabels(places.map((p) => {
       const s = { x: view.x + p.x * view.k, y: view.y + p.y * view.k };
-      const w = Math.min(144, p.name.length * 6.2 + 16) / W, h = 18 / Hpx;
-      return { id: p.id, x: s.x - w / 2, y: s.y + 9 / Hpx, w, h, priority: (p.id === selected ? 1000 : 0) + (eventsAt.get(p.id)?.length ?? 0) * 2 + (KIND_RANK[p.kind] ?? 1) };
+      // Название страны — по центру и крупнее, подпись места — под точкой
+      const country = countryAt.has(p.id);
+      const w = (country ? countryBox(p.name).w : Math.min(144, p.name.length * 6.2 + 16)) / W, h = (country ? countryBox(p.name).h : 18) / Hpx;
+      return { id: p.id, x: s.x - w / 2, y: country ? s.y - h / 2 : s.y + 9 / Hpx, w, h, priority: (p.id === selected ? 1000 : 0) + (eventsAt.get(p.id)?.length ?? 0) * 2 + (KIND_RANK[p.kind] ?? 1) };
     }));
   }, [places, boxW, ratio, view, selected, eventsAt]); // eslint-disable-line react-hooks/exhaustive-deps
   const sel = selected !== null ? byId.get(selected) ?? null : null;
@@ -165,7 +174,7 @@ function Scene({ id, data }: { id: number; data: PlotMap }) {
                 {vector.regions.map((r, i) => (
                   <path key={i} d={r.d} onPointerEnter={() => setHover(i)} onPointerLeave={() => setHover((h) => (h === i ? null : h))}
                     onClick={() => { if (!drag.current?.moved && r.placeId) setSelected(r.placeId); }}
-                    className={cx(REGION_FILL[i % REGION_FILL.length], "stroke-warning-200/60 transition-[fill-opacity]", r.open && "cursor-pointer")}
+                    className={cx(REGION_FILL[r.color % REGION_FILL.length],"stroke-warning-200/60 transition-[fill-opacity]", r.open && "cursor-pointer")}
                     fillOpacity={r.open && (hover === i || selected === r.placeId) ? 1 : 0.75}
                     strokeWidth={1.2 / view.k} strokeDasharray={`${5 / view.k} ${4 / view.k}`} />
                 ))}
@@ -189,8 +198,9 @@ function Scene({ id, data }: { id: number; data: PlotMap }) {
                   <g filter="url(#soft)">{places.map((p) => <circle key={p.id} cx={p.x * 1000} cy={p.y * H} r={p.fog * 1000} fill="black" />)}</g>
                 </mask>
               </defs>
-              {/* Подписи мест, которых зритель ещё не знает, закрыты всегда (даже без тумана); на своей карте подписей нет */}
-              {layers.picture && (
+              {/* Подписи мест, которых зритель ещё не знает, закрыты всегда (даже без тумана). Есть своя карта — на ней
+                  подписей нет, а картинка — слой по желанию: на ней ничего не закрываем */}
+              {!vector && (
                 <g filter="url(#smudge)">
                   {data.masks.map((m, i) => <rect key={i} x={m.x * 1000 - 6} y={m.y * H - m.h * H * 0.9 - 4} width={m.w * 1000 + 12} height={m.h * H * 2.8 + 8} rx="6" fill={m.color ?? "#3a3324"} />)}
                 </g>
@@ -214,6 +224,18 @@ function Scene({ id, data }: { id: number; data: PlotMap }) {
             {places.map((p) => {
               const n = eventsAt.get(p.id)?.length ?? 0;
               const s = screen(p);
+              // Страна — названием по центру, как на настоящих картах; название не влезло — ромбик, название при наведении
+              if (countryAt.has(p.id)) return (
+                <button key={p.id} onClick={() => { if (!drag.current?.moved) setSelected(p.id); }} title={p.name}
+                  className="group pointer-events-auto absolute flex -translate-x-1/2 -translate-y-1/2 items-center justify-center"
+                  style={{ left: `${s.x * 100}%`, top: `${s.y * 100}%` }}>
+                  {!labelled.has(p.id) && <span className={cx("block h-2.5 w-2.5 rotate-45 bg-warning-100 ring-2 ring-gray-950 group-hover:opacity-0", selected === p.id && "bg-accent-200")} />}
+                  <span className={cx("max-w-48 text-center text-[13px] font-semibold uppercase leading-[18px] tracking-[0.12em] text-warning-50 [text-shadow:0_0_4px_#05070d,0_0_2px_#05070d] group-hover:text-accent-100",
+                    selected === p.id && "text-accent-100 underline underline-offset-4", !labelled.has(p.id) && "absolute w-max opacity-0 group-hover:opacity-100")}>
+                    {p.name}{layers.events && n > 0 && <span className="ml-1 normal-case tracking-normal text-rose-300">· {n}</span>}
+                  </span>
+                </button>
+              );
               return (
                 <button key={p.id} onClick={() => { if (!drag.current?.moved) setSelected(p.id); }}
                   className="pointer-events-auto absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5" style={{ left: `${s.x * 100}%`, top: `${s.y * 100}%` }}>
