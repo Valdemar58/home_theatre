@@ -112,6 +112,8 @@ services:
       IMG_UPSCALE_MAX_SCALE: ${IMG_UPSCALE_MAX_SCALE:-4}
       IMG_UPSCALE_MIN_SRC: ${IMG_UPSCALE_MIN_SRC:-150}
       IMG_UPSCALE_TTL_MULT: ${IMG_UPSCALE_TTL_MULT:-4}
+      # Векторизация карт мира (контейнер mapvec; нет — карта картинкой, подписи читает Ollama)
+      MAPVEC_URL: http://mapvec:8000
       LLM_MODEL: ${LLM_MODEL:-qwen3.5:9b}
       EMBED_MODEL: ${EMBED_MODEL:-bge-m3}
       # Внешняя LLM (DeepSeek) для тяжёлых задач; без ключа всё локально. Правится в «Настройках»
@@ -171,6 +173,21 @@ services:
     container_name: upscaler
     restart: unless-stopped
     profiles: ["upscaler"]
+
+  # Векторизация карт мира (карта мест сюжета): подписи читает dots.mocr, сушу и страны выделяет SAM 2.
+  # Необязательный, профиль mapvec (COMPOSE_PROFILES=upscaler,mapvec). Без него карта — картинка с вики,
+  # подписи читает модель Ollama. Веса (~6 ГБ) качаются в config/mapvec при первом запросе.
+  # GPU — compose.nvidia.yml; без GPU подписи читаются минутами
+  mapvec:
+    build: ./apps/mapvec
+    image: home-theater/mapvec:local
+    container_name: mapvec
+    restart: unless-stopped
+    profiles: ["mapvec"]
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - ${CONFIG_ROOT}/mapvec:/models
 
   # Локальная LLM для рекомендаций: анализ тайтлов, портрет вкуса, объяснения.
   # GPU подключается через compose.nvidia.yml; без GPU работает на CPU (медленнее)

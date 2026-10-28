@@ -17,6 +17,8 @@ import { registerHandler } from "./tasks";
 // Карта мест франшизы (основа — официальная карта с вики тайтла). Карту находим поиском файлов вики, легенду
 // (текст рядом с рисунком) отрезаем, подписи читает модель со зрением кусками ~700 px (иначе мелкий текст не виден),
 // места графа ставим на подписи (по названию, спорные — моделью), место без подписи — внутрь родителя.
+// Есть контейнер mapvec — подписи читает он (dots.mocr, рамка на строку), он же переводит карту в контуры суши и стран:
+// страница рисует карту сама (чёткая при приближении, туман по странам), картинка с вики — слоем по желанию.
 // Подписи и точки хранятся; зритель видит только места, известные к его серии, остальные подписи закрыты.
 
 // ---------------------------------------------------------------- карта и подписи
@@ -71,36 +73,83 @@ async function tileLabels(png: Buffer): Promise<MapLabel[]> {
   return mergeLines(lines);
 }
 
-/** Карта франшизы: найти, отрезать легенду, прочитать подписи. Уже прочитанная та же карта — не читается заново. */
+// ---------------------------------------------------------------- векторизация (контейнер mapvec)
+
+const MAPVEC = (process.env.MAPVEC_URL ?? "").replace(/\/+$/, "");
+/** Подпись от OCR: рамка и строки в пикселях обрезки карты. */
+type VecLabel = { text: string; x0: number; y0: number; x1: number; y1: number; lines: [number, number, number, number, string][] };
+type Poly = [number, number][];
+/** Хранимый вектор: подписи (вход векторизации) и контуры в пикселях обрезки; alias — подпись лежит поверх этой страны. */
+type MapVector = { width: number; height: number; labels: VecLabel[]; land: Poly[]; regions: { label: number; alias: number | null; polys: Poly[] }[] };
+
+let vecHealth: { ok: boolean; at: number } | null = null;
+async function mapvecUp(): Promise<boolean> {
+  if (!MAPVEC) return false;
+  if (vecHealth && Date.now() - vecHealth.at < 60_000) return vecHealth.ok;
+  const ok = await fetch(`${MAPVEC}/health`, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false);
+  vecHealth = { ok, at: Date.now() };
+  return ok;
+}
+
+async function mapvec<T>(path: string, body: BodyInit, signal: AbortSignal): Promise<T> {
+  // Без видеокарты подписи читаются минутами: ждём до получаса
+  const r = await fetch(`${MAPVEC}${path}`, { method: "POST", body, signal: AbortSignal.any([signal, AbortSignal.timeout(1_800_000)]) });
+  if (!r.ok) throw new Error(`mapvec ${path}: ${(await r.text()).slice(0, 300)}`);
+  return (await r.json()) as T;
+}
+
+/** Карта франшизы: найти, отрезать легенду, прочитать подписи (и векторизовать, если есть mapvec). Та же карта заново не читается. */
 async function buildMap(rootId: number, anilistId: number, signal: AbortSignal, onTile?: (done: number, total: number) => void): Promise<boolean> {
   const host = await fandomHost(anilistId);
   const found = host ? await wikiMap(host) : null;
   if (!found) return false;
   const old = db.prepare<[number], { url: string }>("SELECT url FROM plot_map WHERE root_id = ?").get(rootId);
   const hasLabels = db.prepare<[number], { n: number }>("SELECT COUNT(*) AS n FROM plot_map_label WHERE root_id = ?").get(rootId)!.n > 0;
-  // Карта уже прочитана — только дочистить легенду (правило могло появиться позже чтения)
-  if (old?.url === found.url && hasLabels) { cleanLegend(rootId); return true; }
+  const hasVector = Boolean(db.prepare<[number], { root_id: number }>("SELECT root_id FROM plot_map_vector WHERE root_id = ?").get(rootId));
+  const vec = await mapvecUp();
+  // Карта уже прочитана — только дочистить легенду (правило могло появиться позже чтения); появился mapvec — перечитать
+  if (old?.url === found.url && hasLabels && (hasVector || !vec)) { cleanLegend(rootId); return true; }
   const img = await readFile((await originalFile(found.url)).file);
   const meta = await sharp(img).metadata();
   const width = meta.width ?? found.width, height = meta.height ?? found.height;
   const area = await mapArea(img, width, height);
   const crop = sharp(img).extract({ left: area.x, top: area.y, width: area.w, height: area.h });
   const cropped = await crop.png().toBuffer();
-  const parts = tiles(area.w, area.h);
-  const all: MapLabel[] = [];
-  for (const [i, t] of parts.entries()) {
-    signal.throwIfAborted();
-    const png = await sharp(cropped).extract({ left: t.x, top: t.y, width: t.w, height: t.h }).png().toBuffer();
-    for (const l of await tileLabels(png).catch((e: unknown) => { if (e instanceof LlmUnavailable) throw e; return []; })) {
-      all.push({ text: l.text, x: (t.x + l.x * t.w) / area.w, y: (t.y + l.y * t.h) / area.h, w: (l.w * t.w) / area.w, h: (l.h * t.h) / area.h });
+  type Read = MapLabel & { ocr?: VecLabel };
+  let all: Read[] = [];
+  if (vec) {
+    // OCR с рамкой на каждую строку: соседние подписи не склеиваются, мелкий текст читается
+    onTile?.(0, 1);
+    const r = await mapvec<{ labels: VecLabel[] }>("/ocr", new Uint8Array(cropped), signal);
+    all = r.labels.map((l) => ({ text: l.text, x: l.x0 / area.w, y: l.y0 / area.h, w: (l.x1 - l.x0) / area.w, h: (l.y1 - l.y0) / area.h, ocr: l }));
+    onTile?.(1, 1);
+  }
+  if (!all.length) {
+    const parts = tiles(area.w, area.h);
+    const lines: MapLabel[] = [];
+    for (const [i, t] of parts.entries()) {
+      signal.throwIfAborted();
+      const png = await sharp(cropped).extract({ left: t.x, top: t.y, width: t.w, height: t.h }).png().toBuffer();
+      for (const l of await tileLabels(png).catch((e: unknown) => { if (e instanceof LlmUnavailable) throw e; return []; })) {
+        lines.push({ text: l.text, x: (t.x + l.x * t.w) / area.w, y: (t.y + l.y * t.h) / area.h, w: (l.w * t.w) / area.w, h: (l.h * t.h) / area.h });
+      }
+      onTile?.(i + 1, parts.length);
     }
-    onTile?.(i + 1, parts.length);
+    all = dedupeLabels(lines);
   }
   // Легенду справа модель отрезает не всегда — граница карты по столбику абзацев легенды
-  const raw = dedupeLabels(all);
-  const edge = legendEdge(raw);
-  const labels = dropLegend(raw, edge);
+  const edge = legendEdge(all);
+  const labels = dropLegend(all, edge);
   if (edge !== null) area.w = Math.round(area.w * edge);
+  // Вектор — по карте без легенды (обрезка только справа: пиксельные рамки OCR не меняются)
+  let vector: MapVector | null = null;
+  const ocrLabels = labels.flatMap((l) => (l.ocr ? [l.ocr] : []));
+  if (ocrLabels.length) {
+    const png = edge === null ? cropped : await sharp(cropped).extract({ left: 0, top: 0, width: area.w, height: area.h }).png().toBuffer();
+    const v = await mapvec<Omit<MapVector, "labels">>("/vectorize", JSON.stringify({ image: png.toString("base64"), labels: ocrLabels }), signal)
+      .catch((e: unknown) => { console.error(`[map] векторизация ${rootId}:`, e); return null; });
+    if (v) vector = { width: v.width, height: v.height, labels: ocrLabels, land: v.land, regions: v.regions };
+  }
   db.exec("BEGIN");
   try {
     db.prepare(`INSERT INTO plot_map (root_id, url, width, height, crop, built_at) VALUES (?, ?, ?, ?, ?, ?)
@@ -109,6 +158,8 @@ async function buildMap(rootId: number, anilistId: number, signal: AbortSignal, 
     db.prepare("DELETE FROM plot_map_label WHERE root_id = ?").run(rootId);
     const ins = db.prepare("INSERT INTO plot_map_label (root_id, text, x, y, w, h) VALUES (?, ?, ?, ?, ?, ?)");
     for (const l of labels) ins.run(rootId, l.text, l.x, l.y, l.w, l.h);
+    db.prepare("DELETE FROM plot_map_vector WHERE root_id = ?").run(rootId);
+    if (vector) db.prepare("INSERT INTO plot_map_vector (root_id, data, built_at) VALUES (?, ?, ?)").run(rootId, JSON.stringify(vector), now());
     db.exec("COMMIT");
   } catch (e) {
     db.exec("ROLLBACK");
@@ -279,7 +330,7 @@ export async function mapView(userId: number, anilistId: number): Promise<PlotMa
   cursor.set(anilistId, cursorInfo.ep);
   const root = rootOf(anilistId);
   const map = root === null ? null : db.prepare<[number], { url: string; width: number; height: number; crop: string | null }>("SELECT url, width, height, crop FROM plot_map WHERE root_id = ?").get(root) ?? null;
-  if (root === null || !map) return { cursor: cursorInfo, map: null, masks: [], places: [], events: [], people: [], hidden: 0 };
+  if (root === null || !map) return { cursor: cursorInfo, map: null, masks: [], places: [], events: [], people: [], hidden: 0, vector: null };
   const d = await getDetails(anilistId);
   const order = [...(await prequelChain(d)), d].map((t) => t.id);
   const rank = (a: number, ep: number) => Math.max(0, order.indexOf(a)) * 10000 + ep;
@@ -309,6 +360,25 @@ export async function mapView(userId: number, anilistId: number): Promise<PlotMa
   }));
   const placeIds = new Set(places.map((p) => p.id));
 
+  // Вектор: пути в единицах 1000 по ширине; страна открыта, если зрителю известно место на её подписи
+  // (или на подписи поверх неё — «Конфедерация монстров» над лесом Джура)
+  let vector: PlotMap["vector"] = null;
+  const vrow = db.prepare<[number], { data: string }>("SELECT data FROM plot_map_vector WHERE root_id = ?").get(root);
+  if (vrow) {
+    const v = JSON.parse(vrow.data) as MapVector;
+    const s = 1000 / v.width;
+    const path = (polys: Poly[]) => polys.map((p) => `M${p.map(([x, y]) => `${Math.round(x * s * 10) / 10} ${Math.round(y * s * 10) / 10}`).join("L")}Z`).join("");
+    const placeOn = new Map(visible.filter((p) => p.label).map((p) => [p.label!, p]));
+    vector = {
+      land: v.land.map((p) => path([p])),
+      regions: v.regions.filter((r) => r.alias === null).map((r) => {
+        const texts = [r.label, ...v.regions.filter((a) => a.alias === r.label).map((a) => a.label)].map((i) => v.labels[i]?.text);
+        const p = texts.map((t) => (t ? placeOn.get(t) : undefined)).find(Boolean) ?? null;
+        return { d: path(r.polys), open: Boolean(p), placeId: p?.id ?? null, name: p ? nameAt(p, cursor) : null };
+      }),
+    };
+  }
+
   type Ev = { id: number; key: string | null; anilist_id: number; title: string; kind: string | null; ep_from: number | null; ep_to: number | null; revealed_ep: number | null; major: number; place_id: number };
   const events = db.prepare<[], Ev>(`SELECT id, key, anilist_id, title, kind, ep_from, ep_to, revealed_ep, major, place_id FROM plot_event
     WHERE place_id IS NOT NULL AND source = 'graph' AND anilist_id IN (${order.join(",")})`).all()
@@ -336,5 +406,6 @@ export async function mapView(userId: number, anilistId: number): Promise<PlotMa
     events: events.map((e) => ({ key: e.key, title: e.title, kind: e.kind, anilistId: e.anilist_id, ep: e.ep_from ?? 0, placeId: e.place_id, major: Boolean(e.major) })),
     people: [...people.values()].filter((p) => p.stops.length >= 2).sort((a, b) => b.stops.length - a.stops.length),
     hidden: all.length - visible.length,
+    vector,
   };
 }

@@ -6,3 +6,6 @@ backups/
 __pycache__/
 recyclarr/*
 !recyclarr/recyclarr.yml
+
+# Колёса torch/CUDA для сборки mapvec (скачиваются заранее, в git не нужны)
+apps/mapvec/wheels/*.whl

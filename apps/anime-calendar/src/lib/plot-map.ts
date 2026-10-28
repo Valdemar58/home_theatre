@@ -118,7 +118,7 @@ export function legendEdge(labels: MapLabel[]): number | null {
 }
 
 /** Подписи без легенды, в долях новой (подрезанной справа по edge) карты. */
-export function dropLegend(labels: MapLabel[], edge: number | null): MapLabel[] {
+export function dropLegend<T extends MapLabel>(labels: T[], edge: number | null): T[] {
   const kept = labels.filter((l) => !isLegendText(l.text) && (edge === null || l.x + l.w / 2 < edge));
   return edge === null ? kept : kept.map((l) => ({ ...l, x: l.x / edge, w: l.w / edge }));
 }

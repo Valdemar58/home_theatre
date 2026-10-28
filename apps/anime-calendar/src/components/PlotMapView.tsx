@@ -43,6 +43,8 @@ export function PlotMapView({ id }: { id: number }) {
 }
 
 const ALL = 1e6;
+// Оттенки стран на своей карте: приглушённые, соседние по списку различимы
+const REGION_FILL = ["fill-warning-700", "fill-positive-800", "fill-warning-800", "fill-special-800", "fill-positive-700", "fill-accent-800", "fill-warning-600", "fill-info-800"];
 
 function Scene({ id, data }: { id: number; data: PlotMap }) {
   const map = data.map!;
@@ -52,7 +54,10 @@ function Scene({ id, data }: { id: number; data: PlotMap }) {
   const top = data.cursor.ep >= ALL ? last : Math.min(data.cursor.ep, last);
   const [at, setAt] = useState(top);
   useEffect(() => setAt(top), [top]);
-  const [layers, setLayers] = useState({ paths: true, events: true, fog: true });
+  const vector = data.vector;
+  // Есть контуры — карта рисуется сама, картинка с вики — слоем по желанию
+  const [layers, setLayers] = useState({ paths: true, events: true, fog: true, picture: !vector });
+  const [hover, setHover] = useState<number | null>(null);
   const [person, setPerson] = useState<number | null>(data.people[0]?.id ?? null);
   const [selected, setSelected] = useState<number | null>(null);
   // Пришли со страницы места («Показать на карте») — оно сразу выбрано
@@ -103,7 +108,8 @@ function Scene({ id, data }: { id: number; data: PlotMap }) {
   useEffect(() => {
     const el = box.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => { setBoxW(el.clientWidth || 900); maxK.current = Math.max(2, (map.crop.w * 1.5) / (el.clientWidth || 900)); });
+    // Контуры не пикселят — приближать можно сильнее
+    const ro = new ResizeObserver(() => { setBoxW(el.clientWidth || 900); maxK.current = Math.max(vector ? 8 : 2, (map.crop.w * 1.5) / (el.clientWidth || 900)); });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
@@ -127,7 +133,7 @@ function Scene({ id, data }: { id: number; data: PlotMap }) {
     <div className="grid gap-4 lg:grid-cols-[1fr_20rem]">
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
-          {([["paths", "Пути"], ["events", "События"], ["fog", "Туман"]] as const).map(([k, label]) => (
+          {([["paths", "Пути"], ["events", "События"], ["fog", "Туман"], ...(vector ? [["picture", "Рисунок"] as const] : [])] as const).map(([k, label]) => (
             <button key={k} onClick={() => setLayers((l) => ({ ...l, [k]: !l[k] }))} aria-pressed={layers[k]}
               className={cx("rounded-full px-3 py-1 text-sm ring-1 ring-inset", layers[k] ? "tone-accent soft" : "bg-gray-800 text-gray-400 ring-gray-700")}>{label}</button>
           ))}
@@ -151,22 +157,44 @@ function Scene({ id, data }: { id: number; data: PlotMap }) {
           onPointerUp={() => setTimeout(() => { drag.current = null; }, 0)}
           onPointerLeave={() => { drag.current = null; }}>
           <div className="absolute inset-0 origin-top-left overflow-hidden" style={{ transform: `translate(${view.x * 100}%, ${view.y * 100}%) scale(${view.k})` }}>
+            {/* Своя карта контурами: море, суша, страны (у каждой свой оттенок); при наведении открытая страна подсвечена */}
+            {vector && (
+              <svg viewBox={`0 0 1000 ${H}`} className="absolute inset-0 h-full w-full">
+                <rect width="1000" height={H} className="fill-info-950" />
+                {vector.land.map((d, i) => <path key={i} d={d} className="fill-warning-900" />)}
+                {vector.regions.map((r, i) => (
+                  <path key={i} d={r.d} onPointerEnter={() => setHover(i)} onPointerLeave={() => setHover((h) => (h === i ? null : h))}
+                    onClick={() => { if (!drag.current?.moved && r.placeId) setSelected(r.placeId); }}
+                    className={cx(REGION_FILL[i % REGION_FILL.length], "stroke-warning-200/60 transition-[fill-opacity]", r.open && "cursor-pointer")}
+                    fillOpacity={r.open && (hover === i || selected === r.placeId) ? 1 : 0.75}
+                    strokeWidth={1.2 / view.k} strokeDasharray={`${5 / view.k} ${4 / view.k}`} />
+                ))}
+                {vector.land.map((d, i) => <path key={`c${i}`} d={d} fill="none" className="stroke-warning-300/70" strokeWidth={1.6 / view.k} />)}
+              </svg>
+            )}
             {/* Подложка: исходная картинка, сдвинутая так, что видна только вырезанная карта (без легенды) */}
-            <img src={imgSrc(map.url)} alt="" draggable={false} className="pointer-events-none absolute max-w-none select-none"
-              style={{ width: `${(map.width / map.crop.w) * 100}%`, left: `${(-map.crop.x / map.crop.w) * 100}%`, top: `${(-map.crop.y / map.crop.h) * 100}%` }} />
-            <svg viewBox={`0 0 1000 ${H}`} className="absolute inset-0 h-full w-full" aria-hidden>
+            {layers.picture && (
+              <img src={imgSrc(map.url)} alt="" draggable={false} className={cx("pointer-events-none absolute max-w-none select-none", vector && "opacity-85")}
+                style={{ width: `${(map.width / map.crop.w) * 100}%`, left: `${(-map.crop.x / map.crop.w) * 100}%`, top: `${(-map.crop.y / map.crop.h) * 100}%` }} />
+            )}
+            <svg viewBox={`0 0 1000 ${H}`} className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden>
               <defs>
                 <filter id="soft"><feGaussianBlur stdDeviation="14" /></filter>
+                <filter id="edge"><feGaussianBlur stdDeviation="3" /></filter>
                 <filter id="smudge"><feGaussianBlur stdDeviation="1.5" /></filter>
                 <mask id="fog-mask">
                   <rect width="1000" height={H} fill="white" />
+                  {/* Известная страна открыта целиком, по своим границам */}
+                  {vector && <g filter="url(#edge)">{vector.regions.filter((r) => r.open).map((r, i) => <path key={i} d={r.d} fill="black" />)}</g>}
                   <g filter="url(#soft)">{places.map((p) => <circle key={p.id} cx={p.x * 1000} cy={p.y * H} r={p.fog * 1000} fill="black" />)}</g>
                 </mask>
               </defs>
-              {/* Подписи мест, которых зритель ещё не знает, закрыты всегда (даже без тумана) */}
-              <g filter="url(#smudge)">
-                {data.masks.map((m, i) => <rect key={i} x={m.x * 1000 - 6} y={m.y * H - m.h * H * 0.9 - 4} width={m.w * 1000 + 12} height={m.h * H * 2.8 + 8} rx="6" fill={m.color ?? "#3a3324"} />)}
-              </g>
+              {/* Подписи мест, которых зритель ещё не знает, закрыты всегда (даже без тумана); на своей карте подписей нет */}
+              {layers.picture && (
+                <g filter="url(#smudge)">
+                  {data.masks.map((m, i) => <rect key={i} x={m.x * 1000 - 6} y={m.y * H - m.h * H * 0.9 - 4} width={m.w * 1000 + 12} height={m.h * H * 2.8 + 8} rx="6" fill={m.color ?? "#3a3324"} />)}
+                </g>
+              )}
               {layers.fog && <rect width="1000" height={H} fill="#05070d" opacity="0.8" mask="url(#fog-mask)" />}
             </svg>
           </div>
@@ -207,7 +235,7 @@ function Scene({ id, data }: { id: number; data: PlotMap }) {
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400">
           <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-indigo-400" />место по подписи на карте</span>
           <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full ring-2 ring-violet-300" />примерно: внутри места, подписи нет</span>
-          <span>туман — где вы ещё не были; закрытые подписи — места после вашей серии{data.hidden > 0 ? ` (${data.hidden})` : ""}</span>
+          <span>{vector ? "туман — страны и места, которых вы ещё не видели" : "туман — где вы ещё не были; закрытые подписи — места после вашей серии"}{data.hidden > 0 ? ` (${data.hidden})` : ""}</span>
         </div>
       </div>
 
