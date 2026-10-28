@@ -99,6 +99,9 @@ export async function streamRelease(opts: {
     created++;
   }
   await refreshJellyfin(path.basename(folder)).catch((e) => console.warn(`[stream] обновление Jellyfin: ${String(e)}`));
+  // Русские субтитры и шрифты раздачи — в фон (мегабайты, без видео)
+  const { syncStreamSubsSoon } = await import("./stream-subs");
+  syncStreamSubsSoon(torrent.hash);
   return { episodes: created, skipped, folder: path.basename(folder) };
 }
 
@@ -417,6 +420,11 @@ export async function streamAnilistId(hash: string): Promise<number | null> {
   const l = strmByHash().get(hash);
   const tvdb = l ? Number(/\[tvdbid-(\d+)\]/.exec(l.folder)?.[1]) : 0;
   return tvdb ? anilistForTvdb(tvdb, l!.season).catch(() => null) : null;
+}
+
+/** Все файлы раздачи (будит раздачу): субтитры, шрифты, озвучки рядом с видео. */
+export async function torrentFiles(hash: string): Promise<TsFile[]> {
+  return (await ts<TsTorrent>("/torrents", { action: "get", hash })).file_stats ?? [];
 }
 
 /** Файл раздачи по индексу (будит раздачу — только для подготовки серии). */

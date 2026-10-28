@@ -1,7 +1,7 @@
 import "server-only";
 import { randomBytes } from "node:crypto";
 import {
-  chapterLabel, deviceProfile, isSignsTitle, JIMAKU_SUB, pickAudio, pickSub, trackLabel, WATCHED_SHARE,
+  chapterLabel, deviceProfile, isSignsTitle, JIMAKU_SUB, STREAM_SUB, pickAudio, pickSub, trackLabel, WATCHED_SHARE,
   type PlayCaps, type PlayInfo, type PlayStatus, type PlaySub, type PlayTrack,
 } from "@/lib/player";
 import { ApiError } from "./route";
@@ -12,6 +12,7 @@ import { guarded } from "./sources";
 import { segmentsFromChapters } from "@/lib/fingerprint";
 import { prebufferProgress } from "./prebuffer";
 import { ensureSegments, itemKey, storedSegments } from "./segments";
+import { streamSubs, syncStreamSubsSoon } from "./stream-subs";
 import { sdhFile } from "./sdh";
 import { dropTorrentCache, jellyfin, torrentCached, torrentStats } from "./stream";
 import { episodeStatus } from "./availability";
@@ -108,6 +109,21 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
       forced: Boolean(m.IsForced), signs: Boolean(m.IsForced) || isSignsTitle(m.Title ?? null), external: Boolean(m.IsExternal),
     };
   });
+  const extVoices: string[] = [];
+  // Русские субтитры из раздачи «Стрима» («RUS Subs/[Студия]») со шрифтами раздачи; ещё не скачаны — в фон
+  const fonts = (ms.MediaAttachments ?? []).filter((a) => /font|ttf|otf|woff/i.test(`${a.MimeType} ${a.FileName}`)).map((a) => `${base}/font/${a.Index}`);
+  if (item.hash && item.index) {
+    const m = streamSubs(item.hash);
+    if (!m) syncStreamSubsSoon(item.hash);
+    const url = (f: string) => `/api/stream-subs/${item.hash}/${f}`;
+    m?.subs.filter((x) => x.video === item.index).forEach((x, i) => subs.push({
+      index: STREAM_SUB + i, lang: "rus", codec: x.file.split(".").pop() ?? "ass", title: x.group,
+      label: `Русский · ${x.group}${x.signs ? " (надписи)" : ""}`, url: url(x.file), ass: !x.file.endsWith(".srt"),
+      forced: false, signs: x.signs, external: true, torrent: true,
+    }));
+    if (m?.subs.length) fonts.push(...m.fonts.map(url));
+    extVoices.push(...(m?.voices ?? []));
+  }
   // Японские субтитры с Jimaku (скачаны для «Глубокого разбора» или кнопкой в плеере): тайминг другого релиза — есть сдвиг
   const jp = sdhFile(anilistId, ep);
   if (jp) {
@@ -136,10 +152,11 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
     audioIndex,
     subs,
     subIndex: pickSub(subs, audio.find((a) => a.index === audioIndex)),
-    fonts: (ms.MediaAttachments ?? []).filter((a) => /font|ttf|otf|woff/i.test(`${a.MimeType} ${a.FileName}`)).map((a) => `${base}/font/${a.Index}`),
+    fonts,
     chapters,
     trickplay,
     segments,
+    extVoices,
     // Причины — в ответе или (Jellyfin 12) только в ссылке потока
     transcode: ms.TranscodeReasons?.length ? ms.TranscodeReasons : (new URLSearchParams(ms.TranscodingUrl?.split("?")[1] ?? "").get("TranscodeReasons")?.split(",").filter(Boolean) ?? []),
   };

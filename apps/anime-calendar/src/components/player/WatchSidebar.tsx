@@ -41,6 +41,13 @@ export function WatchSidebar({ media, info, sub, subs: settings, controls }: {
               ))}
               {audio.length === 1 && <p className="px-2 pt-1 text-xs text-gray-500">Других дорожек в файле нет.</p>}
             </div>
+            {info.extVoices.length > 0 && (
+              <div className="space-y-1 border-t border-gray-700 px-2 pt-3">
+                <p className="text-xs text-gray-400">В раздаче есть озвучки отдельными файлами:</p>
+                <p className="text-sm text-gray-200">{info.extVoices.join(", ")}</p>
+                <p className="text-xs text-gray-500">Онлайн их не сыграть — Jellyfin не подмешивает звук к потоку. «Скачать» в «Озвучках» соберёт их в серии дорожками.</p>
+              </div>
+            )}
             <div className="space-y-1.5 border-t border-gray-700 px-2 pt-3">
               <p className="text-xs text-gray-500">
                 Другая озвучка — другая раздача: найдите её в «Озвучках» и нажмите «Смотреть» (серии «Стрима» заменятся) или
@@ -55,8 +62,8 @@ export function WatchSidebar({ media, info, sub, subs: settings, controls }: {
               <Row active={sub === null} onClick={() => controls.current?.setSub(null)}>Выключены</Row>
               {subs.map((s) => (
                 <Row key={s.index} active={s.index === sub} onClick={() => controls.current?.setSub(s.index)}>
-                  {s.label}{s.signs ? <span className="text-gray-500"> · надписи</span> : null}
-                  {s.external && !s.jimaku ? <span className="text-gray-500"> · файл рядом</span> : null}
+                  {s.label}{s.signs && !s.label.includes("надписи") ? <span className="text-gray-500"> · надписи</span> : null}
+                  {s.torrent ? <span className="text-gray-500"> · из раздачи</span> : s.external && !s.jimaku ? <span className="text-gray-500"> · файл рядом</span> : null}
                 </Row>
               ))}
               {!subs.length && <p className="px-2 pt-1 text-xs text-gray-500">В файле нет субтитров.</p>}
