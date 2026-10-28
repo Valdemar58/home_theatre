@@ -13,6 +13,8 @@ import { jellyfin, jellyfinSeries } from "./stream";
 export type JfEpisodeItem = EpisodeItem & {
   /** Серия «Стрима»: ссылка на поток TorrServer из .strm */
   strm?: string;
+  /** Сам .strm у нас (рядом кладутся озвучки раздачи) */
+  strmPath?: string;
   runtimeSec?: number;
 };
 
@@ -69,7 +71,7 @@ async function load(anilistId: number): Promise<Map<number, JfEpisodeItem[]>> {
         const url = fs.existsSync(local) ? fs.readFileSync(local, "utf-8").trim() : "";
         if (!url) continue;
         Object.assign(item, {
-          where: "stream", strm: url,
+          where: "stream", strm: url, strmPath: local,
           hash: /link=([0-9a-f]{40})/.exec(url)?.[1], index: Number(/[?&]index=(\d+)/.exec(url)?.[1]) || undefined,
         });
       }

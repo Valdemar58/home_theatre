@@ -13,6 +13,7 @@ describe("студия субтитров по пути в раздаче", () =
     expect(subGroup("Show/Subs/Kansai/ep01.srt")).toEqual({ group: "Kansai", signs: false });
     expect(subGroup("Tensei Slime 3rd Season/Rus subs/S3 [01].ass")).toEqual({ group: null, signs: false });
     expect(subGroup("ep01.srt")).toEqual({ group: null, signs: false });
+    expect(subGroup("[Moozzi2] Slime [BDRip HEVC FLAC]/Subs/ep01.ass")).toEqual({ group: null, signs: false });
   });
   it("метка релизера — последние скобки названия", () => {
     expect(releaseTag("Slime 3 [TV] E24 of 24 [RUS(int), JAP] [2024, WEBRip] [HWP]")).toBe("HWP");

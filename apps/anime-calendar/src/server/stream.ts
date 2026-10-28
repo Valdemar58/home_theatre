@@ -10,13 +10,14 @@ import type { EpisodeRefLike } from "./ru/title";
 
 // «Смотреть сейчас»: раздача добавляется в TorrServer, а в библиотеку Jellyfin «Стрим»
 // кладутся .strm-файлы со ссылками на поток. Jellyfin сам транскодирует (NVENC),
-// дорожки внутри mkv выбираются в плеере. Внешние .mka при стриминге недоступны.
+// дорожки внутри mkv выбираются в плеере. Озвучки раздачи отдельными файлами — ссылками рядом с .strm
+// («<серия>.ru.<Студия>.mka» → .voices/, stream-voices.ts) — Jellyfin сводит их с видео сам.
 
-const VIDEO = /\.(mkv|mp4|m4v|avi|ts|m2ts|webm)$/i;
+export const VIDEO = /\.(mkv|mp4|m4v|avi|ts|m2ts|webm)$/i;
 // Спешлы и бонусы в отдельных папках нумеруются заново и путают сопоставление
-const EXTRAS = /(^|\/)(specials?|sp|extras?|bonus|ova|nced|ncop|menus?|trailers?)(\/|$)/i;
+export const EXTRAS = /(^|\/)(specials?|sp|extras?|bonus|ova|nced|ncop|menus?|trailers?)(\/|$)/i;
 
-type TsFile = { id: number; path: string; length: number };
+export type TsFile = { id: number; path: string; length: number };
 type TsTorrent = { hash: string; title: string; file_stats?: TsFile[]; timestamp?: number };
 
 async function ts<T>(pathname: string, body: unknown): Promise<T> {
@@ -46,7 +47,19 @@ async function addTorrent(release: ProwlarrRelease, title: string, poster: strin
   return (await res.json()) as TsTorrent;
 }
 
-const safe = (s: string) => s.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
+export const safe = (s: string) => s.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
+
+/** Файлы рядом с .strm серии (озвучки «<серия>.ru.<Студия>.mka»). */
+export function strmSiblings(strm: string): string[] {
+  const dir = path.dirname(strm);
+  const base = `${path.basename(strm, ".strm")}.`;
+  return fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.startsWith(base) && !f.endsWith(".strm")).map((f) => path.join(dir, f)) : [];
+}
+
+/** Убрать серию «Стрима»: .strm и озвучки рядом. */
+function removeStrm(strm: string) {
+  for (const f of [strm, ...strmSiblings(strm)]) fs.rmSync(f, { force: true });
+}
 const pad = (n: number) => String(n).padStart(2, "0");
 
 export type StreamResult = { episodes: number; skipped: number; folder: string };
@@ -71,6 +84,7 @@ export async function streamRelease(opts: {
   const name = safe(opts.seriesTitle);
   const folder = path.join(env.streamDir, `${name}${opts.year ? ` (${opts.year})` : ""} [tvdbid-${mapping.tvdb}]`);
   let created = 0;
+  const placed: { strm: string; index: number }[] = [];
   let skipped = 0;
   for (let i = 0; i < files.length; i++) {
     const target = targets[i];
@@ -82,8 +96,18 @@ export async function streamRelease(opts: {
     fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, `${name} - S${pad(target.season)}E${pad(target.episode)}.strm`);
     const url = `${env.torrserverInternalUrl}/stream/${encodeURIComponent(path.basename(files[i].path))}?link=${torrent.hash}&index=${files[i].id}&play`;
+    // Другая раздача — озвучки рядом были под старое видео
+    if (fs.existsSync(file) && fs.readFileSync(file, "utf-8").trim() !== url) for (const v of strmSiblings(file)) fs.rmSync(v, { force: true });
     fs.writeFileSync(file, url + "\n");
+    placed.push({ strm: file, index: files[i].id });
     created++;
+  }
+  // Ссылки на озвучки раздачи отдельными файлами — до первого запуска серий (звук качается по выбору)
+  const { placeVoiceSlots } = await import("./stream-voices");
+  try {
+    placeVoiceSlots(torrent.file_stats ?? [], torrent.hash, placed);
+  } catch (e) {
+    console.warn(`[stream] ссылки на озвучки: ${String(e)}`);
   }
   await refreshJellyfin(path.basename(folder)).catch((e) => console.warn(`[stream] обновление Jellyfin: ${String(e)}`));
   // Русские субтитры и шрифты раздачи — в фон (мегабайты, без видео)
@@ -184,6 +208,7 @@ export async function cleanupStreams(maxAgeDays = 14): Promise<void> {
   const series = env.sonarrApiKey ? await sonarrGet<{ id: number; tvdbId: number }[]>("/api/v3/series").catch(() => []) : [];
   const usedHashes = new Set<string>();
   for (const dir of fs.readdirSync(env.streamDir)) {
+    if (dir.startsWith(".")) continue;
     const tvdb = Number(/\[tvdbid-(\d+)\]/.exec(dir)?.[1]);
     const s = series.find((x) => x.tvdbId === tvdb);
     const downloaded = new Set<string>();
@@ -198,10 +223,15 @@ export async function cleanupStreams(maxAgeDays = 14): Promise<void> {
       if (!fs.statSync(sdir).isDirectory()) continue;
       for (const f of fs.readdirSync(sdir)) {
         const file = path.join(sdir, f);
+        // Озвучка («<серия>.ru.<Студия>.mka») без своей серии — убрать; с серией — уходит вместе с ней
+        if (!f.endsWith(".strm")) {
+          if (!fs.existsSync(path.join(sdir, `${f.replace(/\.(ru|en|ja)\.[^.]+\.[^.]+(\.part)?$/, "")}.strm`))) fs.rmSync(file, { force: true });
+          continue;
+        }
         const code = /S\d{2}E\d{2,4}/.exec(f)?.[0];
         const old = Date.now() - fs.statSync(file).mtimeMs > maxAgeDays * 86400_000;
         if ((code && downloaded.has(code)) || old) {
-          fs.rmSync(file);
+          removeStrm(file);
           continue;
         }
         const hash = /link=([0-9a-f]{40})/.exec(fs.readFileSync(file, "utf-8"))?.[1];
@@ -214,6 +244,20 @@ export async function cleanupStreams(maxAgeDays = 14): Promise<void> {
   // Раздачи TorrServer, на которые больше нет ссылок
   const list = await ts<TsTorrent[]>("/torrents", { action: "list" }).catch(() => []);
   for (const t of list) if (!usedHashes.has(t.hash)) await ts("/torrents", { action: "rem", hash: t.hash }).catch(() => undefined);
+  // Звук озвучек раздач без ссылок
+  const { dropVoices, placeVoiceSlots, VOICES_DIR } = await import("./stream-voices");
+  const voices = path.join(env.streamDir, VOICES_DIR);
+  for (const hash of fs.existsSync(voices) ? fs.readdirSync(voices) : []) if (/^[0-9a-f]{40}$/.test(hash) && !usedHashes.has(hash)) dropVoices(hash);
+  // Раздачи, добавленные до ссылок на озвучки, — завести их всем сериям (один раз: папка .voices/<хэш> — отметка)
+  for (const hash of usedHashes) {
+    if (fs.existsSync(path.join(voices, hash))) continue;
+    const files = await torrentFiles(hash).catch(() => null);
+    try {
+      if (files) placeVoiceSlots(files, hash, strmEpisodes(hash).map((e) => ({ strm: e.file, index: e.index })));
+    } catch (e) {
+      console.warn(`[stream] ссылки на озвучки ${hash}: ${String(e)}`);
+    }
+  }
   await refreshJellyfin().catch(() => undefined);
 }
 
@@ -252,12 +296,14 @@ function strmByHash(): Map<string, { folder: string; season: number; files: stri
   const out = new Map<string, { folder: string; season: number; files: string[] }>();
   if (!fs.existsSync(env.streamDir)) return out;
   for (const dir of fs.readdirSync(env.streamDir)) {
+    if (dir.startsWith(".")) continue;
     const root = path.join(env.streamDir, dir);
     if (!fs.statSync(root).isDirectory()) continue;
     for (const season of fs.readdirSync(root)) {
       const sdir = path.join(root, season);
       if (!fs.statSync(sdir).isDirectory()) continue;
       for (const f of fs.readdirSync(sdir)) {
+        if (!f.endsWith(".strm")) continue;
         const file = path.join(sdir, f);
         const hash = /link=([0-9a-f]{40})/.exec(fs.readFileSync(file, "utf-8"))?.[1];
         if (!hash) continue;
@@ -386,7 +432,7 @@ export function playbackRate(files: { path: string; length: number }[] | undefin
 export async function removeStream(hash: string): Promise<void> {
   if (!/^[0-9a-f]{40}$/.test(hash)) throw new Error("неверный хэш");
   const l = strmByHash().get(hash);
-  for (const f of l?.files ?? []) fs.rmSync(f, { force: true });
+  for (const f of l?.files ?? []) removeStrm(f);
   if (l) {
     const root = path.join(env.streamDir, l.folder);
     for (const season of fs.existsSync(root) ? fs.readdirSync(root) : []) {
@@ -396,6 +442,7 @@ export async function removeStream(hash: string): Promise<void> {
     if (fs.existsSync(root) && !fs.readdirSync(root).length) fs.rmdirSync(root);
   }
   await ts("/torrents", { action: "rem", hash });
+  (await import("./stream-voices")).dropVoices(hash);
   await refreshJellyfin().catch(() => undefined);
 }
 

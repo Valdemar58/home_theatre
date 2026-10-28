@@ -1,6 +1,6 @@
 "use client";
 import { MinusIcon, PlusIcon } from "@heroicons/react/24/outline";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "@/lib/client";
 import type { PlayInfo } from "@/lib/player";
 import type { AnimeDetails } from "@/lib/types";
@@ -8,8 +8,8 @@ import { Button, cx, Spinner } from "../ui";
 import { VoicesButton } from "../VoicesButton";
 import type { PlayerControls, SubSettings } from "./Player";
 
-// Боковая панель плеера (как у AniLib): вкладки «Озвучка / Субтитры». Озвучка — дорожки файла и другие раздачи
-// с русской озвучкой (окно «Озвучки»: «Смотреть» другую раздачу). Субтитры — дорожки файла, японские с Jimaku
+// Боковая панель плеера (как у AniLib): вкладки «Озвучка / Субтитры». Озвучка — дорожки файла, озвучки раздачи
+// «Стрима» отдельными файлами (звук серии качается по выбору) и другие раздачи (окно «Озвучки»: «Смотреть»). Субтитры — дорожки файла, японские с Jimaku
 // (найти, если их нет), сдвиг по времени и размер текста.
 
 export function WatchSidebar({ media, info, sub, subs: settings, controls }: {
@@ -17,7 +17,13 @@ export function WatchSidebar({ media, info, sub, subs: settings, controls }: {
   controls: React.MutableRefObject<PlayerControls | null>;
 }) {
   const [tab, setTab] = useState<"audio" | "sub">("audio");
+  // Какую озвучку раздачи сейчас качаем (до нового потока)
+  const [pending, setPending] = useState<string | null>(null);
+  useEffect(() => setPending(null), [info?.sid]);
   const audio = info?.audio ?? [];
+  const missing = info?.extVoices.filter((v) => !v.have) ?? [];
+  // Звук скачан, а дорожки нет: Jellyfin помнит старый список файлов папки (до 5 мин без запусков)
+  const waiting = info?.extVoices.filter((v) => v.have && !audio.some((a) => a.external && a.title === v.group)) ?? [];
   const subs = info?.subs ?? [];
   return (
     <aside className="flex max-h-[min(36rem,70vh)] flex-col overflow-hidden rounded-xl bg-gray-800/40 ring-1 ring-gray-700">
@@ -35,18 +41,33 @@ export function WatchSidebar({ media, info, sub, subs: settings, controls }: {
         ) : tab === "audio" ? (
           <div className="space-y-3">
             <div>
-              <p className="px-2 pb-1 text-xs text-gray-500">В этом файле</p>
+              <p className="px-2 pb-1 text-xs text-gray-500">{info.extVoices.length ? "Серия" : "В этом файле"}</p>
               {audio.map((t) => (
-                <Row key={t.index} active={t.index === info.audioIndex} onClick={() => controls.current?.setAudio(t.index)}>{t.label}</Row>
+                <Row key={t.index} active={t.index === info.audioIndex} onClick={() => controls.current?.setAudio(t.index)}>
+                  {t.label}{t.external && <span className="text-gray-500"> · из раздачи</span>}
+                </Row>
               ))}
-              {audio.length === 1 && <p className="px-2 pt-1 text-xs text-gray-500">Других дорожек в файле нет.</p>}
+              {audio.length === 1 && !missing.length && <p className="px-2 pt-1 text-xs text-gray-500">Других дорожек в файле нет.</p>}
             </div>
-            {info.extVoices.length > 0 && (
-              <div className="space-y-1 border-t border-gray-700 px-2 pt-3">
-                <p className="text-xs text-gray-400">В раздаче есть озвучки отдельными файлами:</p>
-                <p className="text-sm text-gray-200">{info.extVoices.join(", ")}</p>
-                <p className="text-xs text-gray-500">Онлайн их не сыграть — Jellyfin не подмешивает звук к потоку. «Скачать» в «Озвучках» соберёт их в серии дорожками.</p>
+            {missing.length > 0 && (
+              <div className="border-t border-gray-700 pt-3">
+                <p className="px-2 pb-1 text-xs text-gray-500">Ещё в раздаче — звук серии скачается за секунды, видео то же</p>
+                {missing.map((v) => (
+                  <Row key={v.group} active={false} onClick={() => { if (pending) return; setPending(v.group); controls.current?.setVoice(v.group); }}>
+                    <span className="flex items-center gap-2">
+                      {pending === v.group && <Spinner className="h-3.5 w-3.5" />}
+                      <span className="flex-1">{v.group}</span>
+                      <span className="text-xs tabular-nums text-gray-500">{Math.round(v.size / 1e6)} МБ</span>
+                    </span>
+                  </Row>
+                ))}
               </div>
+            )}
+            {waiting.length > 0 && (
+              <p className="border-t border-gray-700 px-2 pt-3 text-xs text-gray-500">
+                {waiting.map((v) => v.group).join(", ")} — звук скачан, Jellyfin покажет дорожку через несколько минут
+                (откройте серию заново).
+              </p>
             )}
             <div className="space-y-1.5 border-t border-gray-700 px-2 pt-3">
               <p className="text-xs text-gray-500">

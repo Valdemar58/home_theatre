@@ -68,6 +68,9 @@ registerHandler("prebuffer", {
     progress.set(key, p);
     // Отменили — прогресс больше не показываем (в кэше TorrServer прочитанное остаётся)
     signal.addEventListener("abort", () => progress.delete(key));
+    // Озвучка, выбранная у тайтла, отдельным файлом раздачи — рядом с серией (десятки МБ, параллельно с видео)
+    const { prepareVoices } = await import("./stream-voices");
+    void prepareVoices(hash, index, ctx.userIds).catch((e) => console.warn(`[prebuffer] озвучка ${key}: ${String(e)}`));
 
     const res = await fetch(`${env.torrserverUrl}/stream/${encodeURIComponent(file.path.split("/").pop()!)}?link=${hash}&index=${index}&play`, { signal });
     if (!res.ok || !res.body) throw new Error(`TorrServer: HTTP ${res.status}`);

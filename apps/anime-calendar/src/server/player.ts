@@ -14,6 +14,7 @@ import { prebufferProgress } from "./prebuffer";
 import { ensureSegments, itemKey, storedSegments } from "./segments";
 import { releaseTag, streamSubs, subsForVideo, syncStreamSubsSoon } from "./stream-subs";
 import { sdhFile } from "./sdh";
+import { episodeVoices, fetchVoice, setVoicePref, voicePref, type EpisodeVoice } from "./stream-voices";
 import { dropTorrentCache, jellyfin, torrentCached, torrentStats } from "./stream";
 import { episodeStatus } from "./availability";
 
@@ -45,6 +46,8 @@ export type PlaySession = {
   /** Путь и запрос HLS у Jellyfin (/videos/<id>/master.m3u8?...) или null — файл как есть */
   hlsPath: string | null;
   duration: number;
+  /** Дорожки звука сессии — при перезапуске выбранная ищется заново (внешний файл озвучки сдвигает номера) */
+  audio: PlayTrack[];
   marked: boolean;
   /** Когда последний раз сообщили позицию в Jellyfin */
   jfAt: number;
@@ -65,12 +68,13 @@ export function playSession(sid: string, userId: number): PlaySession {
 
 /** Начать (или перезапустить с другой озвучкой/с позиции) просмотр серии. */
 export async function startPlayback(user: { id: number; jellyfin_id: string }, anilistId: number, ep: number, opts: {
-  caps: PlayCaps; audio?: number | null; start?: number | null; replace?: string | null;
+  caps: PlayCaps; audio?: number | null; voice?: string | null; start?: number | null; replace?: string | null;
 }): Promise<PlayInfo> {
   const items = (await episodeItems(anilistId)).get(ep) ?? [];
   const item = items.find((i) => i.where === "library") ?? items[0];
   if (!item) throw new ApiError(404, "Этой серии нет ни в библиотеке, ни в «Стриме»");
   // Сменили озвучку — старое перекодирование больше не нужно
+  const prev = opts.replace && opts.audio != null ? sessions.get(opts.replace)?.audio.find((a: PlayTrack) => a.index === opts.audio) : undefined;
   if (opts.replace) await stopPlayback(opts.replace, user.id).catch(() => undefined);
 
   const saved = db.prepare<[number, number, number], { pos: number; dur: number | null }>(
@@ -80,13 +84,33 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
   const start = Math.max(0, opts.start ?? resume);
 
   // Студия озвучки, отмеченная у тайтла, — дорожка по умолчанию
-  const voice = db.prepare<[number, number], { voice: string | null }>("SELECT voice FROM list_entries WHERE user_id = ? AND anilist_id = ?").get(user.id, anilistId)?.voice ?? null;
+  // (выбранная в плеере — раньше отмеченной в «Впечатлениях»)
+  const voice = opts.voice ?? voicePref(user.id, anilistId)
+    ?? db.prepare<[number, number], { voice: string | null }>("SELECT voice FROM list_entries WHERE user_id = ? AND anilist_id = ?").get(user.id, anilistId)?.voice ?? null;
   const jf = await jellyfinUser(user.jellyfin_id);
-  const probe = await info(item.itemId, jf, opts.caps, start, opts.audio ?? undefined);
-  const audio = probe.MediaStreams.filter((m) => m.Type === "Audio").map(track);
-  const audioIndex = opts.audio ?? pickAudio(audio, voice);
+  // Серия «Стрима», а озвучки в раздаче отдельными файлами: нужную — скачать и положить рядом с .strm
+  const voices = item.strmPath ? await episodeVoices(item).catch(() => [] as EpisodeVoice[]) : [];
+  const want = voice ? voices.find((v) => v.group.toLowerCase().includes(voice.toLowerCase())) : undefined;
+  if (want && !want.have) want.have = await placeVoice(item, want, Boolean(opts.voice));
+  let probe = await info(item.itemId, jf, opts.caps, start);
+  let audio = probe.MediaStreams.filter((m) => m.Type === "Audio").map(track);
+  // Русской дорожки нет ни в файле, ни рядом — первая озвучка раздачи (дальше её и готовим к следующим сериям)
+  const first = voices.find((v) => v.lang === "ru");
+  if (!want && !audio.some((a) => a.lang === "rus") && first && !first.have && await placeVoice(item, first, false)) {
+    first.have = true;
+    setVoicePref(user.id, anilistId, first.group);
+    probe = await info(item.itemId, jf, opts.caps, start);
+    audio = probe.MediaStreams.filter((m) => m.Type === "Audio").map(track);
+  }
+  const same = prev && audio.find((a) => a.lang === prev.lang && a.title === prev.title && a.codec === prev.codec && a.external === prev.external);
+  const audioIndex = opts.voice ? audio.find((a) => a.external && a.title === opts.voice)?.index ?? pickAudio(audio, voice)
+    : opts.audio != null ? same?.index ?? (prev ? pickAudio(audio, voice) : opts.audio)
+    : pickAudio(audio, voice);
+  // Выбрали озвучку сами — запомнить студию (следующие серии «Стрима» готовятся с ней)
+  const chosen = audio.find((a) => a.index === audioIndex);
+  if ((opts.voice || opts.audio != null) && chosen?.title && chosen.lang === "rus") setVoicePref(user.id, anilistId, chosen.title);
   // Озвучка не та, что Jellyfin выбрал сам, — второй запрос уже с нужной дорожкой (перекодирование звука под неё)
-  const ms = audioIndex !== null && opts.audio == null && audioIndex !== defaultAudio(probe) ? await info(item.itemId, jf, opts.caps, start, audioIndex) : probe;
+  const ms = audioIndex !== null && audioIndex !== defaultAudio(probe) ? await info(item.itemId, jf, opts.caps, start, audioIndex) : probe;
 
   const sid = randomBytes(9).toString("base64url");
   const deviceId = `ac-${sid}`;
@@ -98,7 +122,7 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
   sessions.set(sid, {
     sid, userId: user.id, anilistId, ep, itemId: item.itemId, mediaSourceId: ms.Id, playSessionId, deviceId, hlsPath,
     stream: item.hash && item.index ? { hash: item.hash, index: item.index } : null,
-    duration, marked: false, jfAt: 0, seenAt: Date.now(),
+    duration, audio, marked: false, jfAt: 0, seenAt: Date.now(),
   });
 
   const base = `/api/play/${sid}`;
@@ -109,7 +133,7 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
       forced: Boolean(m.IsForced), signs: Boolean(m.IsForced) || isSignsTitle(m.Title ?? null), external: Boolean(m.IsExternal),
     };
   });
-  const extVoices: string[] = [];
+  const extVoices = voices.map((v) => ({ group: v.group, size: v.size, have: v.have }));
   // Русские субтитры из раздачи «Стрима» («RUS Subs/[Студия]») со шрифтами раздачи; ещё не скачаны — в фон
   const fonts = (ms.MediaAttachments ?? []).filter((a) => /font|ttf|otf|woff/i.test(`${a.MimeType} ${a.FileName}`)).map((a) => `${base}/font/${a.Index}`);
   if (item.hash && item.index) {
@@ -122,7 +146,6 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
       forced: false, signs: x.signs, external: true, torrent: true,
     }));
     if (m?.subs.length) fonts.push(...m.fonts.map(url));
-    extVoices.push(...(m?.voices ?? []));
   }
   // Субтитры, взятые из других раздач («Озвучки» → «Субтитры»): та же серия, тайминг — сдвигом
   for (const r of db.prepare<[number], { hash: string; title: string; episodes: string }>("SELECT hash, title, episodes FROM release_subs WHERE anilist_id = ?").all(anilistId)) {
@@ -177,8 +200,21 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
 const isText = (codec?: string) => /^(ass|ssa|srt|subrip|vtt|webvtt|mov_text|text)$/i.test(codec ?? "");
 const track = (m: MediaStream): PlayTrack => ({
   index: m.Index, lang: m.Language ?? null, codec: m.Codec ?? "", title: m.Title ?? null,
-  label: trackLabel(m.Language ?? null, m.Title ?? null, m.Codec ?? ""),
+  label: trackLabel(m.Language ?? null, m.Title ?? null, m.Codec ?? ""), external: Boolean(m.IsExternal),
 });
+
+/**
+ * Скачать озвучку серии и дождаться Jellyfin. Выбрали в плеере — ждём сколько нужно; сама при открытии серии — не
+ * дольше 20 с (серия откроется с другим звуком, файл докачается в фоне и будет в следующий раз).
+ */
+async function placeVoice(item: Parameters<typeof fetchVoice>[0], v: EpisodeVoice, chosen: boolean): Promise<boolean> {
+  const p = fetchVoice(item, v.group);
+  if (chosen) return p.then(() => true);
+  const ok = await Promise.race([p.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 20_000))])
+    .catch((e) => { console.warn(`[player] озвучка ${v.group}: ${String(e)}`); return false; });
+  if (!ok) p.catch(() => undefined);
+  return ok;
+}
 const defaultAudio = (ms: MediaSource) => {
   const a = ms.MediaStreams.filter((m) => m.Type === "Audio");
   return (a.find((m) => m.IsDefault) ?? a[0])?.Index ?? null;

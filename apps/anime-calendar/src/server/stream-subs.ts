@@ -11,9 +11,8 @@ import { torrentFiles } from "./stream";
 // показывает их дорожками («Русский · AniLibria», «… (надписи)») со шрифтами раздачи.
 
 export type StreamSub = { video: number; group: string | null; signs: boolean; file: string };
-/** voices — студии озвучек отдельными файлами («RUS Sound/[Студия]»): онлайн их не сыграть, «Скачать» соберёт в серию. */
-type Manifest = { subs: StreamSub[]; fonts: string[]; voices?: string[]; at: number };
-const AUDIO = /\.(mka|ac3|eac3|dts|aac|flac|mp3|opus)$/i;
+// Озвучки раздачи отдельными файлами — stream-voices.ts
+type Manifest = { subs: StreamSub[]; fonts: string[]; at: number };
 
 const SUB = /\.(ass|ssa|srt)$/i;
 const FONT = /\.(ttf|otf|ttc|woff2?)$/i;
@@ -33,7 +32,8 @@ export function streamSubs(hash: string): Manifest | null {
 export function subGroup(p: string): { group: string | null; signs: boolean } {
   const dirs = p.split("/").slice(0, -1);
   const signs = dirs.some((d) => /надпис|signs?$|forced/i.test(d));
-  const named = [...dirs].reverse().find((d) => /^\[.+\]$/.test(d.trim()));
+  // Корень раздачи («[Moozzi2] Slime [BDRip]») — не студия, даже в скобках
+  const named = dirs.slice(1).reverse().find((d) => /^\[[^\][]+\]$/.test(d.trim()));
   const fallback = dirs.slice(1).reverse().find((d) => !/надпис|signs?|subs?|rus|fonts?/i.test(d));
   const g = named ?? fallback;
   return { group: g ? g.replace(/^\[|\]$/g, "").trim() : null, signs };
@@ -52,10 +52,9 @@ export async function syncStreamSubs(hash: string, signal?: AbortSignal): Promis
   const files = await torrentFiles(hash);
   const videos = files.filter((f) => /\.(mkv|mp4|m4v|avi|ts|m2ts|webm)$/i.test(f.path));
   const subs = files.filter((f) => SUB.test(f.path));
-  const voices = [...new Set(files.filter((f) => AUDIO.test(f.path)).flatMap((f) => subGroup(f.path).group ?? []))];
   if (!subs.length) {
     await mkdir(root(hash), { recursive: true });
-    const m: Manifest = { subs: [], fonts: [], voices, at: Date.now() };
+    const m: Manifest = { subs: [], fonts: [], at: Date.now() };
     await writeFile(path.join(root(hash), "manifest.json"), JSON.stringify(m));
     return m;
   }
@@ -82,7 +81,7 @@ export async function syncStreamSubs(hash: string, signal?: AbortSignal): Promis
     const file = `fonts/${f.id}${path.extname(f.path).toLowerCase()}`;
     await writeFile(path.join(root(hash), file), await get(f.id, f.path)).then(() => fonts.push(file)).catch(() => undefined);
   }
-  const m: Manifest = { subs: out, fonts, voices, at: Date.now() };
+  const m: Manifest = { subs: out, fonts, at: Date.now() };
   await writeFile(path.join(root(hash), "manifest.json"), JSON.stringify(m));
   return m;
 }

@@ -60,6 +60,8 @@ export const clock = (sec: number) => {
 /** Управление плеером снаружи (боковая панель страницы): озвучка и субтитры. */
 export type PlayerControls = {
   setAudio: (index: number) => void;
+  /** Озвучка из раздачи «Стрима» отдельным файлом: сервер скачает звук серии и включит его */
+  setVoice: (group: string) => void;
   setSub: (index: number | null) => void;
   /** Сдвиг субтитров, с: плюс — позже (тайминг другого релиза) */
   setSubDelay: (sec: number) => void;
@@ -132,7 +134,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   }, [countdown, next]);
 
   // ---------------------------------------------------------------- сессия и поток
-  const open = useCallback(async (opts: { audio?: number | null; start?: number | null } = {}) => {
+  const open = useCallback(async (opts: { audio?: number | null; voice?: string; start?: number | null } = {}) => {
     setLoading(true);
     setError(null);
     setStalled(false);
@@ -150,7 +152,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
       // Выбор субтитров запоминается по языку (русские / английские / выкл.)
       const lang = store.get(SUB_KEY);
       const byLang = lang === "off" ? null : lang ? r.subs.find((s) => s.lang === lang && !s.signs)?.index ?? r.subIndex : r.subIndex;
-      setSub((prev) => (opts.audio !== undefined ? prev : byLang));
+      setSub((prev) => (opts.audio !== undefined || opts.voice ? prev : byLang));
     } catch (e) {
       setError(e);
       setLoading(false);
@@ -314,6 +316,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   if (controls) {
     controls.current = {
       setAudio: (i) => { if (i !== info?.audioIndex) void open({ audio: i, start: video.current?.currentTime || info?.start || 0 }); },
+      setVoice: (group) => void open({ voice: group, start: video.current?.currentTime || info?.start || 0 }),
       setSub: chooseSub,
       setSubDelay: (sec) => { const d = Math.round(sec * 10) / 10; setSubDelay(d); store.set(delayKey, String(d)); },
       setSubSize: (pct) => { setSubSize(pct); store.set("player-sub-size", String(pct)); },

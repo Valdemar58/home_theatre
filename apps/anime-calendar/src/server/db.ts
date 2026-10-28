@@ -685,6 +685,14 @@ function migrate(db: Db) {
     created_at INTEGER NOT NULL,
     PRIMARY KEY (anilist_id, hash)
   )`);
+  // Плеер: какую озвучку пользователь выбрал у тайтла (студия) — её же готовим к следующим сериям «Стрима»
+  db.exec(`CREATE TABLE IF NOT EXISTS voice_pref (
+    user_id INTEGER NOT NULL,
+    anilist_id INTEGER NOT NULL,
+    voice TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, anilist_id)
+  )`);
   // Плеер календаря: где остановился в серии (продолжить с того же места)
   db.exec(`CREATE TABLE IF NOT EXISTS playback_pos (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

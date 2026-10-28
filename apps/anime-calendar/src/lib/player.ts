@@ -1,7 +1,7 @@
 // Плеер календаря: что отдаёт сервер и правила выбора дорожек (без сети — для сервера, клиента и тестов).
 // Поток — Jellyfin (HLS через прокси календаря, ключ Jellyfin в браузер не попадает).
 
-export type PlayTrack = { index: number; label: string; lang: string | null; codec: string; title: string | null };
+export type PlayTrack = { index: number; label: string; lang: string | null; codec: string; title: string | null; external?: boolean };
 export type PlaySub = PlayTrack & { url: string; ass: boolean; forced: boolean; signs: boolean; external: boolean; jimaku?: boolean; torrent?: boolean };
 
 /** Индекс дорожки японских субтитров с Jimaku (не из файла — номера Jellyfin до неё не доходят). */
@@ -27,8 +27,8 @@ export type PlayInfo = {
   /** Шрифты из вложений файла — для ASS */
   fonts: string[];
   chapters: PlayChapter[];
-  /** Озвучки раздачи «Стрима» отдельными файлами (студии) — онлайн недоступны, только «Скачать» */
-  extVoices: string[];
+  /** Озвучки раздачи «Стрима» отдельными файлами: have — уже рядом с серией (есть в audio), иначе — скачать звук (size, байт) */
+  extVoices: { group: string; size: number; have: boolean }[];
   /** Опенинг и эндинг серии (главы файла или звуковой отпечаток) — кнопка «Пропустить» и отметки на шкале */
   segments: import("./fingerprint").Segment[];
   /** Миниатюры шкалы (trickplay Jellyfin): плитки cols×rows кадров width×height через interval мс; url + /<n>.jpg */
