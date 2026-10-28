@@ -15,6 +15,7 @@ import { warmReference } from "./reco/card";
 import { updateThemeCanon } from "./reco/features";
 import { scheduleVoices } from "./tasks";
 import { prefetchWhileWatching } from "./prebuffer";
+import { sweepPlayback } from "./player";
 import { syncJellyfinPlays } from "./jellyfin-sync";
 import { translateTags } from "./tags-ru";
 import { checkNewEpisodes } from "./episode-notices";
@@ -64,6 +65,8 @@ export function startJobs() {
   if (env.jellyfinApiKey) setInterval(() => void safe("prefetch-next", prefetchWhileWatching), 30_000);
   // Уборка стриминга: .strm скачанных серий и раздачи TorrServer без ссылок
   if (env.jellyfinApiKey) setInterval(() => void safe("stream-cleanup", () => cleanupStreams()), 30 * MINUTE);
+  // Плеер: сессии, брошенные без «стоп» (закрыли вкладку), — остановить перекодирование
+  setInterval(() => void safe("play-sweep", async () => sweepPlayback()), MINUTE);
   setInterval(async () => {
     await safe("lists-media", () => refreshListMedia());
     await safe("shikimori-sync", syncAll);

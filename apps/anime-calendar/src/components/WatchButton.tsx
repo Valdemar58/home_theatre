@@ -2,7 +2,8 @@
 import { ArrowDownTrayIcon, BoltIcon, MagnifyingGlassIcon, PlayIcon } from "@heroicons/react/24/outline";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { api, useEpisodeStatus, useMe } from "@/lib/client";
+import Link from "next/link";
+import { api, useEpisodeStatus } from "@/lib/client";
 import { waitText, watchTarget, type EpisodeStatus } from "@/lib/playback";
 import { Badge, Button, cx, Spinner } from "./ui";
 
@@ -10,11 +11,9 @@ import { Badge, Button, cx, Spinner } from "./ui";
 // Есть в библиотеке или в «Стриме» — смотреть; «Стрим» не подготовлен — смотреть сразу или подготовить буфер;
 // качается — прогресс; вышла, но нет — выбрать раздачу с озвучкой.
 
-/** Где смотреть серию (до плеера в календаре — страница серии в Jellyfin). */
-export function useWatchHref() {
-  const { data: me } = useMe();
-  const jf = me?.services.find((s) => s.id === "jellyfin")?.url;
-  return (s: EpisodeStatus) => (s.itemId && jf ? `${jf}/web/#/details?id=${s.itemId}` : null);
+/** Где смотреть серию — плеер календаря. */
+export function useWatchHref(anilistId: number) {
+  return (s: EpisodeStatus) => (s.itemId ? `/anime/${anilistId}/watch/${s.ep}` : null);
 }
 
 /** Подготовить серию «Стрима» (буфер TorrServer, уведомление — когда можно смотреть без остановок). */
@@ -36,7 +35,7 @@ export function usePrepare(anilistId: number) {
 
 export function WatchButton({ anilistId, watched, onFind }: { anilistId: number; watched: number; onFind: () => void }) {
   const { data } = useEpisodeStatus(anilistId);
-  const href = useWatchHref();
+  const href = useWatchHref(anilistId);
   const { prepare, busy } = usePrepare(anilistId);
   const t = data ? watchTarget(data.episodes, watched) : null;
   if (!t) return null;
@@ -45,18 +44,18 @@ export function WatchButton({ anilistId, watched, onFind }: { anilistId: number;
 
   if (t.state === "library" || (t.state === "stream" && t.ready)) {
     return url ? (
-      <a href={url} target="_blank" rel="noreferrer">
+      <Link href={url}>
         <Button variant="primary"><PlayIcon className="h-4 w-4" /> Смотреть {n}</Button>
-      </a>
+      </Link>
     ) : null;
   }
   if (t.state === "stream") {
     return (
       <span className="inline-flex items-center gap-2">
         {url && (
-          <a href={url} target="_blank" rel="noreferrer" title="Раздача качается под просмотр — в начале возможны остановки">
+          <Link href={url} title="Раздача качается под просмотр — в начале возможны остановки">
             <Button variant="primary"><PlayIcon className="h-4 w-4" /> Смотреть {n}</Button>
-          </a>
+          </Link>
         )}
         {t.preparing ? (
           <span className="text-sm text-gray-300">
@@ -86,13 +85,13 @@ export function WatchButton({ anilistId, watched, onFind }: { anilistId: number;
 
 /** Значок готовности серии в списке серий. */
 export function EpisodeReadiness({ s, anilistId }: { s: EpisodeStatus | undefined; anilistId: number }) {
-  const href = useWatchHref();
+  const href = useWatchHref(anilistId);
   const { prepare, busy } = usePrepare(anilistId);
   if (!s || s.state === "upcoming" || s.state === "aired") return null;
   const url = href(s);
   const play = (label: string, tone: "positive" | "accent", title: string) => {
     const badge = <Badge tone={tone} className={cx(url && "transition hover:brightness-125")}><PlayIcon className="h-3 w-3" />{label}</Badge>;
-    return url ? <a href={url} target="_blank" rel="noreferrer" title={title}>{badge}</a> : <span title={title}>{badge}</span>;
+    return url ? <Link href={url} title={title}>{badge}</Link> : <span title={title}>{badge}</span>;
   };
   if (s.state === "library") return play("Смотреть", "positive", "Серия в библиотеке");
   if (s.state === "downloading") {

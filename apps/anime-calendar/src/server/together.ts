@@ -341,7 +341,7 @@ export function endSession(userId: number, anilistId: number) {
  *  • идёт «Смотрим вместе» — те же серии засчитываются участникам;
  *  • иначе, если тайтл в общем списке и кто-то из участников отстаёт, — подсказка «Отметить и для …?».
  */
-export async function onProgress(user: { id: number; name: string }, anilistId: number, before: number, after: number, source: "manual" | "jellyfin") {
+export async function onProgress(user: { id: number; name: string }, anilistId: number, before: number, after: number, source: "manual" | "jellyfin" | "player") {
   if (after <= before) return;
   const media = getMedia(anilistId);
   if (!media) return;
@@ -357,7 +357,7 @@ export async function onProgress(user: { id: number; name: string }, anilistId: 
     .filter(({ s: st, e }) => !e?.private && togetherChange(st, after, media.episodes));
   if (!behind.length) return;
   const names = behind.map((b) => userName(b.id)).join(", ");
-  const where = source === "jellyfin" ? `Посмотрели до серии ${after} в Jellyfin` : `Вы отметили до серии ${after}`;
+  const where = source === "jellyfin" ? `Посмотрели до серии ${after} в Jellyfin` : source === "player" ? `Посмотрели до серии ${after}` : `Вы отметили до серии ${after}`;
   notify(user.id, {
     kind: "together-suggest", anilistId, title: `${where}. Отметить и для ${names}?`,
     href: `/anime/${anilistId}?together=${after}`,

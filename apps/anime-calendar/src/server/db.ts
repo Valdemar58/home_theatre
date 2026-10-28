@@ -656,6 +656,16 @@ function migrate(db: Db) {
   if (!columns("img_cache").has("pinned")) db.exec("ALTER TABLE img_cache ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
   // Последняя серия, о которой сообщили «можно смотреть» (в библиотеке или «Стриме»); NULL — ещё не смотрели
   if (!columns("episode_marks").has("ready")) db.exec("ALTER TABLE episode_marks ADD COLUMN ready INTEGER");
+  // Плеер календаря: где остановился в серии (продолжить с того же места)
+  db.exec(`CREATE TABLE IF NOT EXISTS playback_pos (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    anilist_id INTEGER NOT NULL,
+    ep INTEGER NOT NULL,
+    pos REAL NOT NULL,
+    dur REAL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, anilist_id, ep)
+  )`);
   // Точка места на карте: по подписи (label), внутри родителя (inside) или вручную (manual)
   db.exec(`CREATE TABLE IF NOT EXISTS plot_place_pos (
     entity_id INTEGER NOT NULL,

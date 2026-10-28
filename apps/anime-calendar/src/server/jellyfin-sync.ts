@@ -41,6 +41,27 @@ export async function syncJellyfinPlays(): Promise<void> {
   }
 }
 
+/**
+ * Серия досмотрена (Jellyfin или плеер календаря) — отметить в списке по общим правилам. Уже отмечено дальше —
+ * не откатывать (кроме пересмотра просмотренного). true — отметка изменилась.
+ */
+export async function markWatched(u: { id: number; name: string }, anilistId: number, episode: number, source: "jellyfin" | "player"): Promise<boolean> {
+  let media = getMedia(anilistId);
+  if (!media) {
+    saveMedia(await withShikimori(await mediaByIds([anilistId])));
+    media = getMedia(anilistId);
+  }
+  if (!media) return false;
+  const entry = getRows(u.id).find((r) => r.anilist_id === anilistId && !r.deleted);
+  const rewatch = entry?.status === "completed" && media.episodes && episode < media.episodes;
+  if (entry && entry.episodes >= episode && !rewatch && entry.status !== "planned") return false;
+  upsertEntry(u.id, media, { episodes: episode });
+  if (!rewatch) logWatch(u.id, media, entry && entry.status !== "planned" ? entry.episodes : 0, episode);
+  // Смотрели вместе на одном экране — засчитать друзьям (сессия) или подсказать (общий список)
+  if (!rewatch) await onProgress(u, anilistId, entry?.episodes ?? 0, episode, source).catch((e) => console.warn(`[watch] вместе: ${e}`));
+  return true;
+}
+
 async function syncUser(u: User): Promise<void> {
   // Первый запуск: точка отсчёта — сутки назад
   if (u.jf_played_at === null) {
@@ -70,21 +91,7 @@ async function syncUser(u: User): Promise<void> {
     if (!tvdb || e.ParentIndexNumber == null || !e.IndexNumber) continue;
     const hit = await anilistEpisodeFromTvdb(tvdb, e.ParentIndexNumber, e.IndexNumber).catch(() => null);
     if (!hit || hit.episode < 1) continue;
-    let media = getMedia(hit.anilistId);
-    if (!media) {
-      saveMedia(await withShikimori(await mediaByIds([hit.anilistId])));
-      media = getMedia(hit.anilistId);
-    }
-    if (!media) continue;
-    const entry = getRows(u.id).find((r) => r.anilist_id === hit.anilistId && !r.deleted);
-    // Уже отмечено дальше — не откатываем (кроме пересмотра просмотренного)
-    const rewatch = entry?.status === "completed" && media.episodes && hit.episode < media.episodes;
-    if (entry && entry.episodes >= hit.episode && !rewatch && entry.status !== "planned") continue;
-    upsertEntry(u.id, media, { episodes: hit.episode });
-    if (!rewatch) logWatch(u.id, media, entry && entry.status !== "planned" ? entry.episodes : 0, hit.episode);
-    marked++;
-    // Смотрели вместе на одном экране — засчитать друзьям (сессия) или подсказать (общий список)
-    if (!rewatch) await onProgress(u, hit.anilistId, entry?.episodes ?? 0, hit.episode, "jellyfin").catch((e) => console.warn(`[jellyfin-sync] вместе: ${e}`));
+    if (await markWatched(u, hit.anilistId, hit.episode, "jellyfin")) marked++;
     db.prepare("UPDATE users SET jf_played_at = ? WHERE id = ?").run(at, u.id);
   }
   db.prepare("UPDATE users SET jf_played_at = MAX(jf_played_at, ?) WHERE id = ?").run(fresh.at(-1)!.at, u.id);
