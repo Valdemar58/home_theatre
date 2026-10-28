@@ -47,7 +47,7 @@ export function Description({ media }: { media: AnimeDetails }) {
 }
 
 /** «Что было раньше»: пересказ предыдущих частей, составляется по кнопке и хранится. */
-function Recap({ id, plot }: { id: number; plot: PlotInfo }) {
+export function Recap({ id, plot }: { id: number; plot: PlotInfo }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const make = useMutation({

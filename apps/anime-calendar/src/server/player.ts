@@ -10,7 +10,8 @@ import { markWatched } from "./jellyfin-sync";
 import { episodeItems } from "./playback";
 import { guarded } from "./sources";
 import { prebufferProgress } from "./prebuffer";
-import { jellyfin, torrentCached, torrentStats } from "./stream";
+import { dropTorrentCache, jellyfin, torrentCached, torrentStats } from "./stream";
+import { episodeStatus } from "./availability";
 
 // Плеер календаря: сессия просмотра серии. Jellyfin решает по профилю браузера, что отдать как есть, а что
 // перекодировать (HEVC 10 бит → копия, если браузер умеет; FLAC → AAC), и отдаёт HLS. Браузер ходит только
@@ -229,6 +230,21 @@ export async function stopPlayback(sid: string, userId: number) {
     await jellyfin(`/Videos/ActiveEncodings?deviceId=${encodeURIComponent(s.deviceId)}&playSessionId=${s.playSessionId}`, { method: "DELETE" })
       .catch(() => undefined);
   }
+  if (s.marked && s.stream) await cleanAfterWatched(s).catch((e) => console.warn(`[player] очистка кэша: ${String(e)}`));
+}
+
+/**
+ * Досмотрели серию «Стрима» и закрыли плеер: если у раздачи не осталось подготовленных непросмотренных серий —
+ * сбросить её кэш (TorrServer не умеет удалять из кэша одну серию). Кто-то ещё смотрит эту раздачу — не трогаем.
+ */
+async function cleanAfterWatched(s: PlaySession) {
+  const hash = s.stream?.hash;
+  if (!hash || [...sessions.values()].some((x) => x.stream?.hash === hash)) return;
+  const watched = db.prepare<[number, number], { episodes: number }>("SELECT episodes FROM list_entries WHERE user_id = ? AND anilist_id = ? AND deleted = 0")
+    .get(s.userId, s.anilistId)?.episodes ?? s.ep;
+  const { episodes } = await episodeStatus(s.anilistId);
+  const waiting = episodes.some((e) => e.hash === hash && e.ep > Math.max(watched, s.ep) && (e.cached ?? 0) > 0.05);
+  if (!waiting) await dropTorrentCache(hash);
 }
 
 /** Брошенные сессии (вкладку закрыли без «стоп») — убрать (из jobs.ts). */

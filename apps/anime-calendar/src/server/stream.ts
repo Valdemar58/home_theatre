@@ -296,9 +296,48 @@ export async function torrentStats(hash: string, index: number) {
   };
 }
 
+/** Кэш раздачи: куски, размер куска, файлы, занято/ёмкость (один запрос на раздачу). */
+async function cacheOf(hash: string) {
+  return ts<{ PiecesLength?: number; Pieces?: Record<string, { Id: number; Completed?: boolean }> | null; Torrent?: TsTorrent; Capacity?: number; Filled?: number }>(
+    "/cache", { action: "get", hash });
+}
+
+/** Доля каждого файла раздачи в кэше TorrServer: индекс файла → 0–1. */
+export async function torrentFilesCached(hash: string): Promise<{ files: Map<number, number>; filled: number; capacity: number }> {
+  const c = await cacheOf(hash);
+  const files = [...(c.Torrent?.file_stats ?? [])].sort((a, b) => a.id - b.id);
+  const done = Object.values(c.Pieces ?? {}).filter((p) => p.Completed).map((p) => p.Id);
+  const out = new Map<number, number>();
+  let offset = 0;
+  for (const f of files) {
+    if (c.PiecesLength && f.length) out.set(f.id, piecesToRanges(done, c.PiecesLength, offset, f.length).reduce((s, [a, b]) => s + b - a, 0));
+    offset += f.length;
+  }
+  return { files: out, filled: c.Filled ?? 0, capacity: c.Capacity ?? 0 };
+}
+
+/**
+ * Раздачи TorrServer и их кэш (для предупреждения «кэш заполнен»). Кэш спрашиваем только у активных: запрос будит
+ * раздачу, а у спящей кэш в памяти и так пуст.
+ */
+export async function torrentCaches(): Promise<{ hash: string; title: string; filled: number; capacity: number; active: boolean }[]> {
+  const list = await ts<(TsTorrent & { stat?: number })[]>("/torrents", { action: "list" });
+  return Promise.all(list.map(async (t) => {
+    const active = t.stat !== undefined && t.stat >= 1 && t.stat <= 3;
+    const c = active ? await cacheOf(t.hash).catch(() => null) : null;
+    return { hash: t.hash, title: t.title, filled: c?.Filled ?? 0, capacity: c?.Capacity ?? 0, active };
+  }));
+}
+
+/** Сбросить кэш раздачи (в памяти — освобождается целиком; удалить из кэша одну серию TorrServer не умеет). */
+export async function dropTorrentCache(hash: string): Promise<void> {
+  if (!/^[0-9a-f]{40}$/.test(hash)) throw new Error("неверный хэш");
+  await ts("/torrents", { action: "drop", hash });
+}
+
 /** Какие части файла раздачи уже скачаны в кэш TorrServer — доли файла (для полоски в плеере). */
 export async function torrentCached(hash: string, index: number): Promise<[number, number][]> {
-  const c = await ts<{ PiecesLength?: number; Pieces?: Record<string, { Id: number; Completed?: boolean }> | null; Torrent?: TsTorrent }>("/cache", { action: "get", hash });
+  const c = await cacheOf(hash);
   const files = [...(c.Torrent?.file_stats ?? [])].sort((a, b) => a.id - b.id);
   const file = files.find((f) => f.id === index);
   if (!file || !c.PiecesLength) return [];

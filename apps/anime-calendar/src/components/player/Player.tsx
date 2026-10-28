@@ -8,6 +8,7 @@ import type JASSUB from "jassub";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/client";
+import { imgSrc } from "@/lib/img";
 import { COMPAT_KEY, type PlayCaps, type PlayInfo, type PlayStatus } from "@/lib/player";
 import { cx, ErrorBox, Spinner } from "../ui";
 import { StreamStatus, type Stage } from "./StreamStatus";
@@ -54,10 +55,19 @@ export const clock = (sec: number) => {
   return `${h ? `${h}:` : ""}${mm}:${String(s % 60).padStart(2, "0")}`;
 };
 
-export function Player({ anilistId, ep, title, onEnded, next, onReport, children }: {
+/** Управление плеером снаружи (боковая панель страницы): озвучка и субтитры. */
+export type PlayerControls = { setAudio: (index: number) => void; setSub: (index: number | null) => void };
+
+export function Player({ anilistId, ep, title, onEnded, next, onReport, children, autoPlay, preview, onState, controls }: {
   anilistId: number;
   ep: number;
   title: string;
+  /** Сразу смотреть (автопереход); иначе — превью серии и кнопка ▶ (сессия Jellyfin готовится заранее) */
+  autoPlay?: boolean;
+  preview?: { still: string | null; heading: string; text: string | null };
+  /** Сессия и выбранные субтитры — для боковой панели */
+  onState?: (s: { info: PlayInfo | null; sub: number | null }) => void;
+  controls?: React.MutableRefObject<PlayerControls | null>;
   /** Досмотрели до конца — следующая серия (если есть) */
   onEnded?: () => void;
   next?: { label: string; go: () => void } | null;
@@ -91,6 +101,8 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   const hevcSent = useRef(false);
   const recoveries = useRef(0);
   const [notice, setNotice] = useState<string | null>(null);
+  // До нажатия ▶ — превью: сессия уже открыта (Jellyfin прочитал файл), поток не запрошен
+  const [started, setStarted] = useState(Boolean(autoPlay));
 
   // ---------------------------------------------------------------- сессия и поток
   const open = useCallback(async (opts: { audio?: number | null; start?: number | null } = {}) => {
@@ -135,7 +147,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   // Привязать поток к <video>
   useEffect(() => {
     const v = video.current;
-    if (!v || !info) return;
+    if (!v || !info || !started) return;
     let alive = true;
     const at = info.start;
     const attach = async () => {
@@ -193,7 +205,10 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
     return () => { alive = false; };
     // volume — только начальное значение
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [info]);
+  }, [info, started]);
+
+  // Боковая панель страницы: что открыто и чем управлять
+  useEffect(() => { onState?.({ info, sub }); }, [info, sub, onState]);
 
   useEffect(() => () => { hls.current?.destroy(); ass.current?.destroy(); }, []);
 
@@ -245,6 +260,18 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   }, [sub, info]);
   const vttSub = info?.subs.find((x) => x.index === sub && !x.ass);
 
+  const chooseSub = (index: number | null) => {
+    const s = info?.subs.find((x) => x.index === index);
+    setSub(s ? s.index : null);
+    if (!s || !s.signs) store.set(SUB_KEY, s?.lang ?? "off");
+  };
+  if (controls) {
+    controls.current = {
+      setAudio: (i) => { if (i !== info?.audioIndex) void open({ audio: i, start: video.current?.currentTime || info?.start || 0 }); },
+      setSub: chooseSub,
+    };
+  }
+
   // ---------------------------------------------------------------- позиция на сервер
   const send = useCallback(() => {
     const v = video.current;
@@ -260,10 +287,11 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
 
   // ---------------------------------------------------------------- управление
   const toggle = useCallback(() => {
+    if (!started) { setStarted(true); return; }
     const v = video.current;
     if (!v) return;
     if (v.paused) void v.play(); else v.pause();
-  }, []);
+  }, [started]);
   const seek = useCallback((to: number) => {
     const v = video.current;
     if (!v) return;
@@ -338,9 +366,10 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
         {vttSub && <track key={vttSub.url} kind="subtitles" src={vttSub.url} srcLang={vttSub.lang ?? "und"} label={vttSub.label} default />}
       </video>
 
-      {loading && !error && <div className="pointer-events-none absolute inset-0 grid place-items-center"><Spinner className="h-10 w-10 text-white/80" /></div>}
+      {!started && <Preview preview={preview} start={info?.start ?? 0} ready={Boolean(info)} onPlay={() => setStarted(true)} />}
+      {started && loading && !error && <div className="pointer-events-none absolute inset-0 grid place-items-center"><Spinner className="h-10 w-10 text-white/80" /></div>}
       {/* Состояние потока: пока грузится (или по кнопке «i») — что делает Jellyfin и раздача */}
-      {!error && (loading || showStatus || stalled) && (
+      {!error && started && (loading || showStatus || stalled) && (
         <StreamStatus status={status} stage={stage} transcode={info?.transcode ?? null} stalled={stalled} compat={compat}
           onRestart={() => restart(false)} onCompat={() => restart(true)} onClose={showStatus ? () => setShowStatus(false) : undefined} />
       )}
@@ -387,12 +416,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
           {info && info.subs.length > 0 && (
             <Menu open={menu === "sub"} onOpen={() => setMenu(menu === "sub" ? null : "sub")} label="Субтитры" icon={<ChatBubbleBottomCenterTextIcon className="h-5 w-5" />}
               items={[{ key: -1, label: "Выключены", active: sub === null }, ...info.subs.map((s) => ({ key: s.index, label: `${s.label}${s.signs ? " (надписи)" : ""}`, active: s.index === sub }))]}
-              onPick={(i) => {
-                setMenu(null);
-                const s = info.subs.find((x) => x.index === Number(i));
-                setSub(s ? s.index : null);
-                if (!s || !s.signs) store.set(SUB_KEY, s?.lang ?? "off");
-              }} />
+              onPick={(i) => { setMenu(null); chooseSub(i === -1 ? null : Number(i)); }} />
           )}
           <Menu open={menu === "quality"} onOpen={() => setMenu(menu === "quality" ? null : "quality")} label="Качество" icon={<Cog6ToothIcon className="h-5 w-5" />}
             items={[
@@ -414,6 +438,30 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
         {info && info.transcode.length > 0 && menu === "quality" && (
           <p className="mt-1 text-right text-[11px] text-white/50">Jellyfin перекодирует: {info.transcode.join(", ")}</p>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** Превью серии до нажатия ▶: кадр, название, описание, «продолжить с …». */
+function Preview({ preview, start, ready, onPlay }: {
+  preview?: { still: string | null; heading: string; text: string | null }; start: number; ready: boolean; onPlay: () => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-20 cursor-pointer" onClick={onPlay}>
+      {preview?.still && <img src={imgSrc(preview.still)} alt="" className="absolute inset-0 h-full w-full object-cover opacity-70" />}
+      <div className="absolute inset-0 bg-linear-to-t from-black via-black/50 to-black/20" />
+      <div className="absolute inset-0 grid place-items-center">
+        <button aria-label="Смотреть" className="grid h-20 w-20 place-items-center rounded-full bg-accent-500/90 text-white shadow-2xl ring-4 ring-white/20 transition hover:scale-105 hover:bg-accent-400">
+          <PlayIcon className="ml-1 h-10 w-10" />
+        </button>
+      </div>
+      <div className="absolute inset-x-0 bottom-0 space-y-1.5 p-5 sm:p-8">
+        {preview && <p className="text-lg font-semibold text-white sm:text-2xl">{preview.heading}</p>}
+        {preview?.text && <p className="line-clamp-3 max-w-3xl text-sm text-gray-200 sm:text-base">{preview.text}</p>}
+        <p className="text-sm text-gray-300">
+          {start > 5 ? `Продолжить с ${clock(start)}` : ready ? "С начала" : "Готовлю поток…"}
+        </p>
       </div>
     </div>
   );

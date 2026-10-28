@@ -2,7 +2,7 @@
 import { ChatBubbleLeftRightIcon } from "@heroicons/react/24/outline";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, useMe } from "@/lib/client";
 import { buildTree, MAX_DEPTH, type CommentNode } from "@/lib/comments-tree";
 import { ago } from "@/lib/time";
@@ -152,10 +152,24 @@ function Comment({ node, anilistId, isAdmin, highlight, onFocus, refresh }: {
   );
 }
 
-export function Discussion({ anilistId, highlight }: { anilistId: number; highlight?: number }) {
+/**
+ * Обсуждение тайтла; episode — только ветки этой серии (по первому комментарию ветки, ответы — вместе с ней),
+ * новый комментарий сразу помечается серией. Данные общие с обсуждением на странице тайтла.
+ */
+export function Discussion({ anilistId, highlight, episode }: { anilistId: number; highlight?: number; episode?: number }) {
   const qc = useQueryClient();
   const { data: me } = useMe();
-  const { data } = useQuery({ queryKey: ["comments", anilistId], queryFn: () => api<CommentItem[]>(`/api/anime/${anilistId}/comments`), staleTime: 30_000 });
+  const { data: all } = useQuery({ queryKey: ["comments", anilistId], queryFn: () => api<CommentItem[]>(`/api/anime/${anilistId}/comments`), staleTime: 30_000 });
+  const data = useMemo(() => {
+    if (!all || !episode) return all;
+    const byId = new Map(all.map((c) => [c.id, c]));
+    const root = (c: CommentItem) => {
+      let r = c;
+      while (r.parentId !== null && byId.has(r.parentId)) r = byId.get(r.parentId)!;
+      return r;
+    };
+    return all.filter((c) => root(c).episode === episode);
+  }, [all, episode]);
   const [focus, setFocusState] = useState<number | null>(null);
   const top = useRef<HTMLElement>(null);
   // Ветка открывается вместо всего обсуждения — вернуть взгляд к его началу
@@ -180,11 +194,11 @@ export function Discussion({ anilistId, highlight }: { anilistId: number; highli
   return (
     <section ref={top} className="scroll-mt-20">
       <h2 className="mb-3 flex items-center gap-2 text-xl font-bold">
-        <ChatBubbleLeftRightIcon className="h-6 w-6 text-gray-400" />Обсуждение {count > 0 && <span className="text-base font-normal text-gray-500">{count}</span>}
+        <ChatBubbleLeftRightIcon className="h-6 w-6 text-gray-400" />{episode ? `Обсуждение ${episode} серии` : "Обсуждение"} {count > 0 && <span className="text-base font-normal text-gray-500">{count}</span>}
       </h2>
       <div className="space-y-4 rounded-xl bg-gray-800/40 p-4 ring-1 ring-gray-700">
         {focus === null ? (
-          <Composer withEpisode onSubmit={(p) => api(`/api/anime/${anilistId}/comments`, { method: "POST", json: p }).then(refresh)} />
+          <Composer withEpisode={!episode} onSubmit={(p) => api(`/api/anime/${anilistId}/comments`, { method: "POST", json: { ...p, episode: episode ?? p.episode } }).then(refresh)} />
         ) : (
           <button onClick={() => setFocus(null)} className="text-sm text-indigo-300 hover:text-indigo-200">← Ко всему обсуждению</button>
         )}

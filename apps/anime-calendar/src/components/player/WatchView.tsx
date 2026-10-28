@@ -1,63 +1,244 @@
 "use client";
+import { CheckIcon, ExclamationTriangleIcon, MagnifyingGlassIcon } from "@heroicons/react/24/outline";
 import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useCallback } from "react";
-import { useAnime, useEpisodeStatus, usePlot } from "@/lib/client";
-import { playable, type EpisodeStatus } from "@/lib/playback";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, useAnime, useEpisodeStatus, useList, useListMutation, usePlot } from "@/lib/client";
+import { FORMAT_LABELS, label, STATUS_LABELS } from "@/lib/labels";
+import { CACHE_WARN, playable, waitText, type EpisodeStatus, type TorrentCache } from "@/lib/playback";
+import type { PlayInfo } from "@/lib/player";
 import { displayTitle } from "@/lib/schedule";
-import { Breadcrumbs } from "../Breadcrumbs";
-import { cx } from "../ui";
-import { Player } from "./Player";
+import { useConfirm } from "../Dialogs";
+import { Discussion } from "../Discussion";
+import { EpisodeAlerts } from "../EpisodeAlerts";
+import { FriendOpinions } from "../FriendOpinions";
+import { Img } from "../Img";
+import { ListControl } from "../ListControl";
+import { Recap } from "../Plot";
+import { PlotHub } from "../PlotHub";
+import { Scores } from "../Scores";
+import { Badge, Button, cx } from "../ui";
+import { usePrepare } from "../WatchButton";
+import { clock, Player, type PlayerControls } from "./Player";
+import { WatchSidebar } from "./WatchSidebar";
 
-// Страница просмотра серии: плеер, соседние серии, полоска серий с готовностью.
+// Страница просмотра серии (по мотивам AniLib): шапка тайтла, плеер и боковая панель «Озвучка / Субтитры», лента
+// серий (кадр, готовность, кэш TorrServer, «Подготовить», прогресс), под плеером — серия, сюжет, друзья, обсуждение.
 
-const CHIP: Record<EpisodeStatus["state"], string> = {
-  library: "tone-positive soft",
-  stream: "tone-accent soft",
-  downloading: "tone-info soft",
-  aired: "bg-gray-800/60 text-gray-500 ring-gray-700",
-  upcoming: "bg-gray-900/60 text-gray-600 ring-gray-800",
-};
+const gb = (b: number) => `${(b / 1e9).toFixed(1)} ГБ`;
 
 export function WatchView({ id, ep }: { id: number; ep: number }) {
   const router = useRouter();
+  const params = useSearchParams();
   const qc = useQueryClient();
   const { data: a } = useAnime(id);
   const { data: plot } = usePlot(id);
   const { data: st } = useEpisodeStatus(id);
+  const { byId } = useList();
+  const { upsert } = useListMutation();
+  const entry = byId.get(id);
+  const watched = entry?.status === "completed" ? (a?.episodes ?? entry.episodes) : entry?.episodes ?? 0;
   const eps = st?.episodes ?? [];
   const nextEp = eps.find((s) => s.ep > ep && playable(s));
-  const epTitle = plot?.episodes.find((e) => e.number === ep)?.title;
+  const info = plot?.episodes.find((e) => e.number === ep);
   const name = a ? displayTitle(a.title) : "";
-  const go = useCallback((n: number) => router.push(`/anime/${id}/watch/${n}`), [router, id]);
-  // Серия досмотрена (отмечена на сервере) — обновить список и кнопку «Смотреть»
+  // Автопереход (конец серии, «следующая») — сразу смотреть; выбор серии в ленте — превью
+  const go = useCallback((n: number, play = false) => router.push(`/anime/${id}/watch/${n}${play ? "?play=1" : ""}`), [router, id]);
   const onReport = useCallback((r: { marked: boolean }) => {
     if (r.marked) void qc.invalidateQueries({ queryKey: ["list"] });
   }, [qc]);
+  const controls = useRef<PlayerControls | null>(null);
+  const [player, setPlayer] = useState<{ info: PlayInfo | null; sub: number | null }>({ info: null, sub: null });
+  const spoiler = ep > watched + 1;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-4">
-      <Breadcrumbs items={[{ label: name || "Тайтл", href: `/anime/${id}` }, { label: `Серия ${ep}` }]} />
-      <Player key={`${id}:${ep}`} anilistId={id} ep={ep} title={`${name} · ${ep} серия${epTitle ? ` · ${epTitle}` : ""}`}
-        next={nextEp ? { label: `${nextEp.ep} серия`, go: () => go(nextEp.ep) } : null}
-        onEnded={nextEp ? () => go(nextEp.ep) : undefined} onReport={onReport} />
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h1 className="text-xl font-bold">{ep} серия{epTitle ? <span className="font-normal text-gray-300"> · {epTitle}</span> : null}</h1>
-        <Link href={`/anime/${id}`} className="text-sm text-accent-300 hover:text-accent-200">{name}</Link>
-      </div>
-      {eps.length > 1 && (
-        <div className="flex flex-wrap gap-1.5">
-          {eps.map((s) => {
-            const can = playable(s);
-            const cls = cx("grid h-8 min-w-8 place-items-center rounded-md px-1.5 text-sm tabular-nums ring-1 ring-inset", CHIP[s.state], s.ep === ep && "outline-2 outline-offset-1 outline-accent-400");
-            const tip = { library: "В библиотеке", stream: s.ready ? "«Стрим», в кэше" : "«Стрим»", downloading: "Качается", aired: "Нет раздачи", upcoming: "Ещё не вышла" }[s.state];
-            return can
-              ? <Link key={s.ep} href={`/anime/${id}/watch/${s.ep}`} title={tip} className={cx(cls, "transition hover:brightness-125")}>{s.ep}</Link>
-              : <span key={s.ep} title={tip} className={cls}>{s.ep}</span>;
-          })}
+    <div className="space-y-4">
+      {/* Шапка тайтла */}
+      {a && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl bg-gray-800/40 p-3 ring-1 ring-gray-700">
+          <Link href={`/anime/${id}`} className="shrink-0">
+            {a.coverImage.large && <Img src={a.coverImage.large} size="thumb" className="h-16 w-12 rounded-md object-cover" />}
+          </Link>
+          <div className="min-w-0 flex-1">
+            <Link href={`/anime/${id}`} className="block truncate text-lg font-bold hover:text-accent-200">{name}</Link>
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-400">
+              <span>{label(FORMAT_LABELS, a.format)}</span>
+              <Badge tone={a.status === "RELEASING" ? "positive" : "neutral"}>{label(STATUS_LABELS, a.status)}</Badge>
+              {a.episodes && <span>{a.episodes} серий</span>}
+              <Scores media={a} size="sm" />
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <ListControl media={a} />
+            <EpisodeAlerts id={a.id} airing={a.status === "RELEASING" || a.status === "NOT_YET_RELEASED"} />
+          </div>
         </div>
       )}
+
+      {/* Плеер и боковая панель */}
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
+        <Player key={`${id}:${ep}`} anilistId={id} ep={ep} autoPlay={params.get("play") === "1"}
+          title={`${name} · ${ep} серия${info?.title ? ` · ${info.title}` : ""}`}
+          preview={{ still: info?.still ?? null, heading: `${ep} серия${info?.title ? ` · ${info.title}` : ""}`, text: spoiler ? null : info?.overview ?? null }}
+          next={nextEp ? { label: `${nextEp.ep} серия`, go: () => go(nextEp.ep, true) } : null}
+          onEnded={nextEp ? () => go(nextEp.ep, true) : undefined} onReport={onReport}
+          onState={setPlayer} controls={controls} />
+        {a && <WatchSidebar media={a} info={player.info} sub={player.sub} controls={controls} />}
+      </div>
+
+      {st && <CacheWarnings caches={st.caches} anilistId={id} />}
+      {eps.length > 0 && (
+        <EpisodeStrip id={id} current={ep} statuses={eps} watched={watched} positions={st?.positions ?? []}
+          titles={new Map(plot?.episodes.map((e) => [e.number, e]) ?? [])} onPick={(n) => go(n)} />
+      )}
+
+      {/* Под плеером: серия, сюжет, друзья, обсуждение */}
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="min-w-0 space-y-6">
+          <section className="space-y-2">
+            <div className="flex flex-wrap items-center gap-3">
+              <h1 className="text-xl font-bold">{ep} серия{info?.title ? <span className="font-normal text-gray-300"> · {info.title}</span> : null}</h1>
+              {a && (ep <= watched ? (
+                <Badge tone="positive"><CheckIcon className="h-3.5 w-3.5" /> Просмотрено</Badge>
+              ) : (
+                <Button size="sm" onClick={() => upsert.mutate({ media: a, patch: { episodes: ep } })} title="Отметить эту серию (и все до неё) просмотренными">
+                  <CheckIcon className="h-4 w-4" /> В просмотренное
+                </Button>
+              ))}
+            </div>
+            {info?.overview && (spoiler
+              ? <p className="text-sm text-gray-500">Описание скрыто: вы ещё не досмотрели до этой серии.</p>
+              : <p className="text-sm leading-relaxed text-gray-300">{info.overview}</p>)}
+          </section>
+          {a && plot?.hasPrequels && plot && <Recap id={id} plot={plot} />}
+          {a && <PlotHub media={a} />}
+          <Discussion anilistId={id} episode={ep} />
+        </div>
+        <aside className="space-y-4">
+          <FriendOpinions id={id} />
+        </aside>
+      </div>
     </div>
   );
+}
+
+/** Кэш раздачи почти полон: подготовка следующих серий вытеснит скачанное. Варианты — сбросить или убрать раздачу. */
+function CacheWarnings({ caches, anilistId }: { caches: TorrentCache[]; anilistId: number }) {
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+  const full = caches.filter((c) => c.capacity > 0 && c.filled / c.capacity >= CACHE_WARN);
+  if (!full.length) return null;
+  const act = async (c: TorrentCache, action: "drop" | "remove") => {
+    const ok = await confirm(action === "drop"
+      ? { title: "Сбросить кэш раздачи?", text: "Всё скачанное из раздачи освободится, подготовленные серии придётся готовить заново.", confirm: "Сбросить" }
+      : { title: "Убрать раздачу?", text: "Раздача и серии «Стрима» из неё пропадут; посмотреть снова — через «Озвучки».", confirm: "Убрать", danger: true });
+    if (!ok) return;
+    await api("/api/downloads/cache", { method: "POST", json: { hash: c.hash, action } });
+    await qc.invalidateQueries({ queryKey: ["episode-status", anilistId] });
+  };
+  return (
+    <div className="space-y-2">
+      {full.map((c) => (
+        <div key={c.hash} className="tone-warning soft flex flex-wrap items-center gap-2 rounded-xl px-3 py-2 text-sm ring-1 ring-inset">
+          <ExclamationTriangleIcon className="h-4 w-4 shrink-0" />
+          <p className="min-w-0 flex-1">
+            Кэш раздачи заполнен на {Math.round((c.filled / c.capacity) * 100)}% ({gb(c.filled)} из {gb(c.capacity)}): подготовка следующих серий
+            вытеснит уже скачанное (сначала — то, что дальше всего от просмотра).
+          </p>
+          <Button size="sm" onClick={() => act(c, "drop")}>Сбросить кэш</Button>
+          <Button size="sm" variant="ghost" onClick={() => act(c, "remove")}>Убрать раздачу</Button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const STATE_TIP: Record<EpisodeStatus["state"], string> = {
+  library: "В библиотеке", stream: "«Стрим»", downloading: "Качается", aired: "Нет раздачи", upcoming: "Ещё не вышла",
+};
+
+/** Лента серий: кадр, номер и название, готовность (кэш TorrServer, «Подготовить»), прогресс, галочка. */
+function EpisodeStrip({ id, current, statuses, watched, positions, titles, onPick }: {
+  id: number; current: number; statuses: EpisodeStatus[]; watched: number;
+  positions: { ep: number; pos: number; dur: number | null }[];
+  titles: Map<number, { title: string | null; still: string | null }>; onPick: (ep: number) => void;
+}) {
+  const { prepare, busy } = usePrepare(id);
+  const strip = useRef<HTMLDivElement>(null);
+  const [find, setFind] = useState("");
+  const pos = new Map(positions.map((p) => [p.ep, p]));
+  // Текущая серия — в середине ленты
+  useEffect(() => {
+    strip.current?.querySelector<HTMLElement>(`[data-ep="${current}"]`)?.scrollIntoView({ block: "nearest", inline: "center" });
+  }, [current, statuses.length]);
+  const jump = (e: React.FormEvent) => {
+    e.preventDefault();
+    const n = Number(find);
+    if (n >= 1 && n <= statuses.length) strip.current?.querySelector<HTMLElement>(`[data-ep="${n}"]`)?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
+  };
+  return (
+    <section className="space-y-2">
+      <div className="flex items-center gap-3">
+        <h2 className="text-lg font-bold">Серии <span className="text-sm font-normal text-gray-500">{statuses.length}</span></h2>
+        <form onSubmit={jump} className="ml-auto flex items-center gap-1 rounded-lg bg-gray-800/60 px-2 ring-1 ring-gray-700">
+          <MagnifyingGlassIcon className="h-4 w-4 text-gray-500" />
+          <input value={find} onChange={(e) => setFind(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="Серия №" inputMode="numeric"
+            className="h-8 w-20 bg-transparent text-sm outline-none placeholder:text-gray-500" />
+        </form>
+      </div>
+      <div ref={strip} className="flex snap-x items-start gap-2 overflow-x-auto pb-2">
+        {statuses.map((s) => {
+          const t = titles.get(s.ep);
+          const p = pos.get(s.ep);
+          const can = playable(s);
+          const seen = s.ep <= watched;
+          const progress = seen ? 1 : p?.dur ? Math.min(1, p.pos / p.dur) : 0;
+          return (
+            <div key={s.ep} data-ep={s.ep} className={cx("w-44 shrink-0 snap-start overflow-hidden rounded-lg bg-gray-800/60 ring-1",
+              s.ep === current ? "ring-2 ring-accent-400" : "ring-gray-700", !can && "opacity-60")}>
+              <button onClick={() => onPick(s.ep)} disabled={!can} title={STATE_TIP[s.state]} className="block w-full text-left disabled:cursor-not-allowed">
+                <div className="relative aspect-video bg-gray-900">
+                  {t?.still && <Img src={t.still} size="thumb" className={cx("h-full w-full object-cover", s.ep > watched + 1 && "blur-[2px] brightness-75")} />}
+                  <span className="absolute left-1.5 top-1.5 rounded bg-black/70 px-1.5 text-xs font-semibold tabular-nums text-white">{s.ep}</span>
+                  {seen && <span className="absolute right-1.5 top-1.5 rounded-full bg-black/70 p-0.5"><CheckIcon className="h-3.5 w-3.5 text-positive-300" /></span>}
+                  {p && !seen && p.pos > 5 && <span className="absolute bottom-1.5 right-1.5 rounded bg-black/70 px-1 text-[10px] text-gray-200">{clock(p.pos)}</span>}
+                  {/* Прогресс просмотра */}
+                  {progress > 0 && <span className="absolute inset-x-0 bottom-0 h-1 bg-black/50"><span className="block h-full bg-accent-400" style={{ width: `${progress * 100}%` }} /></span>}
+                </div>
+                <p className="truncate px-2 pt-1.5 text-xs text-gray-200">{t?.title ?? `Серия ${s.ep}`}</p>
+              </button>
+              <div className="flex h-7 items-center gap-1.5 px-2 pb-1.5 text-[11px] text-gray-400">
+                <ReadyLine s={s} />
+                {s.state === "stream" && !s.preparing && (s.cached ?? 0) < 0.97 && (
+                  <button onClick={() => prepare(s)} disabled={busy} className="ml-auto rounded px-1.5 py-0.5 text-accent-300 hover:bg-gray-700"
+                    title="Скачать серию в кэш TorrServer заранее — смотреть без остановок">
+                    Подготовить
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/** Готовность серии одной строкой: библиотека / «Стрим» с кэшем / качается / нет. */
+function ReadyLine({ s }: { s: EpisodeStatus }) {
+  if (s.state === "library") return <span className="text-positive-300">В библиотеке</span>;
+  if (s.state === "downloading") return <span className="text-info-300">Качается {Math.round((s.pct ?? 0) * 100)}%</span>;
+  if (s.state === "stream") {
+    const c = Math.round((s.cached ?? 0) * 100);
+    return (
+      <span className="flex min-w-0 flex-1 items-center gap-1.5" title={`В кэше TorrServer: ${c}%`}>
+        <span className="h-1 w-12 shrink-0 overflow-hidden rounded-full bg-gray-700"><span className="block h-full bg-accent-500" style={{ width: `${c}%` }} /></span>
+        <span className={cx("truncate", c >= 97 ? "text-positive-300" : "")}>
+          {s.preparing ? `готовлю${s.etaSec ? ` · ~${waitText(s.etaSec)}` : ` ${c}%`}` : c >= 97 ? "готова" : `${c}%`}
+        </span>
+      </span>
+    );
+  }
+  return <span>{s.state === "aired" ? "Нет раздачи" : "Не вышла"}</span>;
 }

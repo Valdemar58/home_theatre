@@ -1,6 +1,6 @@
 import "server-only";
 import { airedNow } from "@/lib/episode-notice";
-import { episodeStates, type BufferInfo, type EpisodeStatus, type QueueInfo } from "@/lib/playback";
+import { episodeStates, type BufferInfo, type EpisodeStatus, type QueueInfo, type TorrentCache } from "@/lib/playback";
 import { getDetails } from "./anilist";
 import { now } from "./db";
 import { env } from "./env";
@@ -8,6 +8,7 @@ import { mappingForAnilist } from "./idmap";
 import { episodeItems } from "./playback";
 import { prebufferProgress } from "./prebuffer";
 import { seriesByTvdb, sonarrGet } from "./ru/arr";
+import { torrentCaches, torrentFilesCached } from "./stream";
 
 // Готовность серий тайтла: что можно смотреть сейчас (библиотека, «Стрим» с буфером), что качается (Sonarr),
 // что вышло, но взять неоткуда. Для значков у серий, кнопки «Смотреть» и уведомления «можно смотреть».
@@ -51,13 +52,36 @@ async function queueOf(anilistId: number): Promise<Map<number, QueueInfo>> {
   return out;
 }
 
-/** Готовность всех серий тайтла. */
-export async function episodeStatus(anilistId: number): Promise<{ episodes: EpisodeStatus[]; aired: number | null }> {
+/** Готовность всех серий тайтла и кэш его раздач TorrServer. */
+export async function episodeStatus(anilistId: number): Promise<{ episodes: EpisodeStatus[]; aired: number | null; caches: TorrentCache[] }> {
   const d = await getDetails(anilistId);
   const [items, queue] = await Promise.all([episodeItems(anilistId).catch(() => new Map()), queueOf(anilistId)]);
   const buffers = new Map<string, BufferInfo>(prebufferProgress().map((p) => [p.key, { ready: p.ready, etaSec: p.etaSec, read: p.read, size: p.size, done: p.done }]));
   const aired = airedNow(d, now());
   // Число серий известно — дальше по сезону TVDB идёт уже следующая часть
   const total = d.episodes ?? Math.max(d.schedule.at(-1)?.episode ?? 0, aired ?? 0, ...items.keys(), ...queue.keys());
-  return { episodes: episodeStates({ total, aired, items, buffers, queue }), aired };
+  const episodes = episodeStates({ total, aired, items, buffers, queue });
+  // «Стрим»: сколько серии в кэше TorrServer — правда о готовности (подготовленное могло вытесниться)
+  const hashes = [...new Set(episodes.flatMap((e) => (e.hash ? [e.hash] : [])))];
+  const caches: TorrentCache[] = [];
+  if (hashes.length) {
+    const all = await torrentCaches().catch(() => []);
+    for (const h of hashes) {
+      // Спящая раздача (не будим): кэш пуст — у серий 0
+      const t = all.find((x) => x.hash === h);
+      const c = t?.active ? await torrentFilesCached(h).catch(() => null) : null;
+      if (!c) {
+        for (const e of episodes) if (e.hash === h) { e.cached = 0; if (!e.preparing) e.ready = false; }
+        continue;
+      }
+      caches.push({ hash: h, title: t?.title ?? "", filled: c.filled, capacity: c.capacity, active: t?.active ?? false });
+      for (const e of episodes) {
+        if (e.hash !== h || !e.index) continue;
+        e.cached = c.files.get(e.index) ?? 0;
+        // Целиком в кэше — смотреть без остановок; пока готовится — по скорости (prebuffer)
+        if (!e.preparing) e.ready = e.cached >= 0.97;
+      }
+    }
+  }
+  return { episodes, aired, caches };
 }

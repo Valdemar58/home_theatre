@@ -5,7 +5,7 @@ import { useMemo } from "react";
 import type { Me } from "@/app/api/me/route";
 import type { AnimeDetails, CharacterDetails, EventDetails, NameRefs, PlaceDetails, PlotMap, PlotViewMode, TitlePlaces, RelationMap, TitleCast, TitleEvents, AnimeImages, MatchInfo, PlotInfo, SimilarItem, CalendarResponse, ListEntryWithMedia, ListStatus, MediaLite, SeerrStatus, Notice, NoticeCounts, FriendOpinion, FriendPick, Person, SharedListDetail, SharedListSummary, TogetherState, Profile, TaskInfo, VoicesState } from "./types";
 import { applyProgress } from "./entry-rules";
-import type { EpisodeStatus } from "./playback";
+import type { EpisodeStatus, TorrentCache } from "./playback";
 import { reportStale } from "./stale-data";
 
 export async function api<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
@@ -108,14 +108,16 @@ export const useGenres = () =>
 export const useSeerr = (id: number, enabled = true) =>
   useQuery({ queryKey: ["seerr", id], queryFn: () => api<SeerrStatus>(`/api/seerr/${id}`), enabled, staleTime: 60_000 });
 
-/** Готовность серий к просмотру; пока серия буферизуется или качается — опрос раз в 5 с. */
+/** Готовность серий к просмотру, кэш раздач и мои позиции в сериях. */
 export const useEpisodeStatus = (id: number, enabled = true) =>
   useQuery({
     queryKey: ["episode-status", id],
-    queryFn: () => api<{ episodes: EpisodeStatus[]; aired: number | null }>(`/api/anime/${id}/episodes`),
+    queryFn: () => api<{ episodes: EpisodeStatus[]; aired: number | null; caches: TorrentCache[]; positions: { ep: number; pos: number; dur: number | null }[] }>(`/api/anime/${id}/episodes`),
     enabled: enabled && id > 0,
     staleTime: 15_000,
-    refetchInterval: (q) => (q.state.data?.episodes.some((e) => e.preparing || e.state === "downloading") ? 5000 : 60_000),
+    // Готовится или качается — раз в 5 с; раздача активна (смотрят, кэш растёт) — раз в 15 с
+    refetchInterval: (q) => (q.state.data?.episodes.some((e) => e.preparing || e.state === "downloading") ? 5000
+      : q.state.data?.caches.some((c) => c.active) ? 15_000 : 60_000),
   });
 
 /** Озвучки: найденное фоновой задачей; пока задача идёт — опрос раз в 3 с. */

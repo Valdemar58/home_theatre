@@ -17,7 +17,15 @@ export type EpisodeStatus = {
   preparing?: boolean;
   pct?: number;
   etaSec?: number | null;
+  /** Стрим: какая доля файла уже лежит в кэше TorrServer (0–1) */
+  cached?: number;
 };
+
+/** Кэш раздачи TorrServer: сколько занято из ёмкости (ёмкость — на каждую раздачу). */
+export type TorrentCache = { hash: string; title: string; filled: number; capacity: number; active: boolean };
+
+/** Кэш раздачи почти полон: подготовка следующих серий начнёт вытеснять уже скачанное. */
+export const CACHE_WARN = 0.85;
 
 export type EpisodeItem = { itemId: string; where: "library" | "stream"; hash?: string; index?: number };
 export type BufferInfo = { ready: boolean; etaSec: number | null; read: number; size: number; done: boolean };
