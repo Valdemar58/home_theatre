@@ -40,6 +40,9 @@ function detectCaps(): PlayCaps {
   return { hevc: !compat && ok("hvc1.2.4.L120.B0"), av1: !compat && ok("av01.0.08M.10"), maxBitrate: Number(store.get(QUALITY_KEY)) || 120e6 };
 }
 
+/** H.264 + AAC в MSE — без них не сыграть ничего (Jellyfin перекодирует именно в них). */
+const canPlayBasic = () => typeof MediaSource === "undefined" || MediaSource.isTypeSupported('video/mp4; codecs="avc1.640028,mp4a.40.2"');
+
 /** Сколько ждать картинку, прежде чем предложить перезапуск или совместимый режим. */
 const STALL_MS = 20_000;
 
@@ -83,6 +86,10 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   const [showStatus, setShowStatus] = useState(false);
   const [stalled, setStalled] = useState(false);
   const progressAt = useRef(Date.now());
+  // HEVC заявлен в этой сессии (видео идёт как есть) и сколько раз уже восстанавливались после сбоя
+  const hevcSent = useRef(false);
+  const recoveries = useRef(0);
+  const [notice, setNotice] = useState<string | null>(null);
 
   // ---------------------------------------------------------------- сессия и поток
   const open = useCallback(async (opts: { audio?: number | null; start?: number | null } = {}) => {
@@ -92,7 +99,12 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
     progressAt.current = Date.now();
     setStage({ step: "session", since: Date.now() });
     try {
-      const r = await api<PlayInfo>("/api/play", { method: "POST", json: { anilistId, ep, caps: detectCaps(), ...opts, replace: sid.current } });
+      const caps = detectCaps();
+      // Браузер не играет даже H.264 + AAC (встроенный просмотрщик VS Code — Electron без этих кодеков): сказать сразу
+      if (!canPlayBasic()) throw new Error("Этот просмотрщик не умеет видео H.264/AAC (например, встроенный браузер VS Code) — откройте страницу в Chrome, Edge или Firefox");
+      const r = await api<PlayInfo>("/api/play", { method: "POST", json: { anilistId, ep, caps, ...opts, replace: sid.current } });
+      hevcSent.current = caps.hevc;
+      recoveries.current = 0;
       sid.current = r.sid;
       setInfo(r);
       // Выбор субтитров запоминается по языку (русские / английские / выкл.)
@@ -139,7 +151,23 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
           autoStartLoad: false, testBandwidth: false, manifestLoadingTimeOut: 30_000, fragLoadingTimeOut: 60_000,
           maxBufferLength: 60, backBufferLength: 90,
         });
-        h.on(H.Events.ERROR, (_e, d) => { if (d.fatal) setError(new Error(`Поток прервался: ${d.details}`)); });
+        h.on(H.Events.ERROR, (_e, d) => {
+          if (!d.fatal) return;
+          if (d.type === H.ErrorTypes.MEDIA_ERROR) {
+            // Браузер заявил HEVC, но не декодирует (так бывает в Electron, без аппаратного ускорения) — H.264
+            if (hevcSent.current) {
+              store.set(COMPAT_KEY, "1");
+              setNotice("Браузер не смог показать HEVC — переключаюсь на H.264 (совместимый режим, запомнен)");
+              void open({ audio: info.audioIndex, start: v.currentTime || at });
+              return;
+            }
+            if (recoveries.current++ < 2) { h.recoverMediaError(); return; }
+          } else if (d.type === H.ErrorTypes.NETWORK_ERROR && recoveries.current++ < 2) {
+            h.startLoad(v.currentTime || at);
+            return;
+          }
+          setError(new Error(`Поток прервался: ${d.details}`));
+        });
         h.on(H.Events.MANIFEST_PARSED, () => {
           setStage({ step: "manifest", since: Date.now() });
           h.startLoad(at);
@@ -310,6 +338,11 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
       )}
       {Boolean(error) && <div className="absolute inset-x-6 top-1/3"><ErrorBox error={error} /></div>}
       {children?.(time, seek)}
+      {notice && (
+        <div className="absolute inset-x-0 bottom-20 z-20 mx-auto w-fit max-w-[90%] rounded-lg bg-black/80 px-3 py-2 text-sm text-warning-200 ring-1 ring-white/10">
+          {notice} <button onClick={() => setNotice(null)} className="ml-2 text-gray-400 hover:text-white">×</button>
+        </div>
+      )}
 
       {/* Заголовок */}
       <div className={cx("pointer-events-none absolute inset-x-0 top-0 z-10 bg-linear-to-b from-black/70 to-transparent px-4 pb-8 pt-3 transition-opacity", hidden && "opacity-0")}>
