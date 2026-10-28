@@ -53,7 +53,7 @@ export function WatchSidebar({ media, info, sub, subs: settings, controls }: {
                 Другая озвучка — другая раздача: найдите её в «Озвучках» и нажмите «Смотреть» (серии «Стрима» заменятся) или
                 «Скачать» (в библиотеку, озвучки отдельными файлами станут дорожками).
               </p>
-              <VoicesButton media={media} size="sm" />
+              <VoicesButton media={media} size="sm" onSubs={() => controls.current?.reload()} />
             </div>
           </div>
         ) : (
@@ -69,6 +69,10 @@ export function WatchSidebar({ media, info, sub, subs: settings, controls }: {
               {!subs.length && <p className="px-2 pt-1 text-xs text-gray-500">В файле нет субтитров.</p>}
             </div>
             {!subs.some((s) => s.jimaku) && <JimakuFind anilistId={media.id} onFound={() => controls.current?.reload()} />}
+            <div className="space-y-1.5 border-t border-gray-700 px-2 pt-3">
+              <p className="text-xs text-gray-500">Русские субтитры из другой раздачи: в «Озвучках» у раздачи с субтитрами — «Субтитры» (видео не качается).</p>
+              <VoicesButton media={media} size="sm" onSubs={() => controls.current?.reload()} />
+            </div>
             <SubSettingsPanel settings={settings} controls={controls} ass={Boolean(subs.find((s) => s.index === sub)?.ass)} />
           </div>
         )}

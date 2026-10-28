@@ -1,7 +1,9 @@
 import "server-only";
 import { getDetails } from "../anilist";
 import { mappingForAnilist, mappingsForTvdb, type TvdbMapping } from "../idmap";
-import { streamRelease, streamSeriesUrl } from "../stream";
+import { db, now } from "../db";
+import { releaseSubsTorrent, streamRelease, streamSeriesUrl } from "../stream";
+import { releaseTag, syncStreamSubs } from "../stream-subs";
 import { shikiInfo } from "../shikimori";
 import { searchRu, sonarrEpisodes, sonarrGet, sonarrPost, sonarrPut, sonarrSeries, type ProwlarrRelease, type SonarrSeries } from "./arr";
 import { anilistNames, baseName, resetIndex } from "./identify";
@@ -213,6 +215,24 @@ const pluralRu = (n: number, one: string, few: string, many: string) => {
 };
 
 /** «Смотреть сейчас»: раздача в TorrServer, серии — в библиотеку Jellyfin «Стрим». */
+/**
+ * Субтитры из раздачи без просмотра её видео: TorrServer → только субтитры и шрифты (stream-subs.ts), сопоставление
+ * «серия тайтла → файл раздачи» — в release_subs; плеер покажет их у любой серии (библиотека или «Стрим»).
+ */
+export async function subsRuRelease(anilistId: number, guid: string): Promise<{ ok: boolean; message: string }> {
+  const { match, mapping } = await pick(anilistId, guid);
+  const series = (await sonarrSeries()).find((s) => s.tvdbId === mapping.tvdb);
+  const r = await releaseSubsTorrent({ anilistId, release: match.release, ref: await refFor(match, mapping, series?.id), title: match.release.title });
+  const m = await syncStreamSubs(r.hash);
+  const eps = Object.entries(r.episodes).filter(([, video]) => m?.subs.some((s) => s.video === video)).length;
+  if (!eps) return { ok: false, message: "В раздаче не нашлось субтитров к сериям этого тайтла" };
+  db.prepare(`INSERT INTO release_subs (anilist_id, hash, title, episodes, created_at) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT (anilist_id, hash) DO UPDATE SET episodes = excluded.episodes, created_at = excluded.created_at`)
+    .run(anilistId, r.hash, match.release.title, JSON.stringify(r.episodes), now());
+  const groups = [...new Set(m!.subs.map((s) => s.group ?? releaseTag(match.release.title) ?? "без подписи"))];
+  return { ok: true, message: `Субтитры (${groups.join(", ")}) — у ${pluralRu(eps, "серии", "серий", "серий")}; выберите их в плеере во вкладке «Субтитры»` };
+}
+
 export async function streamRuRelease(anilistId: number, guid: string): Promise<{ ok: boolean; message: string }> {
   const { match, mapping } = await pick(anilistId, guid);
   const details = await getDetails(anilistId);

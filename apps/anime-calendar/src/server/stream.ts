@@ -66,27 +66,14 @@ export async function streamRelease(opts: {
   const mapping = await mappingForAnilist(opts.anilistId);
   if (!mapping) throw new Error("Тайтл не сопоставлен с TVDB");
   const torrent = await addTorrent(opts.release, opts.seriesTitle, opts.poster);
-  const files = (torrent.file_stats ?? []).filter((f) => VIDEO.test(f.path) && !EXTRAS.test(f.path));
-  if (!files.length) throw new Error("В раздаче не найдено видеофайлов");
-
-  // Абсолютная нумерация (длинные сериалы): переводим через эпизоды Sonarr
-  let absolute: Map<number, { season: number; episode: number }> | null = null;
-  if (opts.ref.kind === "absolute") {
-    const series = (await sonarrGet<{ id: number; tvdbId: number }[]>("/api/v3/series")).find((s) => s.tvdbId === mapping.tvdb);
-    if (!series) throw new Error("Для сериалов со сквозной нумерацией сначала добавь сериал в Sonarr (кнопка «Скачать»)");
-    absolute = new Map((await sonarrEpisodes(series.id))
-      .filter((e) => e.absoluteEpisodeNumber)
-      .map((e) => [e.absoluteEpisodeNumber!, { season: e.seasonNumber, episode: e.episodeNumber }]));
-  }
+  const { files, targets } = await targetsOf(torrent, opts.ref, mapping.tvdb);
 
   const name = safe(opts.seriesTitle);
   const folder = path.join(env.streamDir, `${name}${opts.year ? ` (${opts.year})` : ""} [tvdbid-${mapping.tvdb}]`);
-  const assigned = assignEpisodes(files.map((f) => localEpisode(f.path)), opts.ref);
   let created = 0;
   let skipped = 0;
   for (let i = 0; i < files.length; i++) {
-    const a = assigned[i];
-    const target = !a ? null : "absolute" in a ? absolute?.get(a.absolute) ?? null : a;
+    const target = targets[i];
     if (!target) {
       skipped++;
       continue;
@@ -103,6 +90,44 @@ export async function streamRelease(opts: {
   const { syncStreamSubsSoon } = await import("./stream-subs");
   syncStreamSubsSoon(torrent.hash);
   return { episodes: created, skipped, folder: path.basename(folder) };
+}
+
+/**
+ * Видео раздачи → серия TVDB (сезон, номер) по ref — тот же расчёт, что для Sonarr. Абсолютная нумерация (длинные
+ * сериалы) — через эпизоды Sonarr.
+ */
+async function targetsOf(torrent: TsTorrent, ref: EpisodeRefLike, tvdb: number) {
+  const files = (torrent.file_stats ?? []).filter((f) => VIDEO.test(f.path) && !EXTRAS.test(f.path));
+  if (!files.length) throw new Error("В раздаче не найдено видеофайлов");
+  let absolute: Map<number, { season: number; episode: number }> | null = null;
+  if (ref.kind === "absolute") {
+    const series = (await sonarrGet<{ id: number; tvdbId: number }[]>("/api/v3/series")).find((s) => s.tvdbId === tvdb);
+    if (!series) throw new Error("Для сериалов со сквозной нумерацией сначала добавь сериал в Sonarr (кнопка «Скачать»)");
+    absolute = new Map((await sonarrEpisodes(series.id))
+      .filter((e) => e.absoluteEpisodeNumber)
+      .map((e) => [e.absoluteEpisodeNumber!, { season: e.seasonNumber, episode: e.episodeNumber }]));
+  }
+  const assigned = assignEpisodes(files.map((f) => localEpisode(f.path)), ref);
+  const targets = assigned.map((a) => (!a ? null : "absolute" in a ? absolute?.get(a.absolute) ?? null : a));
+  return { files, targets };
+}
+
+/**
+ * Субтитры из другой раздачи: добавить её в TorrServer (видео не читаем), сопоставить видео с сериями тайтла и скачать
+ * только субтитры и шрифты. Возвращает раздачу и «серия тайтла → файл раздачи» (для плеера). Раздача без ссылок
+ * «Стрима» уйдёт при уборке, скачанное останется.
+ */
+export async function releaseSubsTorrent(opts: { anilistId: number; release: ProwlarrRelease; ref: EpisodeRefLike; title: string }) {
+  const mapping = await mappingForAnilist(opts.anilistId);
+  if (!mapping) throw new Error("Тайтл не сопоставлен с TVDB");
+  const torrent = await addTorrent(opts.release, opts.title, null);
+  const { files, targets } = await targetsOf(torrent, opts.ref, mapping.tvdb);
+  const episodes: Record<number, number> = {};
+  files.forEach((f, i) => {
+    const t = targets[i];
+    if (t && (mapping.season === "a" || t.season === mapping.season) && t.episode - mapping.offset >= 1) episodes[t.episode - mapping.offset] = f.id;
+  });
+  return { hash: torrent.hash, episodes };
 }
 
 // ---------------------------------------------------------------- Jellyfin

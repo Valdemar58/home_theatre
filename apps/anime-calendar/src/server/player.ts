@@ -12,7 +12,7 @@ import { guarded } from "./sources";
 import { segmentsFromChapters } from "@/lib/fingerprint";
 import { prebufferProgress } from "./prebuffer";
 import { ensureSegments, itemKey, storedSegments } from "./segments";
-import { streamSubs, syncStreamSubsSoon } from "./stream-subs";
+import { releaseTag, streamSubs, subsForVideo, syncStreamSubsSoon } from "./stream-subs";
 import { sdhFile } from "./sdh";
 import { dropTorrentCache, jellyfin, torrentCached, torrentStats } from "./stream";
 import { episodeStatus } from "./availability";
@@ -116,13 +116,25 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
     const m = streamSubs(item.hash);
     if (!m) syncStreamSubsSoon(item.hash);
     const url = (f: string) => `/api/stream-subs/${item.hash}/${f}`;
-    m?.subs.filter((x) => x.video === item.index).forEach((x, i) => subs.push({
+    (m ? subsForVideo(m, item.index) : []).forEach((x, i) => subs.push({
       index: STREAM_SUB + i, lang: "rus", codec: x.file.split(".").pop() ?? "ass", title: x.group,
-      label: `Русский · ${x.group}${x.signs ? " (надписи)" : ""}`, url: url(x.file), ass: !x.file.endsWith(".srt"),
+      label: `Русский · ${x.group ?? "из раздачи"}${x.signs ? " (надписи)" : ""}`, url: url(x.file), ass: !x.file.endsWith(".srt"),
       forced: false, signs: x.signs, external: true, torrent: true,
     }));
     if (m?.subs.length) fonts.push(...m.fonts.map(url));
     extVoices.push(...(m?.voices ?? []));
+  }
+  // Субтитры, взятые из других раздач («Озвучки» → «Субтитры»): та же серия, тайминг — сдвигом
+  for (const r of db.prepare<[number], { hash: string; title: string; episodes: string }>("SELECT hash, title, episodes FROM release_subs WHERE anilist_id = ?").all(anilistId)) {
+    const video = (JSON.parse(r.episodes) as Record<string, number>)[ep];
+    const m = video !== undefined && r.hash !== item.hash ? streamSubs(r.hash) : null;
+    const own = m ? subsForVideo(m, video) : [];
+    own.forEach((x) => subs.push({
+      index: STREAM_SUB + subs.length, lang: "rus", codec: x.file.split(".").pop() ?? "ass", title: x.group,
+      label: `Русский · ${x.group ?? releaseTag(r.title) ?? "другая раздача"}${x.signs ? " (надписи)" : ""} · другая раздача`, url: `/api/stream-subs/${r.hash}/${x.file}`,
+      ass: !x.file.endsWith(".srt"), forced: false, signs: x.signs, external: true, torrent: true,
+    }));
+    if (own.length) fonts.push(...m!.fonts.map((f) => `/api/stream-subs/${r.hash}/${f}`));
   }
   // Японские субтитры с Jimaku (скачаны для «Глубокого разбора» или кнопкой в плеере): тайминг другого релиза — есть сдвиг
   const jp = sdhFile(anilistId, ep);

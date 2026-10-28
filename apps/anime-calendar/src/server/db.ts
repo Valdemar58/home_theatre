@@ -676,6 +676,15 @@ function migrate(db: Db) {
     created_at INTEGER NOT NULL,
     PRIMARY KEY (item_key, kind)
   )`);
+  // Субтитры из других раздач (кнопка в «Озвучках»): серия тайтла → файл раздачи; сами файлы — stream-subs/<хэш>
+  db.exec(`CREATE TABLE IF NOT EXISTS release_subs (
+    anilist_id INTEGER NOT NULL,
+    hash TEXT NOT NULL,
+    title TEXT NOT NULL,
+    episodes TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (anilist_id, hash)
+  )`);
   // Плеер календаря: где остановился в серии (продолжить с того же места)
   db.exec(`CREATE TABLE IF NOT EXISTS playback_pos (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

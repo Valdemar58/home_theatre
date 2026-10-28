@@ -10,7 +10,7 @@ import { torrentFiles } from "./stream";
 // субтитры и шрифты — мегабайты. Скачиваем в DATA_DIR/stream-subs/<хэш>/ и описываем в manifest.json; плеер
 // показывает их дорожками («Русский · AniLibria», «… (надписи)») со шрифтами раздачи.
 
-export type StreamSub = { video: number; group: string; signs: boolean; file: string };
+export type StreamSub = { video: number; group: string | null; signs: boolean; file: string };
 /** voices — студии озвучек отдельными файлами («RUS Sound/[Студия]»): онлайн их не сыграть, «Скачать» соберёт в серию. */
 type Manifest = { subs: StreamSub[]; fonts: string[]; voices?: string[]; at: number };
 const AUDIO = /\.(mka|ac3|eac3|dts|aac|flac|mp3|opus)$/i;
@@ -26,14 +26,21 @@ export function streamSubs(hash: string): Manifest | null {
   return fs.existsSync(f) ? (JSON.parse(fs.readFileSync(f, "utf-8")) as Manifest) : null;
 }
 
-/** Студия — ближайшая папка в квадратных скобках («[AniLibria]»), иначе имя папки; надписи — папка «надписи»/«signs». */
-export function subGroup(p: string): { group: string; signs: boolean } {
+/**
+ * Студия — ближайшая папка в квадратных скобках («[AniLibria]»), иначе имя папки внутри раздачи (корень — название
+ * сериала, не студия); не нашлась — null (подпишем меткой релизера). Надписи — папка «надписи»/«signs».
+ */
+export function subGroup(p: string): { group: string | null; signs: boolean } {
   const dirs = p.split("/").slice(0, -1);
   const signs = dirs.some((d) => /надпис|signs?$|forced/i.test(d));
   const named = [...dirs].reverse().find((d) => /^\[.+\]$/.test(d.trim()));
-  const fallback = [...dirs].reverse().find((d) => !/надпис|signs?|subs?|rus|fonts?/i.test(d));
-  return { group: (named ?? fallback ?? "Субтитры").replace(/^\[|\]$/g, "").trim(), signs };
+  const fallback = dirs.slice(1).reverse().find((d) => !/надпис|signs?|subs?|rus|fonts?/i.test(d));
+  const g = named ?? fallback;
+  return { group: g ? g.replace(/^\[|\]$/g, "").trim() : null, signs };
 }
+
+/** Метка релизера из названия раздачи: последние квадратные скобки («… [WEBRip] [HWP]» → «HWP»). */
+export const releaseTag = (title: string) => /\[([^\][]{2,24})\]\s*$/.exec(title.trim())?.[1] ?? null;
 
 /**
  * Скачать субтитры и шрифты раздачи (уже скачанное — не трогаем). Субтитр относится к видео, если его имя начинается
@@ -45,7 +52,7 @@ export async function syncStreamSubs(hash: string, signal?: AbortSignal): Promis
   const files = await torrentFiles(hash);
   const videos = files.filter((f) => /\.(mkv|mp4|m4v|avi|ts|m2ts|webm)$/i.test(f.path));
   const subs = files.filter((f) => SUB.test(f.path));
-  const voices = [...new Set(files.filter((f) => AUDIO.test(f.path)).map((f) => subGroup(f.path).group))];
+  const voices = [...new Set(files.filter((f) => AUDIO.test(f.path)).flatMap((f) => subGroup(f.path).group ?? []))];
   if (!subs.length) {
     await mkdir(root(hash), { recursive: true });
     const m: Manifest = { subs: [], fonts: [], voices, at: Date.now() };
@@ -78,6 +85,13 @@ export async function syncStreamSubs(hash: string, signal?: AbortSignal): Promis
   const m: Manifest = { subs: out, fonts, voices, at: Date.now() };
   await writeFile(path.join(root(hash), "manifest.json"), JSON.stringify(m));
   return m;
+}
+
+/** Субтитры к видео раздачи: если у студии есть и ASS, и SRT одного перевода — только ASS (со стилями). */
+export function subsForVideo(m: Manifest, video: number): StreamSub[] {
+  const own = m.subs.filter((s) => s.video === video);
+  const hasAss = new Set(own.filter((s) => !s.file.endsWith(".srt")).map((s) => `${s.group}:${s.signs}`));
+  return own.filter((s) => !s.file.endsWith(".srt") || !hasAss.has(`${s.group}:${s.signs}`));
 }
 
 /** Файл субтитров или шрифта раздачи для плеера (путь проверен: только внутри папки раздачи). */
