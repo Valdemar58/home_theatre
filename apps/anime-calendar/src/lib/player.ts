@@ -10,6 +10,8 @@ export type PlayInfo = {
   /** Плейлист HLS (или файл целиком, если браузер играет его сам) */
   src: string;
   hls: boolean;
+  /** Серия «Стрима» (TorrServer): есть состояние раздачи и скачанные куски */
+  stream: boolean;
   duration: number;
   /** С какой секунды начинать (сохранённая позиция) */
   start: number;
@@ -31,6 +33,8 @@ export type PlayStatus = {
     /** Сколько байт/с нужно, чтобы смотреть без остановок */
     rate: number | null;
     prebuffer: { read: number; size: number; ready: boolean; done: boolean; etaSec: number | null } | null;
+    /** Что уже скачано TorrServer: доли файла [начало, конец) — полоска под шкалой */
+    cached: [number, number][];
   } | null;
 };
 
@@ -101,6 +105,47 @@ export function deviceProfile(caps: PlayCaps) {
     ],
     CodecProfiles: [], ContainerProfiles: [], ResponseProfiles: [],
   };
+}
+
+/**
+ * Скачанные TorrServer куски → доли файла [начало, конец) (0–1), слитые подряд идущие. Файл лежит в раздаче
+ * со смещения offset байт; кусок — pieceLen байт. На время переводится пропорционально размеру (для полоски хватает).
+ */
+export function piecesToRanges(done: number[], pieceLen: number, offset: number, length: number): [number, number][] {
+  const out: [number, number][] = [];
+  for (const id of [...done].sort((a, b) => a - b)) {
+    const a = Math.max(id * pieceLen, offset);
+    const b = Math.min((id + 1) * pieceLen, offset + length);
+    if (b <= a) continue;
+    const r: [number, number] = [(a - offset) / length, (b - offset) / length];
+    const last = out.at(-1);
+    if (last && r[0] - last[1] < 1e-9) last[1] = r[1];
+    else out.push(r);
+  }
+  return out;
+}
+
+// Главы из файла — обычно по-английски и по-японски: Intro, OP, Part A, ED, Next Episode, Avant, Eyecatch
+const CHAPTER_RU: [RegExp, string][] = [
+  [/^(intro|prologue|avant|cold open|アバン)$/i, "Вступление"],
+  [/^(op|opening|oped|op\d*|opening \d+|オープニング)$/i, "Опенинг"],
+  [/^(ed|ending|ed\d*|ending \d+|credits|エンディング)$/i, "Эндинг"],
+  [/^(next( episode)?|preview|next time|to be continued|予告|次回予告)$/i, "Анонс"],
+  [/^(eyecatch|eye ?catch|アイキャッチ)$/i, "Перебивка"],
+  [/^(recap|previously)$/i, "Ранее"],
+  [/^(epilogue|post[- ]credits?|c ?part)$/i, "После титров"],
+  [/^(title|title card)$/i, "Название"],
+];
+
+/** Название главы по-русски: «Part B» → «Часть B», «Chapter 3» → «Глава 3»; неизвестное — как есть. */
+export function chapterLabel(name: string): string {
+  const n = name.trim();
+  for (const [re, ru] of CHAPTER_RU) if (re.test(n)) return ru;
+  const part = /^(?:part|パート)\s*([a-z0-9]+)$/i.exec(n);
+  if (part) return `Часть ${part[1].toUpperCase()}`;
+  const ch = /^chapter\s*(\d+)$/i.exec(n);
+  if (ch) return `Глава ${Number(ch[1])}`;
+  return n;
 }
 
 /** Досмотрел: серия отмечается просмотренной после 85% (титры и превью следующей — не обязательно). */

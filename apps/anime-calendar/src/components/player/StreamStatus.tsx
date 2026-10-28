@@ -1,8 +1,6 @@
 "use client";
 import { ExclamationTriangleIcon, XMarkIcon } from "@heroicons/react/24/outline";
-import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { api } from "@/lib/client";
 import type { PlayStatus } from "@/lib/player";
 import { waitText } from "@/lib/playback";
 import { cx } from "../ui";
@@ -34,17 +32,11 @@ function transcodeText(reasons: string[]): string {
   return audio ? "Видео — как есть, звук перекодируется в AAC" : "Видео и звук — как есть, меняется только контейнер";
 }
 
-export function StreamStatus({ sid, stage, transcode, stalled, compat, onRestart, onCompat, onClose }: {
-  /** Сессии ещё нет (Jellyfin пробует файл) — только стадия */
-  sid: string | null; stage: Stage; transcode: string[] | null; stalled: boolean; compat: boolean;
+export function StreamStatus({ status, stage, transcode, stalled, compat, onRestart, onCompat, onClose }: {
+  /** Раздача «Стрима» (опрашивает плеер); сессии ещё нет или файл из библиотеки — нет */
+  status: PlayStatus | undefined; stage: Stage; transcode: string[] | null; stalled: boolean; compat: boolean;
   onRestart: () => void; onCompat: () => void; onClose?: () => void;
 }) {
-  const { data } = useQuery({
-    queryKey: ["play-status", sid],
-    queryFn: () => api<PlayStatus>(`/api/play/${sid}`),
-    enabled: Boolean(sid),
-    refetchInterval: 2000,
-  });
   // Тикает раз в секунду — «ждём N с»
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -52,7 +44,7 @@ export function StreamStatus({ sid, stage, transcode, stalled, compat, onRestart
     return () => clearInterval(t);
   }, []);
   const waited = Math.max(0, (now - stage.since) / 1000);
-  const s = data?.stream;
+  const s = status?.stream;
 
   const step = {
     session: "Запрашиваю поток у Jellyfin (он читает начало файла)…",

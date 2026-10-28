@@ -1,7 +1,7 @@
 import "server-only";
 import { randomBytes } from "node:crypto";
 import {
-  deviceProfile, isSignsTitle, pickAudio, pickSub, trackLabel, WATCHED_SHARE,
+  chapterLabel, deviceProfile, isSignsTitle, pickAudio, pickSub, trackLabel, WATCHED_SHARE,
   type PlayCaps, type PlayInfo, type PlayStatus, type PlaySub, type PlayTrack,
 } from "@/lib/player";
 import { ApiError } from "./route";
@@ -10,7 +10,7 @@ import { markWatched } from "./jellyfin-sync";
 import { episodeItems } from "./playback";
 import { guarded } from "./sources";
 import { prebufferProgress } from "./prebuffer";
-import { jellyfin, torrentStats } from "./stream";
+import { jellyfin, torrentCached, torrentStats } from "./stream";
 
 // Плеер календаря: сессия просмотра серии. Jellyfin решает по профилю браузера, что отдать как есть, а что
 // перекодировать (HEVC 10 бит → копия, если браузер умеет; FLAC → AAC), и отдаёт HLS. Браузер ходит только
@@ -109,6 +109,7 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
     sid,
     src: hlsPath ? `${base}/${hlsPath.replace(/^\/videos\/[^/]+\//i, "")}` : `${base}/stream`,
     hls: Boolean(hlsPath),
+    stream: Boolean(item.hash && item.index),
     duration,
     start,
     audio,
@@ -160,7 +161,8 @@ async function info(itemId: string, userId: string, caps: PlayCaps, start: numbe
 
 async function chaptersOf(itemId: string) {
   const r = await jellyfin<{ Items: { Chapters?: { Name?: string; StartPositionTicks: number }[] }[] }>(`/Items?Ids=${itemId}&Fields=Chapters`).catch(() => null);
-  return (r?.Items[0]?.Chapters ?? []).map((c) => ({ name: c.Name ?? "", start: c.StartPositionTicks / 1e7 }));
+  // Названия глав — по-русски (Intro → «Вступление», Part A → «Часть A»)
+  return (r?.Items[0]?.Chapters ?? []).map((c) => ({ name: chapterLabel(c.Name ?? ""), start: c.StartPositionTicks / 1e7 }));
 }
 
 /** Адрес у Jellyfin для запроса браузера к /api/play/<sid>/<rest>. */
@@ -203,13 +205,17 @@ export async function reportProgress(user: { id: number; name: string; jellyfin_
  */
 export async function playStatus(s: PlaySession): Promise<PlayStatus> {
   if (!s.stream) return { stream: null };
-  const t = await torrentStats(s.stream.hash, s.stream.index).catch(() => null);
+  const [t, cached] = await Promise.all([
+    torrentStats(s.stream.hash, s.stream.index).catch(() => null),
+    torrentCached(s.stream.hash, s.stream.index).catch(() => []),
+  ]);
   const p = prebufferProgress().find((x) => x.key === `${s.stream!.hash}:${s.stream!.index}`);
   return {
     stream: t && {
       ...t,
       rate: t.fileSize && s.duration ? t.fileSize / s.duration : null,
       prebuffer: p ? { read: p.read, size: p.size, ready: p.ready, done: p.done, etaSec: p.etaSec } : null,
+      cached,
     },
   };
 }

@@ -1,6 +1,7 @@
 import "server-only";
 import fs from "node:fs";
 import path from "node:path";
+import { piecesToRanges } from "@/lib/player";
 import { env } from "./env";
 import { anilistForTvdb, mappingForAnilist } from "./idmap";
 import { sonarrEpisodes, sonarrGet, type ProwlarrRelease } from "./ru/arr";
@@ -293,6 +294,18 @@ export async function torrentStats(hash: string, index: number) {
     totalPeers: t.total_peers ?? 0,
     fileSize: t.file_stats?.find((f) => f.id === index)?.length ?? null,
   };
+}
+
+/** Какие части файла раздачи уже скачаны в кэш TorrServer — доли файла (для полоски в плеере). */
+export async function torrentCached(hash: string, index: number): Promise<[number, number][]> {
+  const c = await ts<{ PiecesLength?: number; Pieces?: Record<string, { Id: number; Completed?: boolean }> | null; Torrent?: TsTorrent }>("/cache", { action: "get", hash });
+  const files = [...(c.Torrent?.file_stats ?? [])].sort((a, b) => a.id - b.id);
+  const file = files.find((f) => f.id === index);
+  if (!file || !c.PiecesLength) return [];
+  // Файлы идут в раздаче подряд по порядку: смещение — сумма предыдущих
+  const offset = files.filter((f) => f.id < index).reduce((s, f) => s + f.length, 0);
+  const done = Object.values(c.Pieces ?? {}).filter((p) => p.Completed).map((p) => p.Id);
+  return piecesToRanges(done, c.PiecesLength, offset, file.length);
 }
 
 /** Нужная для просмотра скорость: средний размер видеофайла ÷ длительность серии. */

@@ -5,9 +5,10 @@ import {
 } from "@heroicons/react/24/solid";
 import type Hls from "hls.js";
 import type JASSUB from "jassub";
+import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/client";
-import { COMPAT_KEY, type PlayCaps, type PlayInfo } from "@/lib/player";
+import { COMPAT_KEY, type PlayCaps, type PlayInfo, type PlayStatus } from "@/lib/player";
 import { cx, ErrorBox, Spinner } from "../ui";
 import { StreamStatus, type Stage } from "./StreamStatus";
 
@@ -210,6 +211,13 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
     }, 500);
     return () => clearInterval(t);
   }, [info, error]);
+  // Раздача «Стрима»: скорость, пиры, подготовка и скачанные куски (полоска под шкалой) — раз в 3 с
+  const { data: status } = useQuery({
+    queryKey: ["play-status", info?.sid],
+    queryFn: () => api<PlayStatus>(`/api/play/${info!.sid}`),
+    enabled: Boolean(info?.stream),
+    refetchInterval: 3000,
+  });
   const compat = store.get(COMPAT_KEY) === "1";
   const restart = (useCompat: boolean) => {
     if (useCompat) store.set(COMPAT_KEY, "1");
@@ -333,7 +341,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
       {loading && !error && <div className="pointer-events-none absolute inset-0 grid place-items-center"><Spinner className="h-10 w-10 text-white/80" /></div>}
       {/* Состояние потока: пока грузится (или по кнопке «i») — что делает Jellyfin и раздача */}
       {!error && (loading || showStatus || stalled) && (
-        <StreamStatus sid={info?.sid ?? null} stage={stage} transcode={info?.transcode ?? null} stalled={stalled} compat={compat}
+        <StreamStatus status={status} stage={stage} transcode={info?.transcode ?? null} stalled={stalled} compat={compat}
           onRestart={() => restart(false)} onCompat={() => restart(true)} onClose={showStatus ? () => setShowStatus(false) : undefined} />
       )}
       {Boolean(error) && <div className="absolute inset-x-6 top-1/3"><ErrorBox error={error} /></div>}
@@ -351,7 +359,8 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
 
       {/* Панель управления */}
       <div className={cx("absolute inset-x-0 bottom-0 z-10 bg-linear-to-t from-black/85 to-transparent px-3 pb-2 pt-10 transition-opacity", hidden && "pointer-events-none opacity-0")}>
-        <SeekBar duration={duration} time={time} buffered={buffered} chapters={info?.chapters ?? []} onSeek={seek} pct={pct} />
+        <SeekBar duration={duration} time={time} buffered={buffered} chapters={info?.chapters ?? []} onSeek={seek} pct={pct}
+          cached={status?.stream?.cached ?? []} />
         <div className="mt-1 flex items-center gap-1 text-white">
           <Ctl onClick={toggle} label={playing ? "Пауза (пробел)" : "Смотреть (пробел)"}>
             {playing ? <PauseIcon className="h-6 w-6" /> : <PlayIcon className="h-6 w-6" />}
@@ -440,8 +449,10 @@ function Menu({ open, onOpen, label, icon, items, onPick }: {
   );
 }
 
-function SeekBar({ duration, time, buffered, chapters, onSeek, pct }: {
+function SeekBar({ duration, time, buffered, chapters, onSeek, pct, cached }: {
   duration: number; time: number; buffered: number; chapters: { name: string; start: number }[];
+  /** Скачано TorrServer — доли файла (серия «Стрима»); куда можно перематывать без ожидания */
+  cached: [number, number][];
   onSeek: (t: number) => void; pct: (t: number) => string;
 }) {
   const bar = useRef<HTMLDivElement>(null);
@@ -458,6 +469,10 @@ function SeekBar({ duration, time, buffered, chapters, onSeek, pct }: {
       <div className="absolute inset-x-0 top-1.5 h-1 rounded-full bg-white/25 transition-all group-hover/bar:top-1 group-hover/bar:h-2">
         <div className="absolute inset-y-0 left-0 rounded-full bg-white/35" style={{ width: pct(buffered) }} />
         <div className="absolute inset-y-0 left-0 rounded-full bg-accent-400" style={{ width: pct(time) }} />
+        {/* Скачанное с торрента — полоска под шкалой */}
+        {cached.map(([a, b]) => (
+          <span key={a} className="absolute -bottom-1.5 h-0.5 rounded-full bg-accent-500/70" style={{ left: `${a * 100}%`, width: `${Math.max(0.2, (b - a) * 100)}%` }} />
+        ))}
         {chapters.filter((c) => c.start > 0).map((c) => (
           <span key={c.start} className="absolute inset-y-0 w-0.5 bg-black/60" style={{ left: pct(c.start) }} />
         ))}

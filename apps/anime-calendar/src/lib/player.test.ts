@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deviceProfile, pickAudio, pickSub, trackLabel, type PlaySub, type PlayTrack } from "./player";
+import { chapterLabel, piecesToRanges, deviceProfile, pickAudio, pickSub, trackLabel, type PlaySub, type PlayTrack } from "./player";
 
 const t = (index: number, lang: string | null, title: string | null = null): PlayTrack => ({ index, lang, title, codec: "aac", label: "" });
 const s = (index: number, lang: string | null, title: string | null = null, forced = false): PlaySub =>
@@ -35,5 +35,20 @@ describe("профиль устройства", () => {
     const p = deviceProfile({ hevc: false, av1: false, maxBitrate: 8e6 });
     expect(p.TranscodingProfiles[0]).toMatchObject({ VideoCodec: "h264", AudioCodec: "aac", Protocol: "hls" });
     expect(deviceProfile({ hevc: true, av1: false, maxBitrate: 8e6 }).TranscodingProfiles[0].VideoCodec).toBe("h264,hevc");
+  });
+});
+
+describe("главы по-русски", () => {
+  it("обычные названия глав и неизвестные — как есть", () => {
+    expect(["Intro", "OP", "Part A", "Part B", "ED", "Next Episode", "Chapter 03", "Eyecatch", "Avant", "Something"].map(chapterLabel))
+      .toEqual(["Вступление", "Опенинг", "Часть A", "Часть B", "Эндинг", "Анонс", "Глава 3", "Перебивка", "Вступление", "Something"]);
+  });
+});
+
+describe("скачанное TorrServer", () => {
+  it("куски файла → доли, подряд идущие слиты, чужие файлы отброшены", () => {
+    // Файл — байты 100..500 раздачи, куски по 100: 0 (до файла), 1–2 подряд, 4 (последний)
+    expect(piecesToRanges([4, 0, 1, 2], 100, 100, 400)).toEqual([[0, 0.5], [0.75, 1]]);
+    expect(piecesToRanges([], 100, 0, 400)).toEqual([]);
   });
 });
