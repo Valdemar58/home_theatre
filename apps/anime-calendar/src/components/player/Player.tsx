@@ -1,14 +1,15 @@
 "use client";
 import {
   ArrowsPointingInIcon, ArrowsPointingOutIcon, BackwardIcon, ChatBubbleBottomCenterTextIcon, Cog6ToothIcon, ForwardIcon,
-  LanguageIcon, PauseIcon, PlayIcon, SpeakerWaveIcon, SpeakerXMarkIcon,
+  InformationCircleIcon, LanguageIcon, PauseIcon, PlayIcon, SpeakerWaveIcon, SpeakerXMarkIcon,
 } from "@heroicons/react/24/solid";
 import type Hls from "hls.js";
 import type JASSUB from "jassub";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/client";
-import type { PlayCaps, PlayInfo } from "@/lib/player";
+import { COMPAT_KEY, type PlayCaps, type PlayInfo } from "@/lib/player";
 import { cx, ErrorBox, Spinner } from "../ui";
+import { StreamStatus, type Stage } from "./StreamStatus";
 
 // Плеер серии: поток Jellyfin через календарь (HLS — hls.js, Safari — сам), ASS — JASSUB (libass в браузере,
 // шрифты из вложений файла), остальные субтитры — <track> (Jellyfin отдаёт их как WebVTT). Смена озвучки — новая
@@ -29,11 +30,18 @@ const store = {
   set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* без хранилища — не запоминаем */ } },
 };
 
-/** Что браузер декодирует сам (HEVC 10 бит — Chrome/Edge с аппаратным декодером, Safari). */
+/**
+ * Что браузер декодирует сам (HEVC 10 бит — Chrome/Edge с аппаратным декодером, Safari).
+ * Совместимый режим — всегда H.264: браузер может заявлять HEVC, а показывать чёрный экран.
+ */
 function detectCaps(): PlayCaps {
   const ok = (c: string) => typeof MediaSource !== "undefined" && MediaSource.isTypeSupported(`video/mp4; codecs="${c}"`);
-  return { hevc: ok("hvc1.2.4.L120.B0"), av1: ok("av01.0.08M.10"), maxBitrate: Number(store.get(QUALITY_KEY)) || 120e6 };
+  const compat = store.get(COMPAT_KEY) === "1";
+  return { hevc: !compat && ok("hvc1.2.4.L120.B0"), av1: !compat && ok("av01.0.08M.10"), maxBitrate: Number(store.get(QUALITY_KEY)) || 120e6 };
 }
+
+/** Сколько ждать картинку, прежде чем предложить перезапуск или совместимый режим. */
+const STALL_MS = 20_000;
 
 export const clock = (sec: number) => {
   const s = Math.max(0, Math.floor(sec));
@@ -70,11 +78,19 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   const [menu, setMenu] = useState<"audio" | "sub" | "quality" | null>(null);
   const [sub, setSub] = useState<number | null>(null);
   const sid = useRef<string | null>(null);
+  // Что сейчас с потоком: панель состояния и сторож «картинка не пошла»
+  const [stage, setStage] = useState<Stage>({ step: "session", since: Date.now() });
+  const [showStatus, setShowStatus] = useState(false);
+  const [stalled, setStalled] = useState(false);
+  const progressAt = useRef(Date.now());
 
   // ---------------------------------------------------------------- сессия и поток
   const open = useCallback(async (opts: { audio?: number | null; start?: number | null } = {}) => {
     setLoading(true);
     setError(null);
+    setStalled(false);
+    progressAt.current = Date.now();
+    setStage({ step: "session", since: Date.now() });
     try {
       const r = await api<PlayInfo>("/api/play", { method: "POST", json: { anilistId, ep, caps: detectCaps(), ...opts, replace: sid.current } });
       sid.current = r.sid;
@@ -112,18 +128,34 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
     const attach = async () => {
       hls.current?.destroy();
       hls.current = null;
-      if (info.hls && !v.canPlayType("application/vnd.apple.mpegurl")) {
-        const { default: H } = await import("hls.js");
-        if (!alive) return;
-        // Перекодирование первого сегмента — несколько секунд: ждём дольше обычного
-        const h = new H({ startPosition: at, manifestLoadingTimeOut: 30_000, fragLoadingTimeOut: 60_000, maxBufferLength: 60, backBufferLength: 90 });
+      // hls.js — везде, где есть MSE: свежий Chrome умеет HLS и сам, но со своим буфером и без старта с позиции
+      // (чёрный экран на холодной раздаче). Встроенный HLS — только где hls.js не работает (iPhone)
+      const { default: H } = info.hls ? await import("hls.js") : { default: null };
+      if (!alive) return;
+      if (H && H.isSupported()) {
+        // Перекодирование первого сегмента — несколько секунд: ждём дольше обычного. Загрузка — сразу с нужной
+        // позиции, без пробного первого сегмента (замер скорости): из холодной раздачи это лишние 10–20 МБ
+        const h = new H({
+          autoStartLoad: false, testBandwidth: false, manifestLoadingTimeOut: 30_000, fragLoadingTimeOut: 60_000,
+          maxBufferLength: 60, backBufferLength: 90,
+        });
         h.on(H.Events.ERROR, (_e, d) => { if (d.fatal) setError(new Error(`Поток прервался: ${d.details}`)); });
+        h.on(H.Events.MANIFEST_PARSED, () => {
+          setStage({ step: "manifest", since: Date.now() });
+          h.startLoad(at);
+        });
+        // init-сегмент (без номера) — Jellyfin ещё запускает перекодирование
+        h.on(H.Events.FRAG_LOADING, (_e, d) => setStage((s) => (s.step === "playing" || d.frag.sn === "initSegment" ? s : { step: "fragment", since: Date.now(), sn: Number(d.frag.sn), at: d.frag.start })));
+        h.on(H.Events.FRAG_LOADED, (_e, d) => setStage((s) => (s.step === "playing" ? s : {
+          ...s, lastMs: Math.round(d.frag.stats.loading.end - d.frag.stats.loading.start), lastBytes: d.frag.stats.total,
+        })));
         h.loadSource(info.src);
         h.attachMedia(v);
         hls.current = h;
       } else {
         v.src = info.src;
         v.currentTime = at;
+        setStage({ step: "fragment", since: Date.now() });
       }
       v.volume = volume;
       await v.play().catch(() => undefined);
@@ -135,6 +167,26 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   }, [info]);
 
   useEffect(() => () => { hls.current?.destroy(); ass.current?.destroy(); }, []);
+
+  // Загрузка — по состоянию видео, а не по событиям (Chrome шлёт «playing», пока hls.js ещё не подключил поток):
+  // не пауза и нечего показывать — грузится. Сторож: так дольше 20 с — показать состояние и предложить выход
+  useEffect(() => {
+    const t = setInterval(() => {
+      const v = video.current;
+      if (!v || !info || error) return;
+      const waiting = !v.paused && v.readyState < 3;
+      setLoading(waiting);
+      if (!waiting) progressAt.current = Date.now();
+      if (!v.paused && v.readyState >= 3) setStage((s) => (s.step === "playing" ? s : { step: "playing", since: Date.now() }));
+      setStalled(waiting && Date.now() - progressAt.current > STALL_MS);
+    }, 500);
+    return () => clearInterval(t);
+  }, [info, error]);
+  const compat = store.get(COMPAT_KEY) === "1";
+  const restart = (useCompat: boolean) => {
+    if (useCompat) store.set(COMPAT_KEY, "1");
+    void open({ audio: info?.audioIndex ?? null, start: video.current?.currentTime || info?.start || 0 });
+  };
 
   // ---------------------------------------------------------------- субтитры
   useEffect(() => {
@@ -244,7 +296,6 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
       <video ref={video} className="h-full w-full" playsInline
         onClick={toggle} onDoubleClick={fullscreen}
         onPlay={() => setPlaying(true)} onPause={() => { setPlaying(false); send(); }}
-        onWaiting={() => setLoading(true)} onPlaying={() => setLoading(false)} onCanPlay={() => setLoading(false)}
         onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
         onProgress={(e) => { const b = e.currentTarget.buffered; setBuffered(b.length ? b.end(b.length - 1) : 0); }}
         onEnded={onEnded}>
@@ -252,6 +303,11 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
       </video>
 
       {loading && !error && <div className="pointer-events-none absolute inset-0 grid place-items-center"><Spinner className="h-10 w-10 text-white/80" /></div>}
+      {/* Состояние потока: пока грузится (или по кнопке «i») — что делает Jellyfin и раздача */}
+      {!error && (loading || showStatus || stalled) && (
+        <StreamStatus sid={info?.sid ?? null} stage={stage} transcode={info?.transcode ?? null} stalled={stalled} compat={compat}
+          onRestart={() => restart(false)} onCompat={() => restart(true)} onClose={showStatus ? () => setShowStatus(false) : undefined} />
+      )}
       {Boolean(error) && <div className="absolute inset-x-6 top-1/3"><ErrorBox error={error} /></div>}
       {children?.(time, seek)}
 
@@ -297,8 +353,18 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
               }} />
           )}
           <Menu open={menu === "quality"} onOpen={() => setMenu(menu === "quality" ? null : "quality")} label="Качество" icon={<Cog6ToothIcon className="h-5 w-5" />}
-            items={QUALITIES.map((q) => ({ key: q.value, label: q.label, active: q.value === (Number(store.get(QUALITY_KEY)) || 120e6) }))}
-            onPick={(v) => { setMenu(null); store.set(QUALITY_KEY, String(v)); void open({ audio: info?.audioIndex ?? null, start: video.current?.currentTime ?? 0 }); }} />
+            items={[
+              ...QUALITIES.map((q) => ({ key: q.value, label: q.label, active: q.value === (Number(store.get(QUALITY_KEY)) || 120e6) })),
+              { key: -1, label: "Совместимый режим (H.264)", active: compat },
+            ]}
+            onPick={(v) => {
+              setMenu(null);
+              // Совместимый режим — переключатель: видео всегда в H.264 (если HEVC в браузере показывает чёрный экран)
+              if (v === -1) store.set(COMPAT_KEY, compat ? "0" : "1");
+              else store.set(QUALITY_KEY, String(v));
+              void open({ audio: info?.audioIndex ?? null, start: video.current?.currentTime ?? 0 });
+            }} />
+          <Ctl onClick={() => setShowStatus((x) => !x)} label="Состояние потока"><InformationCircleIcon className="h-5 w-5" /></Ctl>
           <Ctl onClick={fullscreen} label="Во весь экран (F)">
             {full ? <ArrowsPointingInIcon className="h-5 w-5" /> : <ArrowsPointingOutIcon className="h-5 w-5" />}
           </Ctl>

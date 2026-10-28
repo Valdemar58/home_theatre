@@ -1,5 +1,8 @@
-import { playSession, reportProgress, stopPlayback } from "@/server/player";
+import { playSession, playStatus, reportProgress, stopPlayback } from "@/server/player";
 import { authed, json } from "@/server/route";
+
+// Состояние потока (раздача «Стрима», буфер) — для панели в плеере
+export const GET = authed<{ sid: string }>(async (_req, user, { sid }) => json(await playStatus(playSession(sid, user.id))));
 
 // Позиция просмотра (раз в 10 с и на паузе): сохранить, после 85% — серия просмотрена
 export const POST = authed<{ sid: string }>(async (req, user, { sid }) => {

@@ -2,14 +2,15 @@ import "server-only";
 import { randomBytes } from "node:crypto";
 import {
   deviceProfile, isSignsTitle, pickAudio, pickSub, trackLabel, WATCHED_SHARE,
-  type PlayCaps, type PlayInfo, type PlaySub, type PlayTrack,
+  type PlayCaps, type PlayInfo, type PlayStatus, type PlaySub, type PlayTrack,
 } from "@/lib/player";
 import { ApiError } from "./route";
 import { db, now } from "./db";
 import { markWatched } from "./jellyfin-sync";
 import { episodeItems } from "./playback";
 import { guarded } from "./sources";
-import { jellyfin } from "./stream";
+import { prebufferProgress } from "./prebuffer";
+import { jellyfin, torrentStats } from "./stream";
 
 // Плеер календаря: сессия просмотра серии. Jellyfin решает по профилю браузера, что отдать как есть, а что
 // перекодировать (HEVC 10 бит → копия, если браузер умеет; FLAC → AAC), и отдаёт HLS. Браузер ходит только
@@ -34,6 +35,8 @@ export type PlaySession = {
   mediaSourceId: string;
   playSessionId: string;
   deviceId: string;
+  /** Серия «Стрима»: раздача и файл в TorrServer (состояние для плеера) */
+  stream: { hash: string; index: number } | null;
   /** Путь и запрос HLS у Jellyfin (/videos/<id>/master.m3u8?...) или null — файл как есть */
   hlsPath: string | null;
   duration: number;
@@ -89,6 +92,7 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
   const duration = (ms.RunTimeTicks ?? 0) / 1e7 || (item.runtimeSec ?? 0);
   sessions.set(sid, {
     sid, userId: user.id, anilistId, ep, itemId: item.itemId, mediaSourceId: ms.Id, playSessionId, deviceId, hlsPath,
+    stream: item.hash && item.index ? { hash: item.hash, index: item.index } : null,
     duration, marked: false, jfAt: 0, seenAt: Date.now(),
   });
 
@@ -113,7 +117,8 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
     subIndex: pickSub(subs, audio.find((a) => a.index === audioIndex)),
     fonts: (ms.MediaAttachments ?? []).filter((a) => /font|ttf|otf|woff/i.test(`${a.MimeType} ${a.FileName}`)).map((a) => `${base}/font/${a.Index}`),
     chapters,
-    transcode: ms.TranscodeReasons ?? [],
+    // Причины — в ответе или (Jellyfin 12) только в ссылке потока
+    transcode: ms.TranscodeReasons?.length ? ms.TranscodeReasons : (new URLSearchParams(ms.TranscodingUrl?.split("?")[1] ?? "").get("TranscodeReasons")?.split(",").filter(Boolean) ?? []),
   };
 }
 
@@ -190,6 +195,23 @@ export async function reportProgress(user: { id: number; name: string; jellyfin_
     }).catch((e) => console.warn(`[player] позиция в Jellyfin: ${String(e)}`));
   }
   return { marked: s.marked };
+}
+
+/**
+ * Что с потоком серии «Стрима» (как на странице «Загрузки»): раздача, скорость против нужной, подготовка буфера.
+ * Файл из библиотеки — null (качать нечего).
+ */
+export async function playStatus(s: PlaySession): Promise<PlayStatus> {
+  if (!s.stream) return { stream: null };
+  const t = await torrentStats(s.stream.hash, s.stream.index).catch(() => null);
+  const p = prebufferProgress().find((x) => x.key === `${s.stream!.hash}:${s.stream!.index}`);
+  return {
+    stream: t && {
+      ...t,
+      rate: t.fileSize && s.duration ? t.fileSize / s.duration : null,
+      prebuffer: p ? { read: p.read, size: p.size, ready: p.ready, done: p.done, etaSec: p.etaSec } : null,
+    },
+  };
 }
 
 /** Закрыли плеер: остановить перекодирование у Jellyfin. */

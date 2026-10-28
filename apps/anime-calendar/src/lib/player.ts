@@ -24,8 +24,21 @@ export type PlayInfo = {
   transcode: string[];
 };
 
+/** Состояние потока серии «Стрима» — то же, что на странице «Загрузки». */
+export type PlayStatus = {
+  stream: {
+    state: string; speed: number; peers: number; seeders: number; totalPeers: number; fileSize: number | null;
+    /** Сколько байт/с нужно, чтобы смотреть без остановок */
+    rate: number | null;
+    prebuffer: { read: number; size: number; ready: boolean; done: boolean; etaSec: number | null } | null;
+  } | null;
+};
+
 /** Что умеет браузер: сервер собирает по этому профиль устройства для Jellyfin. */
 export type PlayCaps = { hevc: boolean; av1: boolean; maxBitrate: number };
+
+/** Совместимый режим: видео всегда перекодируется в H.264 (если браузер заявляет HEVC, но показывает чёрный экран). */
+export const COMPAT_KEY = "player-compat";
 
 const LANG_RU: Record<string, string> = {
   jpn: "японский", rus: "русский", eng: "английский", chi: "китайский", zho: "китайский", kor: "корейский",

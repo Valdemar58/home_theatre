@@ -282,6 +282,19 @@ export async function listStreams(): Promise<StreamItem[]> {
   return items.sort((a, b) => (b.addedAt ?? 0) - (a.addedAt ?? 0));
 }
 
+/** Раздача серии сейчас (для плеера): состояние, скорость, пиры, размер файла. Будит раздачу — только для играющей серии. */
+export async function torrentStats(hash: string, index: number) {
+  const t = await ts<TsStats>("/torrents", { action: "get", hash });
+  return {
+    state: STATE_RU[t.stat_string ?? ""] ?? t.stat_string ?? "—",
+    speed: t.download_speed ?? 0,
+    peers: t.active_peers ?? 0,
+    seeders: t.connected_seeders ?? 0,
+    totalPeers: t.total_peers ?? 0,
+    fileSize: t.file_stats?.find((f) => f.id === index)?.length ?? null,
+  };
+}
+
 /** Нужная для просмотра скорость: средний размер видеофайла ÷ длительность серии. */
 export function playbackRate(files: { path: string; length: number }[] | undefined, minutes: number): number | null {
   const video = (files ?? []).filter((f) => VIDEO.test(f.path) && !EXTRAS.test(f.path));
