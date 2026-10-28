@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chapterLabel, piecesToRanges, deviceProfile, pickAudio, pickSub, trackLabel, type PlaySub, type PlayTrack } from "./player";
+import { chapterLabel, piecesToRanges, srtToVtt, deviceProfile, pickAudio, pickSub, trackLabel, type PlaySub, type PlayTrack } from "./player";
 
 const t = (index: number, lang: string | null, title: string | null = null): PlayTrack => ({ index, lang, title, codec: "aac", label: "" });
 const s = (index: number, lang: string | null, title: string | null = null, forced = false): PlaySub =>
@@ -50,5 +50,12 @@ describe("скачанное TorrServer", () => {
     // Файл — байты 100..500 раздачи, куски по 100: 0 (до файла), 1–2 подряд, 4 (последний)
     expect(piecesToRanges([4, 0, 1, 2], 100, 100, 400)).toEqual([[0, 0.5], [0.75, 1]]);
     expect(piecesToRanges([], 100, 0, 400)).toEqual([]);
+  });
+});
+
+describe("SRT → WebVTT", () => {
+  it("заголовок, точки в миллисекундах, без номеров реплик", () => {
+    const srt = "1\r\n00:00:01,500 --> 00:00:03,000\r\n（ヴェルドラ）\r\n\r\n2\r\n00:01:02,000 --> 00:01:04,250\r\n♪〜\r\n";
+    expect(srtToVtt(srt)).toBe("WEBVTT\n\n00:00:01.500 --> 00:00:03.000\n（ヴェルドラ）\n\n00:01:02.000 --> 00:01:04.250\n♪〜\n");
   });
 });

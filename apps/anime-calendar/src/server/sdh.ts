@@ -98,6 +98,16 @@ async function fetchFiles(anilistId: number, signal: AbortSignal, onFile: () => 
 const storedFiles = (anilistId: number) =>
   db.prepare<[number], FileRow>("SELECT ep, name, url, path, hash FROM sdh_file WHERE anilist_id = ? ORDER BY ep").all(anilistId);
 
+/** Плеер: скачать японские субтитры серий с Jimaku (без разбора моделью). note — почему файлов нет. */
+export async function fetchJimaku(anilistId: number): Promise<{ files: number; note: string | null }> {
+  const r = await fetchFiles(anilistId, AbortSignal.timeout(180_000), () => undefined);
+  return { files: r.rows.length, note: r.note };
+}
+
+/** Японский файл субтитров серии (скачанный с Jimaku), если есть. */
+export const sdhFile = (anilistId: number, ep: number) =>
+  db.prepare<[number, number], { name: string; path: string }>("SELECT name, path FROM sdh_file WHERE anilist_id = ? AND ep = ?").get(anilistId, ep) ?? null;
+
 // ---------------------------------------------------------------- конспект серии
 
 const mmss = (ms: number) => `${String(Math.floor(ms / 60000)).padStart(2, "0")}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}`;

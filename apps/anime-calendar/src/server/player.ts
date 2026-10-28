@@ -1,7 +1,7 @@
 import "server-only";
 import { randomBytes } from "node:crypto";
 import {
-  chapterLabel, deviceProfile, isSignsTitle, pickAudio, pickSub, trackLabel, WATCHED_SHARE,
+  chapterLabel, deviceProfile, isSignsTitle, JIMAKU_SUB, pickAudio, pickSub, trackLabel, WATCHED_SHARE,
   type PlayCaps, type PlayInfo, type PlayStatus, type PlaySub, type PlayTrack,
 } from "@/lib/player";
 import { ApiError } from "./route";
@@ -10,6 +10,7 @@ import { markWatched } from "./jellyfin-sync";
 import { episodeItems } from "./playback";
 import { guarded } from "./sources";
 import { prebufferProgress } from "./prebuffer";
+import { sdhFile } from "./sdh";
 import { dropTorrentCache, jellyfin, torrentCached, torrentStats } from "./stream";
 import { episodeStatus } from "./availability";
 
@@ -105,7 +106,18 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
       forced: Boolean(m.IsForced), signs: Boolean(m.IsForced) || isSignsTitle(m.Title ?? null), external: Boolean(m.IsExternal),
     };
   });
-  const chapters = (await chaptersOf(item.itemId)).filter((c) => c.start < duration);
+  // Японские субтитры с Jimaku (скачаны для «Глубокого разбора» или кнопкой в плеере): тайминг другого релиза — есть сдвиг
+  const jp = sdhFile(anilistId, ep);
+  if (jp) {
+    const ass = /\.(ass|ssa)$/i.test(jp.path);
+    subs.push({
+      index: JIMAKU_SUB, lang: "jpn", codec: ass ? "ass" : "srt", title: "Jimaku", label: "Японский · Jimaku (для слабослышащих)",
+      url: `/api/anime/${anilistId}/subs/${ep}`, ass, forced: false, signs: false, external: true, jimaku: true,
+    });
+  }
+  const meta = await chaptersOf(item.itemId, ms.Id);
+  const chapters = meta.chapters.filter((c) => c.start < duration);
+  const trickplay = meta.trickplay && { ...meta.trickplay, url: `${base}/trickplay/${meta.trickplay.width}` };
   return {
     sid,
     src: hlsPath ? `${base}/${hlsPath.replace(/^\/videos\/[^/]+\//i, "")}` : `${base}/stream`,
@@ -119,6 +131,7 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
     subIndex: pickSub(subs, audio.find((a) => a.index === audioIndex)),
     fonts: (ms.MediaAttachments ?? []).filter((a) => /font|ttf|otf|woff/i.test(`${a.MimeType} ${a.FileName}`)).map((a) => `${base}/font/${a.Index}`),
     chapters,
+    trickplay,
     // Причины — в ответе или (Jellyfin 12) только в ссылке потока
     transcode: ms.TranscodeReasons?.length ? ms.TranscodeReasons : (new URLSearchParams(ms.TranscodingUrl?.split("?")[1] ?? "").get("TranscodeReasons")?.split(",").filter(Boolean) ?? []),
   };
@@ -160,16 +173,28 @@ async function info(itemId: string, userId: string, caps: PlayCaps, start: numbe
   return ms;
 }
 
-async function chaptersOf(itemId: string) {
-  const r = await jellyfin<{ Items: { Chapters?: { Name?: string; StartPositionTicks: number }[] }[] }>(`/Items?Ids=${itemId}&Fields=Chapters`).catch(() => null);
-  // Названия глав — по-русски (Intro → «Вступление», Part A → «Часть A»)
-  return (r?.Items[0]?.Chapters ?? []).map((c) => ({ name: chapterLabel(c.Name ?? ""), start: c.StartPositionTicks / 1e7 }));
+type TrickInfo = { Width: number; Height: number; TileWidth: number; TileHeight: number; ThumbnailCount: number; Interval: number };
+
+/** Главы и миниатюры шкалы (trickplay Jellyfin — есть, если библиотека их делает; у «Стрима» — нет). */
+async function chaptersOf(itemId: string, mediaSourceId: string) {
+  const r = await jellyfin<{ Items: { Chapters?: { Name?: string; StartPositionTicks: number }[]; Trickplay?: Record<string, Record<string, TrickInfo>> }[] }>(
+    `/Items?Ids=${itemId}&Fields=Chapters,Trickplay`).catch(() => null);
+  const it = r?.Items[0];
+  // Самая мелкая ширина — для подсказки на шкале хватает
+  const t = Object.values(it?.Trickplay?.[mediaSourceId] ?? Object.values(it?.Trickplay ?? {})[0] ?? {}).sort((a, b) => a.Width - b.Width)[0];
+  return {
+    // Названия глав — по-русски (Intro → «Вступление», Part A → «Часть A»)
+    chapters: (it?.Chapters ?? []).map((c) => ({ name: chapterLabel(c.Name ?? ""), start: c.StartPositionTicks / 1e7 })),
+    trickplay: t ? { width: t.Width, height: t.Height, cols: t.TileWidth, rows: t.TileHeight, count: t.ThumbnailCount, interval: t.Interval } : null,
+  };
 }
 
 /** Адрес у Jellyfin для запроса браузера к /api/play/<sid>/<rest>. */
 export function upstreamPath(s: PlaySession, rest: string, search: string): string {
   const sub = /^sub\/(\d+)\.(ass|vtt)$/.exec(rest);
   if (sub) return `/Videos/${s.itemId}/${s.mediaSourceId}/Subtitles/${sub[1]}/0/Stream.${sub[2]}`;
+  const trick = /^trickplay\/(\d+)\/(\d+)\.jpg$/.exec(rest);
+  if (trick) return `/Videos/${s.itemId}/Trickplay/${trick[1]}/${trick[2]}.jpg?mediaSourceId=${s.mediaSourceId}`;
   const font = /^font\/(\d+)$/.exec(rest);
   if (font) return `/Videos/${s.itemId}/${s.mediaSourceId}/Attachments/${font[1]}`;
   if (rest === "stream") return `/Videos/${s.itemId}/stream?static=true&mediaSourceId=${s.mediaSourceId}`;
@@ -246,6 +271,11 @@ async function cleanAfterWatched(s: PlaySession) {
   const waiting = episodes.some((e) => e.hash === hash && e.ep > Math.max(watched, s.ep) && (e.cached ?? 0) > 0.05);
   if (!waiting) await dropTorrentCache(hash);
 }
+
+/** Что сейчас смотрят в плеере календаря из «Стрима» — подготовка следующей серии (prebuffer.ts). */
+export const playingStreams = () => [...sessions.values()]
+  .filter((s) => s.stream && Date.now() - s.seenAt < 60_000)
+  .map((s) => ({ hash: s.stream!.hash, index: s.stream!.index, userId: s.userId }));
 
 /** Брошенные сессии (вкладку закрыли без «стоп») — убрать (из jobs.ts). */
 export function sweepPlayback() {

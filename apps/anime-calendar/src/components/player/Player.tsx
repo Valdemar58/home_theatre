@@ -56,7 +56,16 @@ export const clock = (sec: number) => {
 };
 
 /** Управление плеером снаружи (боковая панель страницы): озвучка и субтитры. */
-export type PlayerControls = { setAudio: (index: number) => void; setSub: (index: number | null) => void };
+export type PlayerControls = {
+  setAudio: (index: number) => void;
+  setSub: (index: number | null) => void;
+  /** Сдвиг субтитров, с: плюс — позже (тайминг другого релиза) */
+  setSubDelay: (sec: number) => void;
+  /** Размер текстовых субтитров, % (ASS рисуется стилями файла) */
+  setSubSize: (pct: number) => void;
+  reload: () => void;
+};
+export type SubSettings = { delay: number; size: number };
 
 export function Player({ anilistId, ep, title, onEnded, next, onReport, children, autoPlay, preview, onState, controls }: {
   anilistId: number;
@@ -66,7 +75,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   autoPlay?: boolean;
   preview?: { still: string | null; heading: string; text: string | null };
   /** Сессия и выбранные субтитры — для боковой панели */
-  onState?: (s: { info: PlayInfo | null; sub: number | null }) => void;
+  onState?: (s: { info: PlayInfo | null; sub: number | null; subs: SubSettings }) => void;
   controls?: React.MutableRefObject<PlayerControls | null>;
   /** Досмотрели до конца — следующая серия (если есть) */
   onEnded?: () => void;
@@ -91,6 +100,11 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   const [idle, setIdle] = useState(false);
   const [menu, setMenu] = useState<"audio" | "sub" | "quality" | null>(null);
   const [sub, setSub] = useState<number | null>(null);
+  // Сдвиг — свой у тайтла (релизы разные), размер — общий
+  const delayKey = `sub-delay:${anilistId}`;
+  const [subDelay, setSubDelay] = useState(() => Number(store.get(delayKey)) || 0);
+  const [subSize, setSubSize] = useState(() => Number(store.get("player-sub-size")) || 100);
+  const track = useRef<HTMLTrackElement>(null);
   const sid = useRef<string | null>(null);
   // Что сейчас с потоком: панель состояния и сторож «картинка не пошла»
   const [stage, setStage] = useState<Stage>({ step: "session", since: Date.now() });
@@ -103,6 +117,14 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   const [notice, setNotice] = useState<string | null>(null);
   // До нажатия ▶ — превью: сессия уже открыта (Jellyfin прочитал файл), поток не запрошен
   const [started, setStarted] = useState(Boolean(autoPlay));
+  // Серия кончилась — отсчёт до следующей (отменяется)
+  const [countdown, setCountdown] = useState<number | null>(null);
+  useEffect(() => {
+    if (countdown === null) return;
+    if (countdown <= 0) { next?.go(); return; }
+    const t = setTimeout(() => setCountdown((c) => (c === null ? null : c - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [countdown, next]);
 
   // ---------------------------------------------------------------- сессия и поток
   const open = useCallback(async (opts: { audio?: number | null; start?: number | null } = {}) => {
@@ -208,7 +230,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   }, [info, started]);
 
   // Боковая панель страницы: что открыто и чем управлять
-  useEffect(() => { onState?.({ info, sub }); }, [info, sub, onState]);
+  useEffect(() => { onState?.({ info, sub, subs: { delay: subDelay, size: subSize } }); }, [info, sub, subDelay, subSize, onState]);
 
   useEffect(() => () => { hls.current?.destroy(); ass.current?.destroy(); }, []);
 
@@ -251,13 +273,32 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
     void import("jassub").then(({ default: J }) => {
       if (!alive) return;
       ass.current = new J({
-        video: v, subUrl: s.url, fonts: info.fonts,
+        video: v, subUrl: s.url, fonts: info.fonts, timeOffset: -subDelay,
         workerUrl: "/jassub/jassub-worker.js", wasmUrl: "/jassub/jassub-worker.wasm", modernWasmUrl: "/jassub/jassub-worker-modern.wasm",
         availableFonts: { "liberation sans": "/jassub/default.woff2" }, fallbackFont: "liberation sans",
       });
     });
     return () => { alive = false; };
+    // Сдвиг меняется отдельно (ниже) — без пересоздания
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sub, info]);
+
+  // Сдвиг субтитров: ASS — timeOffset JASSUB, текстовые — сами реплики (исходное время — в WeakMap)
+  const original = useRef(new WeakMap<TextTrackCue, [number, number]>());
+  const shiftCues = useCallback(() => {
+    const cues = track.current?.track.cues;
+    if (!cues) return;
+    for (const c of Array.from(cues)) {
+      const o = original.current.get(c) ?? [c.startTime, c.endTime];
+      original.current.set(c, o);
+      c.startTime = o[0] + subDelay;
+      c.endTime = o[1] + subDelay;
+    }
+  }, [subDelay]);
+  useEffect(() => {
+    if (ass.current) (ass.current as unknown as { timeOffset: number }).timeOffset = -subDelay;
+    shiftCues();
+  }, [subDelay, shiftCues]);
   const vttSub = info?.subs.find((x) => x.index === sub && !x.ass);
 
   const chooseSub = (index: number | null) => {
@@ -269,6 +310,10 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
     controls.current = {
       setAudio: (i) => { if (i !== info?.audioIndex) void open({ audio: i, start: video.current?.currentTime || info?.start || 0 }); },
       setSub: chooseSub,
+      setSubDelay: (sec) => { const d = Math.round(sec * 10) / 10; setSubDelay(d); store.set(delayKey, String(d)); },
+      setSubSize: (pct) => { setSubSize(pct); store.set("player-sub-size", String(pct)); },
+      // Появились новые дорожки (скачали с Jimaku) — та же серия с той же секунды
+      reload: () => void open({ audio: info?.audioIndex ?? null, start: video.current?.currentTime || info?.start || 0 }),
     };
   }
 
@@ -357,13 +402,15 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   return (
     <div ref={box} onMouseMove={wake} onMouseLeave={() => setIdle(true)}
       className={cx("group relative w-full overflow-hidden bg-black", full ? "h-screen" : "aspect-video rounded-xl ring-1 ring-gray-700", hidden && "cursor-none")}>
-      <video ref={video} className="h-full w-full" playsInline
+      {/* Размер текстовых субтитров (реплики <track>) */}
+      <style>{`.ac-video::cue { font-size: ${subSize}%; }`}</style>
+      <video ref={video} className="ac-video h-full w-full" playsInline
         onClick={toggle} onDoubleClick={fullscreen}
         onPlay={() => setPlaying(true)} onPause={() => { setPlaying(false); send(); }}
         onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
         onProgress={(e) => { const b = e.currentTarget.buffered; setBuffered(b.length ? b.end(b.length - 1) : 0); }}
-        onEnded={onEnded}>
-        {vttSub && <track key={vttSub.url} kind="subtitles" src={vttSub.url} srcLang={vttSub.lang ?? "und"} label={vttSub.label} default />}
+        onEnded={() => { onEnded?.(); if (next) setCountdown(10); }}>
+        {vttSub && <track ref={track} key={vttSub.url} kind="subtitles" src={vttSub.url} srcLang={vttSub.lang ?? "und"} label={vttSub.label} default onLoad={shiftCues} />}
       </video>
 
       {!started && <Preview preview={preview} start={info?.start ?? 0} ready={Boolean(info)} onPlay={() => setStarted(true)} />}
@@ -375,6 +422,16 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
       )}
       {Boolean(error) && <div className="absolute inset-x-6 top-1/3"><ErrorBox error={error} /></div>}
       {children?.(time, seek)}
+      {countdown !== null && next && (
+        <div className="absolute bottom-24 right-4 z-30 w-72 space-y-2 rounded-xl bg-black/85 p-4 text-sm text-white shadow-2xl ring-1 ring-white/10">
+          <p className="text-gray-300">Следующая — <b className="text-white">{next.label}</b> через {countdown} с</p>
+          <div className="h-1 overflow-hidden rounded-full bg-white/15"><div className="h-full bg-accent-400 transition-all duration-1000 ease-linear" style={{ width: `${(1 - countdown / 10) * 100}%` }} /></div>
+          <div className="flex gap-2">
+            <button onClick={() => next.go()} className="flex-1 rounded-md bg-accent-500 px-3 py-1.5 font-medium hover:bg-accent-400">Смотреть сейчас</button>
+            <button onClick={() => setCountdown(null)} className="rounded-md bg-white/10 px-3 py-1.5 hover:bg-white/20">Отмена</button>
+          </div>
+        </div>
+      )}
       {notice && (
         <div className="absolute inset-x-0 bottom-20 z-20 mx-auto w-fit max-w-[90%] rounded-lg bg-black/80 px-3 py-2 text-sm text-warning-200 ring-1 ring-white/10">
           {notice} <button onClick={() => setNotice(null)} className="ml-2 text-gray-400 hover:text-white">×</button>
@@ -389,7 +446,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
       {/* Панель управления */}
       <div className={cx("absolute inset-x-0 bottom-0 z-10 bg-linear-to-t from-black/85 to-transparent px-3 pb-2 pt-10 transition-opacity", hidden && "pointer-events-none opacity-0")}>
         <SeekBar duration={duration} time={time} buffered={buffered} chapters={info?.chapters ?? []} onSeek={seek} pct={pct}
-          cached={status?.stream?.cached ?? []} />
+          cached={status?.stream?.cached ?? []} trick={info?.trickplay ?? null} />
         <div className="mt-1 flex items-center gap-1 text-white">
           <Ctl onClick={toggle} label={playing ? "Пауза (пробел)" : "Смотреть (пробел)"}>
             {playing ? <PauseIcon className="h-6 w-6" /> : <PlayIcon className="h-6 w-6" />}
@@ -497,10 +554,12 @@ function Menu({ open, onOpen, label, icon, items, onPick }: {
   );
 }
 
-function SeekBar({ duration, time, buffered, chapters, onSeek, pct, cached }: {
+function SeekBar({ duration, time, buffered, chapters, onSeek, pct, cached, trick }: {
   duration: number; time: number; buffered: number; chapters: { name: string; start: number }[];
   /** Скачано TorrServer — доли файла (серия «Стрима»); куда можно перематывать без ожидания */
   cached: [number, number][];
+  /** Миниатюры (trickplay Jellyfin) — кадр над подсказкой времени */
+  trick: PlayInfo["trickplay"];
   onSeek: (t: number) => void; pct: (t: number) => string;
 }) {
   const bar = useRef<HTMLDivElement>(null);
@@ -525,11 +584,29 @@ function SeekBar({ duration, time, buffered, chapters, onSeek, pct, cached }: {
           <span key={c.start} className="absolute inset-y-0 w-0.5 bg-black/60" style={{ left: pct(c.start) }} />
         ))}
       </div>
+      {hover !== null && trick && <TrickThumb trick={trick} t={hover} left={pct(hover)} />}
       {hover !== null && (
         <span className="pointer-events-none absolute -top-7 -translate-x-1/2 whitespace-nowrap rounded bg-black/80 px-1.5 py-0.5 text-xs text-white" style={{ left: pct(hover) }}>
           {clock(hover)}{chapterAt(hover) ? ` · ${chapterAt(hover)}` : ""}
         </span>
       )}
     </div>
+  );
+}
+
+/** Кадр на шкале из плитки trickplay: номер кадра → плитка и место в ней. */
+function TrickThumb({ trick, t, left }: { trick: NonNullable<PlayInfo["trickplay"]>; t: number; left: string }) {
+  const per = trick.cols * trick.rows;
+  const i = Math.min(trick.count - 1, Math.floor((t * 1000) / trick.interval));
+  const tile = Math.floor(i / per);
+  const x = (i % per) % trick.cols;
+  const y = Math.floor((i % per) / trick.cols);
+  const w = 176;
+  const h = Math.round((w * trick.height) / trick.width);
+  const k = w / trick.width;
+  return (
+    <span className="pointer-events-none absolute -translate-x-1/2 overflow-hidden rounded-md shadow-xl ring-1 ring-white/20"
+      style={{ left, bottom: 40, width: w, height: h, backgroundImage: `url(${trick.url}/${tile}.jpg)`,
+        backgroundSize: `${trick.cols * w}px ${trick.rows * trick.height * k}px`, backgroundPosition: `-${x * w}px -${y * trick.height * k}px` }} />
   );
 }

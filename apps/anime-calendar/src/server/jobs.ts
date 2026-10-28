@@ -15,7 +15,7 @@ import { warmReference } from "./reco/card";
 import { updateThemeCanon } from "./reco/features";
 import { scheduleVoices } from "./tasks";
 import { prefetchWhileWatching } from "./prebuffer";
-import { sweepPlayback } from "./player";
+import { playingStreams, sweepPlayback } from "./player";
 import { syncJellyfinPlays } from "./jellyfin-sync";
 import { translateTags } from "./tags-ru";
 import { checkNewEpisodes } from "./episode-notices";
@@ -62,7 +62,7 @@ export function startJobs() {
     setInterval(() => void safe("jellyfin-plays", syncJellyfinPlays), 5 * MINUTE);
   }
   // Смотрят серию из «Стрима» — заранее готовим следующую
-  if (env.jellyfinApiKey) setInterval(() => void safe("prefetch-next", prefetchWhileWatching), 30_000);
+  if (env.jellyfinApiKey) setInterval(() => void safe("prefetch-next", () => prefetchWhileWatching(playingStreams())), 30_000);
   // Уборка стриминга: .strm скачанных серий и раздачи TorrServer без ссылок
   if (env.jellyfinApiKey) setInterval(() => void safe("stream-cleanup", () => cleanupStreams()), 30 * MINUTE);
   // Плеер: сессии, брошенные без «стоп» (закрыли вкладку), — остановить перекодирование

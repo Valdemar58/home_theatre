@@ -1,5 +1,5 @@
 "use client";
-import { CheckIcon, ExclamationTriangleIcon, MagnifyingGlassIcon } from "@heroicons/react/24/outline";
+import { CheckIcon, ExclamationTriangleIcon, EyeIcon, EyeSlashIcon, MagnifyingGlassIcon } from "@heroicons/react/24/outline";
 import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -20,13 +20,15 @@ import { PlotHub } from "../PlotHub";
 import { Scores } from "../Scores";
 import { Badge, Button, cx } from "../ui";
 import { usePrepare } from "../WatchButton";
-import { clock, Player, type PlayerControls } from "./Player";
+import { clock, Player, type PlayerControls, type SubSettings } from "./Player";
 import { WatchSidebar } from "./WatchSidebar";
 
 // Страница просмотра серии (по мотивам AniLib): шапка тайтла, плеер и боковая панель «Озвучка / Субтитры», лента
 // серий (кадр, готовность, кэш TorrServer, «Подготовить», прогресс), под плеером — серия, сюжет, друзья, обсуждение.
 
 const gb = (b: number) => `${(b / 1e9).toFixed(1)} ГБ`;
+// Общий с «Показать все описания» на странице тайтла (Plot.tsx)
+const SPOILERS_KEY = "episodes-show-all";
 
 export function WatchView({ id, ep }: { id: number; ep: number }) {
   const router = useRouter();
@@ -49,7 +51,7 @@ export function WatchView({ id, ep }: { id: number; ep: number }) {
     if (r.marked) void qc.invalidateQueries({ queryKey: ["list"] });
   }, [qc]);
   const controls = useRef<PlayerControls | null>(null);
-  const [player, setPlayer] = useState<{ info: PlayInfo | null; sub: number | null }>({ info: null, sub: null });
+  const [player, setPlayer] = useState<{ info: PlayInfo | null; sub: number | null; subs: SubSettings }>({ info: null, sub: null, subs: { delay: 0, size: 100 } });
   const spoiler = ep > watched + 1;
 
   return (
@@ -82,9 +84,9 @@ export function WatchView({ id, ep }: { id: number; ep: number }) {
           title={`${name} · ${ep} серия${info?.title ? ` · ${info.title}` : ""}`}
           preview={{ still: info?.still ?? null, heading: `${ep} серия${info?.title ? ` · ${info.title}` : ""}`, text: spoiler ? null : info?.overview ?? null }}
           next={nextEp ? { label: `${nextEp.ep} серия`, go: () => go(nextEp.ep, true) } : null}
-          onEnded={nextEp ? () => go(nextEp.ep, true) : undefined} onReport={onReport}
+          onReport={onReport}
           onState={setPlayer} controls={controls} />
-        {a && <WatchSidebar media={a} info={player.info} sub={player.sub} controls={controls} />}
+        {a && <WatchSidebar media={a} info={player.info} sub={player.sub} subs={player.subs} controls={controls} />}
       </div>
 
       {st && <CacheWarnings caches={st.caches} anilistId={id} />}
@@ -166,6 +168,15 @@ function EpisodeStrip({ id, current, statuses, watched, positions, titles, onPic
 }) {
   const { prepare, busy } = usePrepare(id);
   const strip = useRef<HTMLDivElement>(null);
+  // Кадры серий дальше следующей непросмотренной — размыты (спойлер); выбор общий с «Показать все описания» тайтла
+  const [shots, setShots] = useState(false);
+  useEffect(() => {
+    try { setShots(localStorage.getItem(SPOILERS_KEY) === "1"); } catch { /* без хранилища — размыто */ }
+  }, []);
+  const toggleShots = () => setShots((v) => {
+    try { localStorage.setItem(SPOILERS_KEY, v ? "0" : "1"); } catch { /* не страшно */ }
+    return !v;
+  });
   const [find, setFind] = useState("");
   const pos = new Map(positions.map((p) => [p.ep, p]));
   // Текущая серия — в середине ленты
@@ -181,6 +192,13 @@ function EpisodeStrip({ id, current, statuses, watched, positions, titles, onPic
     <section className="space-y-2">
       <div className="flex items-center gap-3">
         <h2 className="text-lg font-bold">Серии <span className="text-sm font-normal text-gray-500">{statuses.length}</span></h2>
+        {statuses.some((s) => s.ep > watched + 1) && (
+          <button onClick={toggleShots} className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-200"
+            title="Кадры серий дальше вашей размыты, чтобы не подсмотреть сюжет">
+            {shots ? <EyeSlashIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
+            {shots ? "Размыть кадры дальше моей серии" : "Показать кадры"}
+          </button>
+        )}
         <form onSubmit={jump} className="ml-auto flex items-center gap-1 rounded-lg bg-gray-800/60 px-2 ring-1 ring-gray-700">
           <MagnifyingGlassIcon className="h-4 w-4 text-gray-500" />
           <input value={find} onChange={(e) => setFind(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="Серия №" inputMode="numeric"
@@ -198,8 +216,8 @@ function EpisodeStrip({ id, current, statuses, watched, positions, titles, onPic
             <div key={s.ep} data-ep={s.ep} className={cx("w-44 shrink-0 snap-start overflow-hidden rounded-lg bg-gray-800/60 ring-1",
               s.ep === current ? "ring-2 ring-accent-400" : "ring-gray-700", !can && "opacity-60")}>
               <button onClick={() => onPick(s.ep)} disabled={!can} title={STATE_TIP[s.state]} className="block w-full text-left disabled:cursor-not-allowed">
-                <div className="relative aspect-video bg-gray-900">
-                  {t?.still && <Img src={t.still} size="thumb" className={cx("h-full w-full object-cover", s.ep > watched + 1 && "blur-[2px] brightness-75")} />}
+                <div className="relative aspect-video overflow-hidden bg-gray-900">
+                  {t?.still && <Img src={t.still} size="thumb" className={cx("absolute inset-0 h-full w-full object-cover", !shots && s.ep > watched + 1 && "blur-[2px] brightness-75")} />}
                   <span className="absolute left-1.5 top-1.5 rounded bg-black/70 px-1.5 text-xs font-semibold tabular-nums text-white">{s.ep}</span>
                   {seen && <span className="absolute right-1.5 top-1.5 rounded-full bg-black/70 p-0.5"><CheckIcon className="h-3.5 w-3.5 text-positive-300" /></span>}
                   {p && !seen && p.pos > 5 && <span className="absolute bottom-1.5 right-1.5 rounded bg-black/70 px-1 text-[10px] text-gray-200">{clock(p.pos)}</span>}

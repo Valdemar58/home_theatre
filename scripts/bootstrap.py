@@ -555,6 +555,18 @@ def step_jellyfin() -> None:
         api.post("/System/Configuration/encoding", enc)
         log(f"= аппаратное транскодирование: {accel}")
 
+    # Миниатюры на шкале плеера (trickplay): только по опорным кадрам, с ускорением, плановой задачей (ночью), а не
+    # при сканировании. Кроме «Стрима»: Jellyfin пришлось бы выкачать раздачу целиком
+    sys_cfg = api.get("/System/Configuration")
+    sys_cfg["TrickplayOptions"].update(EnableHwAcceleration=bool(accel), EnableHwEncoding=bool(accel), EnableKeyFrameOnlyExtraction=True)
+    api.post("/System/Configuration", sys_cfg)
+    for lib in api.get("/Library/VirtualFolders"):
+        if lib["Name"] == "Стрим":
+            continue
+        opts = {**lib["LibraryOptions"], "EnableTrickplayImageExtraction": True, "ExtractTrickplayImagesDuringLibraryScan": False}
+        api.post("/Library/VirtualFolders/LibraryOptions", {"Id": lib["ItemId"], "LibraryOptions": opts})
+    log("= миниатюры шкалы (trickplay) — во всех библиотеках, кроме «Стрима»")
+
     # Ключ API для календаря: сканирование библиотеки «Стрим» и ссылки на сериалы
     if not ENV.get("JELLYFIN_API_KEY"):
         api.post("/Auth/Keys", params={"app": "anime-calendar"})

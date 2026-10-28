@@ -2,7 +2,10 @@
 // Поток — Jellyfin (HLS через прокси календаря, ключ Jellyfin в браузер не попадает).
 
 export type PlayTrack = { index: number; label: string; lang: string | null; codec: string; title: string | null };
-export type PlaySub = PlayTrack & { url: string; ass: boolean; forced: boolean; signs: boolean; external: boolean };
+export type PlaySub = PlayTrack & { url: string; ass: boolean; forced: boolean; signs: boolean; external: boolean; jimaku?: boolean };
+
+/** Индекс дорожки японских субтитров с Jimaku (не из файла — номера Jellyfin до неё не доходят). */
+export const JIMAKU_SUB = 100_000;
 export type PlayChapter = { name: string; start: number };
 
 export type PlayInfo = {
@@ -22,6 +25,8 @@ export type PlayInfo = {
   /** Шрифты из вложений файла — для ASS */
   fonts: string[];
   chapters: PlayChapter[];
+  /** Миниатюры шкалы (trickplay Jellyfin): плитки cols×rows кадров width×height через interval мс; url + /<n>.jpg */
+  trickplay: { width: number; height: number; cols: number; rows: number; count: number; interval: number; url: string } | null;
   /** Почему Jellyfin перекодирует (пусто — видео как есть) */
   transcode: string[];
 };
@@ -123,6 +128,14 @@ export function piecesToRanges(done: number[], pieceLen: number, offset: number,
     else out.push(r);
   }
   return out;
+}
+
+/** SRT → WebVTT (браузер в <track> понимает только VTT): заголовок, запятая в миллисекундах → точка, без номеров. */
+export function srtToVtt(srt: string): string {
+  const body = srt.replace(/^﻿/, "").replace(/\r\n?/g, "\n").trim()
+    .replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2")
+    .replace(/^\d+\n(?=\d{2}:\d{2}:\d{2}\.\d{3} -->)/gm, "");
+  return `WEBVTT\n\n${body}\n`;
 }
 
 // Главы из файла — обычно по-английски и по-японски: Intro, OP, Part A, ED, Next Episode, Avant, Eyecatch

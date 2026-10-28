@@ -124,20 +124,26 @@ async function prepareNext(hash: string, index: number, userIds: number[]) {
 }
 
 /**
- * Что сейчас смотрят из «Стрима» — готовим следующую серию (раз в 30 с из jobs.ts).
+ * Что сейчас смотрят из «Стрима» (Jellyfin и плеер календаря — player) — готовим следующую серию (раз в 30 с из jobs.ts).
  * Только когда это не отнимет скорость у текущей: она уже целиком в кэше или раздача качает
  * минимум вдвое быстрее, чем нужно для просмотра.
  */
-export async function prefetchWhileWatching() {
-  const playing = await jellyfinNowPlaying();
+export async function prefetchWhileWatching(player: { hash: string; index: number; userId: number }[] = []) {
+  const jf = await jellyfinNowPlaying().catch(() => []);
+  const playing = [
+    ...jf.map(({ hash, index, jellyfinUserId }) => {
+      const id = jellyfinUserId.replace(/-/g, "").toLowerCase();
+      const user = db.prepare<[string], { id: number }>("SELECT id FROM users WHERE lower(replace(jellyfin_id, '-', '')) = ?").get(id);
+      return { hash, index, userId: user?.id };
+    }),
+    ...player,
+  ];
   if (!playing.length) return;
   const streams = await listStreams();
-  for (const { hash, index, jellyfinUserId } of playing) {
+  for (const { hash, index, userId } of playing) {
     const s = streams.find((x) => x.hash === hash);
     const cached = progress.get(`${hash}:${index}`)?.done;
     if (!cached && !(s?.rate && s.speed >= 2 * s.rate)) continue;
-    const id = jellyfinUserId.replace(/-/g, "").toLowerCase();
-    const user = db.prepare<[string], { id: number }>("SELECT id FROM users WHERE lower(replace(jellyfin_id, '-', '')) = ?").get(id);
-    await prepareNext(hash, index, user ? [user.id] : []);
+    await prepareNext(hash, index, userId ? [userId] : []);
   }
 }
