@@ -2,7 +2,7 @@ import "server-only";
 import { ewma, readiness } from "@/lib/buffer";
 import { env } from "./env";
 import { db } from "./db";
-import { jellyfinNowPlaying, listStreams, strmEpisodes, streamAnilistId, streamMinutes, torrentFile } from "./stream";
+import { jellyfinNowPlaying, listStreams, strmEpisodes, streamAnilistId, streamMinutes, torrentFile, torrentFilesCached } from "./stream";
 import { registerHandler, startTask } from "./tasks";
 
 // «Подготовить серию»: фоновая задача читает серию из TorrServer с начала — так же, как читал бы
@@ -125,8 +125,8 @@ async function prepareNext(hash: string, index: number, userIds: number[]) {
 
 /**
  * Что сейчас смотрят из «Стрима» (Jellyfin и плеер календаря — player) — готовим следующую серию (раз в 30 с из jobs.ts).
- * Только когда это не отнимет скорость у текущей: она уже целиком в кэше или раздача качает
- * минимум вдвое быстрее, чем нужно для просмотра.
+ * Только когда это не отнимет скорость у текущей: она почти целиком в кэше TorrServer или скачана хотя бы на 30%
+ * и раздача качает минимум вдвое быстрее, чем нужно для просмотра.
  */
 export async function prefetchWhileWatching(player: { hash: string; index: number; userId: number }[] = []) {
   const jf = await jellyfinNowPlaying().catch(() => []);
@@ -142,8 +142,10 @@ export async function prefetchWhileWatching(player: { hash: string; index: numbe
   const streams = await listStreams();
   for (const { hash, index, userId } of playing) {
     const s = streams.find((x) => x.hash === hash);
-    const cached = progress.get(`${hash}:${index}`)?.done;
-    if (!cached && !(s?.rate && s.speed >= 2 * s.rate)) continue;
+    // Текущая серия почти в кэше — можно; иначе — только когда её скачано заметно (не сразу после старта или
+    // перемотки: тогда весь канал нужен ей) и раздача качает вдвое быстрее нужного
+    const have = (await torrentFilesCached(hash).catch(() => null))?.files.get(index) ?? 0;
+    if (have < 0.9 && !(have >= 0.3 && s?.rate && s.speed >= 2 * s.rate)) continue;
     await prepareNext(hash, index, userId ? [userId] : []);
   }
 }
