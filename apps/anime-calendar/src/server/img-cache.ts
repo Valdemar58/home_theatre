@@ -155,6 +155,13 @@ export async function originalFile(url: string): Promise<{ key: string; file: st
   return { key, file, width: meta.width ?? 0 };
 }
 
+/** Сохранить оригинал навсегда (тайтл сохранён целиком): очистка его не трогает, уменьшенные копии — пересоздаются. */
+export async function pinImage(url: string): Promise<void> {
+  if (!isCacheable(url)) return;
+  const { key } = await originalFile(url);
+  db.prepare("UPDATE img_cache SET pinned = 1 WHERE key = ? AND variant = 'orig'").run(key);
+}
+
 /** Вход для апскейлера: PNG без альфа-канала (Real-ESRGAN портит прозрачность — выходило чёрное). */
 export async function upscaleInput(file: string): Promise<Buffer> {
   return sharp(file).removeAlpha().png().toBuffer();
@@ -196,15 +203,17 @@ export async function cleanupImages(): Promise<{ removed: number; freed: number 
   await drop(db.prepare<[number], Row>("SELECT * FROM img_cache WHERE variant NOT IN ('orig', 'up') AND variant NOT LIKE 'up-%' AND last_access < ?").all(t - LIMITS.variantTtl));
   await drop(db.prepare<[number], Row>("SELECT * FROM img_cache WHERE variant LIKE 'up-%' AND last_access < ?").all(t - LIMITS.variantTtl * m));
   // 2) оригиналы без запросов (с копиями) — по последнему обращению к любой версии; с апскейлом — в m раз дольше
+  //    (закреплённые — картинки сохранённых целиком тайтлов — не удаляются)
   const stale = db.prepare<[number, number], { key: string }>(
-    `SELECT key FROM img_cache GROUP BY key HAVING MAX(last_access) < CASE WHEN SUM(variant = 'up') > 0 THEN ? ELSE ? END`)
+    `SELECT key FROM img_cache GROUP BY key HAVING MAX(pinned) = 0 AND MAX(last_access) < CASE WHEN SUM(variant = 'up') > 0 THEN ? ELSE ? END`)
     .all(t - LIMITS.originalTtl * m, t - LIMITS.originalTtl);
   for (const { key } of stale) await drop(db.prepare<[string], Row>("SELECT * FROM img_cache WHERE key = ?").all(key));
-  // 3) потолок размера: давно не нужные картинки целиком
-  let total = db.prepare<[], { s: number | null }>("SELECT SUM(bytes) s FROM img_cache").get()?.s ?? 0;
+  // 3) потолок размера (закреплённые не в счёт): давно не нужные картинки целиком
+  let total = db.prepare<[], { s: number | null }>(
+    "SELECT SUM(bytes) s FROM img_cache WHERE key NOT IN (SELECT key FROM img_cache WHERE pinned = 1)").get()?.s ?? 0;
   if (total > LIMITS.maxBytes) {
     const lru = db.prepare<[], { key: string; bytes: number }>(
-      "SELECT key, SUM(bytes) bytes FROM img_cache GROUP BY key ORDER BY MAX(last_access)").all();
+      "SELECT key, SUM(bytes) bytes FROM img_cache GROUP BY key HAVING MAX(pinned) = 0 ORDER BY MAX(last_access)").all();
     for (const { key, bytes } of lru) {
       if (total <= LIMITS.maxBytes * 0.9) break;
       await drop(db.prepare<[string], Row>("SELECT * FROM img_cache WHERE key = ?").all(key));

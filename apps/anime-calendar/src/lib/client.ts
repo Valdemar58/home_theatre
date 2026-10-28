@@ -5,6 +5,7 @@ import { useMemo } from "react";
 import type { Me } from "@/app/api/me/route";
 import type { AnimeDetails, CharacterDetails, EventDetails, NameRefs, PlaceDetails, PlotMap, PlotViewMode, TitlePlaces, RelationMap, TitleCast, TitleEvents, AnimeImages, MatchInfo, PlotInfo, SimilarItem, CalendarResponse, ListEntryWithMedia, ListStatus, MediaLite, SeerrStatus, Notice, NoticeCounts, FriendOpinion, FriendPick, Person, SharedListDetail, SharedListSummary, TogetherState, Profile, TaskInfo, VoicesState } from "./types";
 import { applyProgress } from "./entry-rules";
+import { reportStale } from "./stale-data";
 
 export async function api<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
   const { json, ...rest } = init ?? {};
@@ -16,6 +17,8 @@ export async function api<T>(path: string, init?: RequestInit & { json?: unknown
   if (res.status === 401 && typeof window !== "undefined" && !path.startsWith("/api/auth")) {
     window.location.href = "/login";
   }
+  // Данные из сохранённого (источник недоступен) — для плашки в шапке
+  reportStale(res.headers.get("X-Data-Stale"));
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`);
   return data as T;

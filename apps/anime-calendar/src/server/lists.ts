@@ -2,7 +2,10 @@ import "server-only";
 import { LIST_STATUSES, type ListEntryWithMedia, type ListStatus, type MediaLite } from "@/lib/types";
 import { mediaByIds } from "./anilist";
 import { db, now, stmt } from "./db";
+import { freshFor } from "@/lib/freshness";
+import { getCached } from "./cache";
 import { shikiInfo } from "./shikimori";
+import { sourceDown } from "./sources";
 import { applyProgress, type EntryState } from "@/lib/entry-rules";
 
 export type EntryRow = {
@@ -37,7 +40,9 @@ export const parseTags = (raw: string | null | undefined): string[] => {
 
 /** Русские названия и оценки MAL из Shikimori. */
 export async function withShikimori<T extends MediaLite>(list: T[]): Promise<T[]> {
-  const info = await shikiInfo(list.map((m) => m.idMal).filter((x): x is number => Boolean(x)));
+  // Русское название и оценку вышедшего давно тайтла проверяем раз в 90 дней, онгоинга — раз в сутки
+  const ttl = new Map(list.filter((m) => m.idMal).map((m) => [m.idMal!, freshFor(m)]));
+  const info = await shikiInfo([...ttl.keys()], (id) => ttl.get(id) ?? 3 * 86400);
   for (const m of list) {
     const i = m.idMal ? info.get(m.idMal) : undefined;
     m.title.ru = i?.russian ?? m.title.ru;
@@ -60,10 +65,22 @@ export function getMedia(anilistId: number): MediaLite | null {
   return row ? (JSON.parse(row.json) as MediaLite) : null;
 }
 
+/** Карточка из сохранённой страницы тайтла: без описания, тегов, расписания и связей. */
+function pickLite(d: MediaLite): MediaLite {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { coverXL, description, synonyms, trailer, tags, schedule, relations, ...m } = d as MediaLite & Record<string, unknown>;
+  return m;
+}
+
 /** Снимок тайтла из базы или AniList (нужен MAL ID для Shikimori и данные для страницы списков). */
 export async function ensureMedia(anilistId: number): Promise<MediaLite> {
   const existing = getMedia(anilistId);
   if (existing) return existing;
+  // AniList лежит — снимок из сохранённой страницы тайтла (без даты финала, дополнится при обновлении)
+  if (sourceDown("anilist")) {
+    const d = getCached<MediaLite>(`media:v2:${anilistId}`, true);
+    if (d) { const m = pickLite(d); saveMedia([m]); return m; }
+  }
   const [m] = await withShikimori(await mediaByIds([anilistId]));
   if (!m) throw new Error(`Тайтл ${anilistId} не найден в AniList`);
   saveMedia([m]);
@@ -183,12 +200,19 @@ export function deleteEntry(userId: number, anilistId: number): void {
 }
 
 /** Обновить снимки тайтлов из списков (счётчик серий, следующая серия...). */
-export async function refreshListMedia(maxAgeSeconds = 6 * 3600): Promise<void> {
+export async function refreshListMedia(): Promise<void> {
+  if (sourceDown("anilist")) return;
+  // Срок снимка — по живости тайтла: онгоинг — 6 ч (серии), вышедший давно — 90 дней
+  const t = now();
   const stale = db
-    .prepare<[number], { anilist_id: number }>(
-      `SELECT DISTINCT e.anilist_id FROM list_entries e LEFT JOIN media m ON m.anilist_id = e.anilist_id
-       WHERE e.deleted = 0 AND (m.updated_at IS NULL OR m.updated_at < ? OR m.json NOT LIKE '%"finaleAt"%' OR m.json NOT LIKE '%"malScore"%')`)
-    .all(now() - maxAgeSeconds)
+    .prepare<[], { anilist_id: number; json: string | null; updated_at: number | null }>(
+      `SELECT DISTINCT e.anilist_id, m.json, m.updated_at FROM list_entries e LEFT JOIN media m ON m.anilist_id = e.anilist_id
+       WHERE e.deleted = 0`)
+    .all()
+    .filter((r) => {
+      if (!r.json || r.updated_at === null || !r.json.includes('"finaleAt"') || !r.json.includes('"malScore"')) return true;
+      return r.updated_at + freshFor(JSON.parse(r.json) as MediaLite, "airing", t) < t;
+    })
     .map((r) => r.anilist_id);
   if (!stale.length) return;
   saveMedia(await withShikimori(await mediaByIds(stale)));

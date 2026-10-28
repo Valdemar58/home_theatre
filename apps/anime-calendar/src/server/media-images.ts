@@ -3,7 +3,9 @@ import type { AnimeVideo, GalleryImage } from "@/lib/types";
 import type { AnilistDetails } from "./anilist";
 import { cached } from "./cache";
 import { env, seerrConfigured } from "./env";
+import { HttpError } from "./http";
 import type { ExternalIds } from "./idmap";
+import { guarded } from "./sources";
 
 // Картинки для страницы тайтла: галерея и широкий фон.
 // AniList — баннер, TMDB (через Seerr) — фон, Shikimori — кадры из аниме. Постеры — только в шапке страницы.
@@ -14,16 +16,18 @@ const TMDB_IMG = "https://image.tmdb.org/t/p";
 function tmdbImages(ids: ExternalIds): Promise<{ backdrop: string | null; poster: string | null }> {
   const path = ids.tmdbTv ? `/api/v1/tv/${ids.tmdbTv}` : ids.tmdbMovie ? `/api/v1/movie/${ids.tmdbMovie}` : null;
   if (!path || !seerrConfigured()) return Promise.resolve({ backdrop: null, poster: null });
-  return cached(`tmdb-img:${path}`, 7 * 86400, async () => {
+  // Картинки вышедшего тайтла почти не меняются: проверяем раз в 30 дней; сбой не сохраняется как «картинок нет»
+  return cached(`tmdb-img:${path}`, { fresh: 30 * 86400, source: "seerr" }, () => guarded("seerr", async () => {
     // Без language: с ним Seerr для части тайтлов отвечает ошибкой
     const res = await fetch(`${env.seerrUrl}${path}`, {
       headers: { "X-Api-Key": env.seerrApiKey },
       signal: AbortSignal.timeout(15_000),
     });
+    if (res.status === 429 || res.status >= 500) throw new HttpError(res.status, `Seerr ${path}: ${res.status}`);
     if (!res.ok) return { backdrop: null, poster: null };
     const d = (await res.json()) as { backdropPath?: string | null; posterPath?: string | null };
     return { backdrop: d.backdropPath ?? null, poster: d.posterPath ?? null };
-  });
+  }));
 }
 
 type ShikiMedia = {
@@ -33,7 +37,7 @@ type ShikiMedia = {
 
 /** Кадры и видео (OP/ED/трейлеры) с Shikimori одним запросом (ID Shikimori = MAL ID). */
 function shikiMedia(malId: number): Promise<ShikiMedia> {
-  return cached(`shiki-media:${malId}`, 7 * 86400, async () => {
+  return cached(`shiki-media:${malId}`, { fresh: 30 * 86400, source: "shikimori" }, () => guarded("shikimori", async () => {
     const res = await fetch(`${env.shikiUrl}/api/graphql`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "User-Agent": env.shikiAppName },
@@ -42,10 +46,10 @@ function shikiMedia(malId: number): Promise<ShikiMedia> {
       }),
       signal: AbortSignal.timeout(15_000),
     });
-    if (!res.ok) return { screenshots: [], videos: [] };
+    if (!res.ok) throw new HttpError(res.status, `Shikimori: ${res.status}`);
     const d = (await res.json()) as { data?: { animes: ShikiMedia[] } };
     return d.data?.animes[0] ?? { screenshots: [], videos: [] };
-  });
+  }));
 }
 
 // «//youtube.com/embed/…» → «https://…»

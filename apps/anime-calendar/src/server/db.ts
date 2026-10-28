@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { env } from "./env";
+import { cacheClassOf } from "@/lib/freshness";
 import { kindInfo } from "@/lib/notice-kinds";
 
 const SCHEMA = `
@@ -117,6 +118,16 @@ function migrate(db: Db) {
     new Set(db.prepare<[], { name: string }>(`PRAGMA table_info(${table})`).all().map((c) => c.name));
   // Оценка MAL (из Shikimori) рядом с русским названием
   if (!columns("titles_ru").has("score")) db.exec("ALTER TABLE titles_ru ADD COLUMN score REAL");
+  // Кэш стал хранилищем: класс записи (entity — не удаляется, listing, volatile) и когда получено
+  const cacheCols = columns("cache");
+  if (!cacheCols.has("class")) {
+    db.exec("ALTER TABLE cache ADD COLUMN class TEXT NOT NULL DEFAULT 'volatile'");
+    db.exec("ALTER TABLE cache ADD COLUMN fetched_at INTEGER");
+    const set = db.prepare<[string, string]>("UPDATE cache SET class = ? WHERE key = ?");
+    db.transaction(() => {
+      for (const { key } of db.prepare<[], { key: string }>("SELECT key FROM cache").all()) set.run(cacheClassOf(key), key);
+    })();
+  }
   // Впечатления о тайтле: заметка, личные теги («так плохо, что смешно»), студия озвучки
   const entryCols = columns("list_entries");
   if (!entryCols.has("note")) db.exec("ALTER TABLE list_entries ADD COLUMN note TEXT");
@@ -625,6 +636,24 @@ function migrate(db: Db) {
     data TEXT NOT NULL,
     built_at INTEGER NOT NULL
   )`);
+  // Локальный архив тайтлов: что сохранено и на каком уровне (card — карточка, page — страница, full — всё,
+  // включая серии, персонажей и картинки), когда проверить снова; очередь сохранения с приоритетом
+  db.exec(`CREATE TABLE IF NOT EXISTS archive_state (
+    anilist_id INTEGER PRIMARY KEY,
+    level TEXT NOT NULL,
+    saved_at INTEGER NOT NULL,
+    next_check INTEGER NOT NULL
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS archive_queue (
+    anilist_id INTEGER PRIMARY KEY,
+    level TEXT NOT NULL,
+    priority INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    depth INTEGER NOT NULL DEFAULT 0,
+    queued_at INTEGER NOT NULL
+  )`);
+  // Картинки сохранённых целиком тайтлов не вытесняются при нехватке места
+  if (!columns("img_cache").has("pinned")) db.exec("ALTER TABLE img_cache ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
   // Точка места на карте: по подписи (label), внутри родителя (inside) или вручную (manual)
   db.exec(`CREATE TABLE IF NOT EXISTS plot_place_pos (
     entity_id INTEGER NOT NULL,

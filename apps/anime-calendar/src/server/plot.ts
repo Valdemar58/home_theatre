@@ -2,10 +2,12 @@ import "server-only";
 import { described, episodeDigest, fillEpisodes, fuzzyIso, isStubDescription, seasonEpisodes, seasonFit, type AirWindow, type RawEpisode } from "@/lib/plot";
 import type { EpisodeInfo, MediaLite, PlotInfo } from "@/lib/types";
 import { getDetails, type AnilistDetails } from "./anilist";
+import { freshFor } from "@/lib/freshness";
 import { cached } from "./cache";
 import { corpusOf, deepestByEpisode } from "./corpus-store";
 import { db, now } from "./db";
 import { env, seerrConfigured } from "./env";
+import { HttpError } from "./http";
 import { externalIds, mappingForAnilist } from "./idmap";
 import { bestRouteTier, runTask, taskAvailable } from "./llm";
 import { getLlmConfig } from "./llm-config";
@@ -15,6 +17,7 @@ import type { JsonSchema } from "@/lib/json-lite";
 import { withShikimori } from "./lists";
 import { seasonForPage, seasonPlot } from "./plot-deep";
 import { ruDescription } from "./shikimori";
+import { guarded, isOutage } from "./sources";
 
 // Сюжет тайтла: серии (TMDB через Seerr — по-русски, иначе по-английски; запасной источник — Kitsu),
 // синопсис от локальной LLM вместо заглушек Shikimori и пересказ предыдущих сезонов без спойлеров нового.
@@ -25,17 +28,33 @@ const KITSU = "https://kitsu.app/api/edge";
 // «…/t/p/original//abc.jpg» → «…/t/p/w780/abc.jpg»: оригиналы кадров тяжёлые
 const still = (p: string | null | undefined) => (p ? `${TMDB_IMG}/w780/${p.replace(/^.*\/(?=[^/]+$)/, "")}` : null);
 
-async function seerr<T>(path: string): Promise<T | null> {
-  const res = await fetch(`${env.seerrUrl}${path}`, { headers: { "X-Api-Key": env.seerrApiKey }, signal: AbortSignal.timeout(15_000) });
-  return res.ok ? ((await res.json()) as T) : null;
+/** Запрос к Seerr (TMDB): нет такого — null; сбой (сеть, 5xx) — ошибка, чтобы пустое не сохранилось как «серий нет». */
+function seerr<T>(path: string): Promise<T | null> {
+  return guarded("seerr", async () => {
+    const res = await fetch(`${env.seerrUrl}${path}`, { headers: { "X-Api-Key": env.seerrApiKey }, signal: AbortSignal.timeout(15_000) });
+    if (res.ok) return (await res.json()) as T;
+    if (res.status === 429 || res.status >= 500) throw new HttpError(res.status, `Seerr ${path}: ${res.status}`);
+    return null;
+  });
+}
+
+/** Kitsu: то же правило — нет данных ≠ сбой. */
+function kitsu<T>(url: string): Promise<T | null> {
+  return guarded("kitsu", async () => {
+    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    if (res.ok) return (await res.json()) as T;
+    if (res.status === 429 || res.status >= 500) throw new HttpError(res.status, `Kitsu: ${res.status}`);
+    return null;
+  });
 }
 
 type TmdbSeason = { overview?: string | null; episodes?: { episodeNumber: number; name: string | null; overview: string | null; airDate: string | null; stillPath: string | null }[] };
 
 /** Серии и описание сезона TMDB на языке (en — без language: так Seerr отвечает для любых тайтлов). */
 function tmdbSeason(tv: number, season: number, lang: "ru" | "en"): Promise<{ overview: string | null; episodes: RawEpisode[] }> {
-  return cached(`tmdb-season:v2:${tv}:${season}:${lang}`, 86400, async () => {
-    const d = await seerr<TmdbSeason>(`/api/v1/tv/${tv}/season/${season}${lang === "ru" ? "?language=ru" : ""}`).catch(() => null);
+  // Сезон TMDB у вышедшего не меняется — неделя (свежесть тайтла решает plot-eps), сбой не сохраняется
+  return cached(`tmdb-season:v2:${tv}:${season}:${lang}`, { fresh: 7 * 86400, source: "seerr" }, async () => {
+    const d = await seerr<TmdbSeason>(`/api/v1/tv/${tv}/season/${season}${lang === "ru" ? "?language=ru" : ""}`);
     return {
       overview: d?.overview?.trim() || null,
       episodes: (d?.episodes ?? []).map((e) => ({ number: e.episodeNumber, title: e.name, overview: e.overview, airDate: e.airDate, still: still(e.stillPath) })),
@@ -65,7 +84,7 @@ async function tmdbEpisodes(anilistId: number, count: number | null, w: AirWindo
   if (!ids.tmdbTv) return { episodes: [], overview: null };
   // Абсолютная нумерация (длинные сериалы): склеиваем сезоны TMDB подряд и вырезаем свои серии
   if (!ids.tmdbSeason && m?.season === "a") {
-    const tv = await seerr<{ seasons?: { seasonNumber: number; episodeCount: number }[] }>(`/api/v1/tv/${ids.tmdbTv}`).catch(() => null);
+    const tv = await tmdbShow(ids.tmdbTv);
     const ru: RawEpisode[] = [];
     const en: RawEpisode[] = [];
     let start = 0;
@@ -95,9 +114,14 @@ async function tmdbEpisodes(anilistId: number, count: number | null, w: AirWindo
   return { episodes: seasonEpisodes(b.ru, b.en, offset, count), overview: offset ? null : b.overview };
 }
 
+/** Сериал TMDB (список сезонов) — сохраняется, как и сезоны. */
+function tmdbShow(tv: number) {
+  return cached(`tmdb-show:${tv}`, { fresh: 7 * 86400, source: "seerr" }, () => seerr<{ seasons?: { seasonNumber: number; episodeCount: number }[] }>(`/api/v1/tv/${tv}`));
+}
+
 /** Сезон TMDB, чьи серии вышли в период показа тайтла (и с какой серии сезона он начинается). */
 async function seasonByDates(tv: number, skip: number, count: number | null, w: AirWindow): Promise<Episodes | null> {
-  const info = await seerr<{ seasons?: { seasonNumber: number }[] }>(`/api/v1/tv/${tv}`).catch(() => null);
+  const info = await tmdbShow(tv);
   let best: { b: Awaited<ReturnType<typeof tmdbBoth>>; offset: number; inside: number } | null = null;
   for (const s of (info?.seasons ?? []).filter((x) => x.seasonNumber > 0 && x.seasonNumber !== skip)) {
     const b = await tmdbBoth(tv, s.seasonNumber);
@@ -112,16 +136,14 @@ type KitsuEpisode = { attributes: { number: number | null; canonicalTitle: strin
 
 /** Серии из Kitsu (английские): там, где TMDB ничего не знает. */
 function kitsuEpisodes(anilistId: number, count: number | null): Promise<EpisodeInfo[]> {
-  return cached(`kitsu-eps:${anilistId}`, 86400, async () => {
-    const map = await fetch(`${KITSU}/mappings?filter[externalSite]=anilist/anime&filter[externalId]=${anilistId}&include=item`, { signal: AbortSignal.timeout(15_000) })
-      .then((r) => (r.ok ? r.json() : null)).catch(() => null) as { included?: { id: string; type: string }[] } | null;
+  return cached(`kitsu-eps:${anilistId}`, { fresh: 7 * 86400, source: "kitsu" }, async () => {
+    const map = await kitsu<{ included?: { id: string; type: string }[] }>(`${KITSU}/mappings?filter[externalSite]=anilist/anime&filter[externalId]=${anilistId}&include=item`);
     const kitsuId = map?.included?.find((x) => x.type === "anime")?.id;
     if (!kitsuId) return [];
     const raw: RawEpisode[] = [];
     const pages = Math.min(5, Math.ceil((count ?? 40) / 20));
     for (let p = 0; p < pages; p++) {
-      const d = await fetch(`${KITSU}/anime/${kitsuId}/episodes?page[limit]=20&page[offset]=${p * 20}&sort=number`, { signal: AbortSignal.timeout(15_000) })
-        .then((r) => (r.ok ? r.json() : null)).catch(() => null) as { data?: KitsuEpisode[] } | null;
+      const d = await kitsu<{ data?: KitsuEpisode[] }>(`${KITSU}/anime/${kitsuId}/episodes?page[limit]=20&page[offset]=${p * 20}&sort=number`);
       for (const e of d?.data ?? []) {
         if (e.attributes.number) raw.push({ number: e.attributes.number, title: e.attributes.canonicalTitle, overview: e.attributes.synopsis, airDate: e.attributes.airdate, still: e.attributes.thumbnail?.original ?? null });
       }
@@ -136,22 +158,32 @@ function episodeCount(d: Pick<MediaLite, "episodes" | "nextAiringEpisode">): num
   return d.episodes ?? (d.nextAiringEpisode ? d.nextAiringEpisode.episode - 1 : null);
 }
 
-/** Серии тайтла (кэш: у выходящих — полдня, у вышедших — неделя). */
-export function episodesOf(
+/**
+ * Серии тайтла. Срок — по живости (онгоинг — 6 ч, вышедший давно — 90 дней, в фоне). Источник лежит — сохранённое;
+ * сохранённого нет — пустой список без записи (иначе «серий нет» держалось бы до следующей проверки).
+ */
+export async function episodesOf(
   d: Pick<MediaLite, "id" | "format" | "status" | "episodes" | "nextAiringEpisode"> & Partial<Pick<MediaLite, "startDate" | "endDate">>,
 ): Promise<Episodes & { source: PlotInfo["source"] }> {
-  if (d.format === "MOVIE") return Promise.resolve({ episodes: [], overview: null, source: null });
-  const ttl = d.status === "RELEASING" || d.status === "NOT_YET_RELEASED" ? 12 * 3600 : 7 * 86400;
-  return cached(`plot-eps:v3:${d.id}`, ttl, async () => {
-    const count = episodeCount(d);
-    const w: AirWindow = { start: fuzzyIso(d.startDate), end: d.status === "FINISHED" ? fuzzyIso(d.endDate) : null };
-    const { episodes: tmdb, overview } = await tmdbEpisodes(d.id, count, w).catch((): Episodes => ({ episodes: [], overview: null }));
-    // Kitsu — если в TMDB серий нет или описано меньше половины
-    if (tmdb.length && described(tmdb) * 2 >= tmdb.length) return { episodes: tmdb, overview, source: "TMDB" as const };
-    const kitsu = await kitsuEpisodes(d.id, count).catch(() => [] as EpisodeInfo[]);
-    if (!tmdb.length) return { episodes: kitsu, overview, source: kitsu.length ? ("Kitsu" as const) : null };
-    return { episodes: fillEpisodes(tmdb, kitsu), overview, source: "TMDB" as const };
-  });
+  if (d.format === "MOVIE") return { episodes: [], overview: null, source: null };
+  const ttl = freshFor(d, "airing");
+  // Сбой источника — наверх (не сохранять), «нет данных» — пусто
+  const unlessOutage = <T,>(empty: T) => (e: unknown): T => { if (isOutage(e)) throw e; return empty; };
+  try {
+    return await cached(`plot-eps:v3:${d.id}`, { fresh: ttl }, async () => {
+      const count = episodeCount(d);
+      const w: AirWindow = { start: fuzzyIso(d.startDate), end: d.status === "FINISHED" ? fuzzyIso(d.endDate) : null };
+      const { episodes: tmdb, overview } = await tmdbEpisodes(d.id, count, w).catch(unlessOutage<Episodes>({ episodes: [], overview: null }));
+      // Kitsu — если в TMDB серий нет или описано меньше половины
+      if (tmdb.length && described(tmdb) * 2 >= tmdb.length) return { episodes: tmdb, overview, source: "TMDB" as const };
+      const kitsuEps = await kitsuEpisodes(d.id, count).catch(unlessOutage([] as EpisodeInfo[]));
+      if (!tmdb.length) return { episodes: kitsuEps, overview, source: kitsuEps.length ? ("Kitsu" as const) : null };
+      return { episodes: fillEpisodes(tmdb, kitsuEps), overview, source: "TMDB" as const };
+    });
+  } catch (e) {
+    if (isOutage(e)) return { episodes: [], overview: null, source: null };
+    throw e;
+  }
 }
 
 /**

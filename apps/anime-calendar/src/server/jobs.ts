@@ -18,6 +18,7 @@ import { prefetchWhileWatching } from "./prebuffer";
 import { syncJellyfinPlays } from "./jellyfin-sync";
 import { translateTags } from "./tags-ru";
 import { checkNewEpisodes } from "./episode-notices";
+import { archiveInitial, archiveLists, archiveRecheck, archiveTick } from "./archive";
 
 const MINUTE = 60_000;
 
@@ -84,6 +85,12 @@ export function startJobs() {
   setInterval(() => void safe("atlas", async () => maybeRebuildAtlas()), 6 * 60 * MINUTE);
   // Темы из разборов LLM → канонические (синонимы склеиваются) — для признаков «похожего» и «понравится»
   setTimeout(() => void safe("theme-canon", updateThemeCanon), 4 * MINUTE);
+  // Локальный архив тайтлов: первичный прогон (если пуст), фоновое сохранение, тайтлы списков, перепроверка по сроку
+  setTimeout(() => void safe("archive-initial", archiveInitial), 3 * MINUTE);
+  setInterval(() => void safe("archive", () => archiveTick()), 20_000);
+  setInterval(() => void safe("archive-lists", async () => archiveLists()), 30 * MINUTE);
+  setTimeout(() => void safe("archive-recheck", async () => archiveRecheck()), 10 * MINUTE);
+  setInterval(() => void safe("archive-recheck", async () => archiveRecheck()), 24 * 60 * MINUTE);
   setInterval(() => {
     void safe("tags-ru", translateTags);
     void safe("idmap", ensureIdMap);

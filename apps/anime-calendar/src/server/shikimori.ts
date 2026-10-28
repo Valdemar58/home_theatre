@@ -4,6 +4,7 @@ import { cached } from "./cache";
 import { now, stmt } from "./db";
 import { env } from "./env";
 import { expectOk, fetchWithRetry, RateLimiter } from "./http";
+import { guarded, sourceDown } from "./sources";
 
 // Лимит Shikimori: 5 запросов/с и 90/мин
 const limiter = new RateLimiter(700);
@@ -14,7 +15,11 @@ function headers(token?: string): Record<string, string> {
   return h;
 }
 
-async function shiki<T>(path: string, init: RequestInit & { token?: string; json?: unknown } = {}): Promise<T> {
+function shiki<T>(path: string, init: RequestInit & { token?: string; json?: unknown } = {}): Promise<T> {
+  return guarded("shikimori", () => shikiRaw<T>(path, init));
+}
+
+async function shikiRaw<T>(path: string, init: RequestInit & { token?: string; json?: unknown }): Promise<T> {
   const { token, json, ...rest } = init;
   const res = await fetchWithRetry(
     env.shikiUrl + path,
@@ -40,47 +45,60 @@ const putTitle = stmt(
   "INSERT INTO titles_ru (mal_id, russian, score, fetched_at) VALUES (?, ?, ?, ?) " +
   "ON CONFLICT(mal_id) DO UPDATE SET russian = excluded.russian, score = excluded.score, fetched_at = excluded.fetched_at");
 
-// Оценки онгоингов меняются каждую неделю, поэтому храним недолго
+// По умолчанию (живость тайтла неизвестна) — как раньше: оценки онгоингов меняются каждую неделю
 const TTL = 3 * 86400;
+const refreshing = new Set<number>();
+
+async function fetchInfo(batch: number[], result: Map<number, ShikiInfo>) {
+  const data = await shiki<{ data: { animes: { id: string; russian: string | null; score: number | null }[] } }>(
+    "/api/graphql",
+    {
+      method: "POST",
+      json: { query: `{ animes(ids: "${batch.join(",")}", limit: 50) { id russian score } }` },
+    },
+  );
+  const found = new Map(data.data.animes.map((a) => [Number(a.id), a]));
+  const ts = now();
+  for (const id of batch) {
+    const a = found.get(id);
+    const russian = a?.russian?.trim() || null;
+    // 0 у Shikimori означает «оценок ещё нет»
+    const score = a?.score ?? 0;
+    putTitle().run(id, russian, score, ts);
+    result.set(id, { russian, score: score || null });
+  }
+}
 
 /**
- * Русские названия и оценки по MAL ID. Оценка Shikimori — это копия оценки MAL.
- * Недостающее догружается пачками по 50 через GraphQL.
+ * Русские названия и оценки по MAL ID. Оценка Shikimori — это копия оценки MAL. Сохранённое отдаётся всегда;
+ * устаревшее (ttl — по живости тайтла, вышедший давно — 90 дней) обновляется в фоне, ждём только то, чего нет вовсе.
  */
-export async function shikiInfo(malIds: number[]): Promise<Map<number, ShikiInfo>> {
+export async function shikiInfo(malIds: number[], ttl: (malId: number) => number = () => TTL): Promise<Map<number, ShikiInfo>> {
   const result = new Map<number, ShikiInfo>();
   const missing: number[] = [];
+  const stale: number[] = [];
   for (const id of new Set(malIds)) {
     const row = getTitle().get(id);
     if (row) result.set(id, { russian: row.russian, score: row.score || null });
     // score IS NULL — запись из версии без оценок
-    if (!row || row.score === null || row.fetched_at < now() - TTL) missing.push(id);
+    if (!row) missing.push(id);
+    else if ((row.score === null || row.fetched_at < now() - ttl(id)) && !refreshing.has(id)) stale.push(id);
   }
+  if (sourceDown("shikimori")) return result;
   for (let i = 0; i < missing.length; i += 50) {
-    const batch = missing.slice(i, i + 50);
     try {
-      const data = await shiki<{ data: { animes: { id: string; russian: string | null; score: number | null }[] } }>(
-        "/api/graphql",
-        {
-          method: "POST",
-          json: { query: `{ animes(ids: "${batch.join(",")}", limit: 50) { id russian score } }` },
-        },
-      );
-      const found = new Map(data.data.animes.map((a) => [Number(a.id), a]));
-      const ts = now();
-      for (const id of batch) {
-        const a = found.get(id);
-        const russian = a?.russian?.trim() || null;
-        // 0 у Shikimori означает «оценок ещё нет»
-        const score = a?.score ?? 0;
-        putTitle().run(id, russian, score, ts);
-        result.set(id, { russian, score: score || null });
-      }
+      await fetchInfo(missing.slice(i, i + 50), result);
     } catch (err) {
       // Без русских названий и оценок MAL всё работает (покажем данные AniList)
       console.warn(`[shikimori] названия: ${String(err)}`);
       break;
     }
+  }
+  if (stale.length) {
+    stale.forEach((id) => refreshing.add(id));
+    void (async () => {
+      for (let i = 0; i < stale.length; i += 50) await fetchInfo(stale.slice(i, i + 50), new Map()).catch(() => undefined);
+    })().finally(() => stale.forEach((id) => refreshing.delete(id)));
   }
   return result;
 }
@@ -91,7 +109,7 @@ export async function shikiInfo(malIds: number[]): Promise<Map<number, ShikiInfo
  */
 export function shikiSearch(q: string, limit: number, page = 1): Promise<number[]> {
   const query = q.trim().toLowerCase().replace(/\s+/g, " ");
-  return cached(`shiki-search:${limit}:${page}:${query}`, 86400, async () => {
+  return cached(`shiki-search:${limit}:${page}:${query}`, { fresh: 86400, source: "shikimori" }, async () => {
     const data = await shiki<{ data: { animes: { id: string }[] } }>("/api/graphql", {
       method: "POST",
       json: { query: `{ animes(search: ${JSON.stringify(query)}, limit: ${limit}, page: ${page}) { id } }` },
@@ -102,7 +120,8 @@ export function shikiSearch(q: string, limit: number, page = 1): Promise<number[
 
 /** Описание на русском. BB-коды Shikimori ([character=1]Имя[/character]) убираются. */
 export function ruDescription(malId: number): Promise<string | null> {
-  return cached(`shiki-desc:${malId}`, 7 * 86400, async () => {
+  // Описания меняются редко: проверяем раз в 30 дней, в фоне
+  return cached(`shiki-desc:${malId}`, { fresh: 30 * 86400, source: "shikimori" }, async () => {
     const data = await shiki<{ data: { animes: { description: string | null }[] } }>("/api/graphql", {
       method: "POST",
       json: { query: `{ animes(ids: "${malId}", limit: 1) { description } }` },

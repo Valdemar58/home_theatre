@@ -1,7 +1,8 @@
 "use client";
-import { ChevronLeftIcon, ChevronRightIcon, FlagIcon } from "@heroicons/react/24/outline";
+import { ArchiveBoxArrowDownIcon, ChevronLeftIcon, ChevronRightIcon, FlagIcon } from "@heroicons/react/24/outline";
+import { useMutation } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { useCalendar, useList } from "@/lib/client";
+import { api, useCalendar, useList, useMe } from "@/lib/client";
 import { matchesAiring } from "@/lib/filters";
 import {
   addDays, fetchRange, groupByDay, monthGrid, todayKey, weekDays, type DayItem, type GridDay,
@@ -49,6 +50,10 @@ export function CalendarView() {
     [view, year, month, anchor]);
   const range = fetchRange(days[0].key, days.at(-1)!.key);
   const { data, error, isFetching, isLoading } = useCalendar(range.from, range.to);
+  const { data: me } = useMe();
+  const save = useMutation({ mutationKey: ["archive", range.from, range.to], mutationFn: () => api("/api/archive", { method: "POST", json: { from: range.from, to: range.to } }) });
+  // Другой период — кнопка снова доступна
+  useEffect(() => { save.reset(); }, [range.from, range.to]); // eslint-disable-line react-hooks/exhaustive-deps
   const { byId: list } = useList();
 
   const [openDay, setOpenDay] = useState<{ key: string; focus: number | null } | null>(null);
@@ -88,7 +93,14 @@ export function CalendarView() {
           <Button size="sm" onClick={() => shift(1)} aria-label="Вперёд"><ChevronRightIcon className="h-4 w-4" /></Button>
         </div>
         {isFetching && <Spinner className="h-5 w-5" />}
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          {me?.isAdmin && (
+            // Сохранить тайтлы показанного периода в архив: страницы откроются и без AniList
+            <Button size="sm" disabled={save.isPending || save.isSuccess} onClick={() => save.mutate()} title="Сохранить тайтлы этого периода в локальную базу">
+              <ArchiveBoxArrowDownIcon className="h-4 w-4" />
+              <span className="hidden sm:inline">{save.isSuccess ? "Сохраняю в фоне" : "Сохранить"}</span>
+            </Button>
+          )}
           <Segmented<View>
             value={view}
             options={[["month", "Месяц"], ["week", "Неделя"], ["agenda", "Лента"]]}

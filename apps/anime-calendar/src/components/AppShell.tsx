@@ -33,6 +33,7 @@ import { Avatar } from "./Avatar";
 import { HoverCardHost } from "./HoverCard";
 import { Notifications } from "./Notifications";
 import { SearchBox } from "./SearchBox";
+import { StaleBanner } from "./StaleBanner";
 import { cx } from "./ui";
 
 const NAV = [
@@ -242,7 +243,7 @@ export function AppShell({ userName, sidebar = "auto", children }: { userName: s
           </Link>
         </header>
 
-        <main className="px-4 pb-24 pt-6 md:pb-10 lg:px-8"><HoverCardHost>{children}</HoverCardHost></main>
+        <main className="px-4 pb-24 pt-6 md:pb-10 lg:px-8"><StaleBanner /><HoverCardHost>{children}</HoverCardHost></main>
       </div>
 
       {/* Нижняя навигация (мобильные) */}

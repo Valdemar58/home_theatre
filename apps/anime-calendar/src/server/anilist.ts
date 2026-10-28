@@ -1,9 +1,11 @@
 import "server-only";
 import type { Filters } from "@/lib/filters";
 import type { AnimeDetails, Airing, CalendarResponse, MediaLite } from "@/lib/types";
-import { cached, getCached } from "./cache";
+import { cached, getCached, setCached } from "./cache";
 import { now } from "./db";
+import { freshFor } from "@/lib/freshness";
 import { expectOk, fetchWithRetry, RateLimiter } from "./http";
+import { guarded } from "./sources";
 
 const ENDPOINT = "https://graphql.anilist.co";
 // Лимит AniList сейчас 30 запросов/мин; короткие пачки проходят быстро,
@@ -39,7 +41,14 @@ export function toLite(raw: RawMedia): MediaLite {
   };
 }
 
-export async function gql<T>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
+/** Запросы AniList ждут в очереди: фоновое сохранение архива уступает место запросам страниц. */
+export const anilistBusy = () => limiter.pending > 0;
+
+export function gql<T>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
+  return guarded("anilist", () => gqlRaw<T>(query, variables));
+}
+
+async function gqlRaw<T>(query: string, variables: Record<string, unknown>): Promise<T> {
   const res = await fetchWithRetry(
     ENDPOINT,
     {
@@ -104,9 +113,9 @@ async function fetchWeek(start: number): Promise<WeekChunk> {
 }
 
 function getWeek(start: number): Promise<WeekChunk> {
-  // Прошедшие недели почти не меняются, текущие и будущие обновляем каждые 3 часа
-  const ttl = start + WEEK < now() - 86400 ? 7 * 86400 : 3 * 3600;
-  return cached(`airing:${start}`, ttl, () => fetchWeek(start));
+  // Прошедшие недели не меняются — хранятся и не перепроверяются; текущие и будущие — раз в 3 часа
+  const ttl = start + WEEK < now() - 86400 ? 10 * 365 * 86400 : 3 * 3600;
+  return cached(`airing:${start}`, { fresh: ttl, source: "anilist" }, () => fetchWeek(start));
 }
 
 export async function getCalendar(from: number, to: number): Promise<CalendarResponse> {
@@ -148,8 +157,10 @@ type RawDetails = RawMedia & {
 
 export type AnilistDetails = Omit<AnimeDetails, "externalIds" | "images" | "backdrop">;
 
-export function getDetails(id: number): Promise<AnilistDetails> {
-  return cached(`media:v2:${id}`, 6 * 3600, async () => {
+/** Страница тайтла. wait — дождаться обновления устаревшего (фоновое сохранение архива), иначе устаревшее — сразу. */
+export function getDetails(id: number, opts: { wait?: boolean } = {}): Promise<AnilistDetails> {
+  // Вышедший давно тайтл проверяется раз в 90 дней и в фоне, онгоинг — раз в сутки
+  return cached<AnilistDetails>(`media:v2:${id}`, { fresh: (v) => freshFor(v), source: "anilist", swr: !opts.wait }, async () => {
     let m: RawDetails;
     try {
       ({ Media: m } = await gql<{ Media: RawDetails }>(DETAILS_QUERY, { id }));
@@ -229,7 +240,7 @@ export function browse(p: BrowseParams): Promise<{ media: MediaLite[]; hasNextPa
     statusIn: f.statuses.length ? f.statuses : undefined,
     episodes: f.minEpisodes ? f.minEpisodes - 1 : undefined,
   };
-  return cached(`browse:${JSON.stringify(variables)}`, 6 * 3600, async () => {
+  return cached(`browse:${JSON.stringify(variables)}`, { fresh: 6 * 3600, source: "anilist" }, async () => {
     const data = await gql<{ Page: { pageInfo: { hasNextPage: boolean }; media: RawMedia[] } }>(BROWSE_QUERY, variables);
     const media = data.Page.media.map(toLite);
     // Порядок релевантности внешнего поиска (если сортировку не выбрали)
@@ -242,7 +253,7 @@ export function browse(p: BrowseParams): Promise<{ media: MediaLite[]; hasNextPa
 }
 
 export function genres(): Promise<string[]> {
-  return cached("genres", 7 * 86400, async () =>
+  return cached("genres", { fresh: 7 * 86400, source: "anilist" }, async () =>
     (await gql<{ GenreCollection: string[] }>("{ GenreCollection }")).GenreCollection);
 }
 
@@ -269,7 +280,10 @@ async function byIds(key: "ids" | "malIds", values: number[]): Promise<MediaLite
     for (const raw of data.Page.media) {
       const { airingSchedule, ...rest } = raw;
       const finale = rest.episodes ? airingSchedule.nodes.find((n) => n.episode === rest.episodes) : undefined;
-      out.push({ ...toLite(rest), finaleAt: finale?.airingAt ?? null });
+      const m = { ...toLite(rest), finaleAt: finale?.airingAt ?? null };
+      // Карточка — в хранилище навсегда: по ней ищем без сети и знаем, что тайтл есть в архиве
+      setCached(`lite:${m.id}`, m, freshFor(m));
+      out.push(m);
     }
   }
   return out;

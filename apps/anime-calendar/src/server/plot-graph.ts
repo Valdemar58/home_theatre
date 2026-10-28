@@ -37,7 +37,7 @@ type CharEdge = { role: CharacterRole; node: { id: number; name: { full: string;
 /** Персонажи тайтла (до 100): главные первыми. Неделю из кэша — состав меняется редко. */
 export function titleCharacters(animeId: number, malId: number | null): Promise<CharacterLite[]> {
   // До 100 персонажей: на двух страницах (50) у «Слизи» не было Гельда-отца, и сверка не могла его выбрать
-  return cached(`title-chars:v2:${animeId}`, 7 * 86400, async () => {
+  return cached(`title-chars:v2:${animeId}`, { fresh: 7 * 86400, source: "anilist" }, async () => {
     const edges: CharEdge[] = [];
     for (let page = 1; page <= 4; page++) {
       const { Media } = await gql<{ Media: { characters: { pageInfo: { hasNextPage: boolean }; edges: CharEdge[] } } }>(TITLE_CHARS, { id: animeId, page });
@@ -69,7 +69,7 @@ type RawCharacter = {
 type CharacterBase = Pick<CharacterDetails, "name" | "nameRu" | "native" | "alternative" | "image" | "description" | "gender" | "age" | "appearances"> & { id: number };
 
 export function characterBase(id: number): Promise<CharacterBase> {
-  return cached(`character:v1:${id}`, 7 * 86400, async () => {
+  return cached(`character:v1:${id}`, { fresh: 30 * 86400, source: "anilist" }, async () => {
     const { Character: c } = await gql<{ Character: RawCharacter }>(CHARACTER, { id });
     const appearances = c.media.edges.map((e) => ({ media: toLite(e.node), role: e.characterRole }));
     // Русское имя — по словарю первого тайтла, где он главный (иначе — первого с MAL id)
