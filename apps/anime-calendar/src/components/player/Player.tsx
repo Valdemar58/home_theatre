@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/client";
 import { imgSrc } from "@/lib/img";
 import { COMPAT_KEY, type PlayCaps, type PlayInfo, type PlayStatus } from "@/lib/player";
+import { correction, positionAt, type RoomState } from "@/lib/room";
 import { cx, ErrorBox, Spinner } from "../ui";
 import { StreamStatus, type Stage } from "./StreamStatus";
 
@@ -68,10 +69,21 @@ export type PlayerControls = {
   /** Размер текстовых субтитров, % (ASS рисуется стилями файла) */
   setSubSize: (pct: number) => void;
   reload: () => void;
+  /** Где сейчас и идёт ли просмотр (комната создаётся с этого места) */
+  position: () => { pos: number; playing: boolean };
 };
 export type SubSettings = { delay: number; size: number };
 
-export function Player({ anilistId, ep, title, onEnded, next, onReport, children, autoPlay, preview, onState, controls }: {
+/** Комната совместного просмотра: плеер держится её позиции, свои пауза и перемотка уходят всем. */
+export type RoomSync = {
+  state: RoomState;
+  canControl: boolean;
+  serverNow: () => number;
+  command: (action: "play" | "pause" | "seek", pos: number) => void;
+  report: (r: { buffering: boolean; bw: number | null; drift: number | null }) => void;
+};
+
+export function Player({ anilistId, ep, title, onEnded, next, onReport, children, autoPlay, preview, onState, controls, room }: {
   anilistId: number;
   ep: number;
   title: string;
@@ -81,6 +93,8 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   /** Сессия и выбранные субтитры — для боковой панели */
   onState?: (s: { info: PlayInfo | null; sub: number | null; subs: SubSettings }) => void;
   controls?: React.MutableRefObject<PlayerControls | null>;
+  /** Смотрим в комнате */
+  room?: RoomSync | null;
   /** Досмотрели до конца — следующая серия (если есть) */
   onEnded?: () => void;
   next?: { label: string; go: () => void } | null;
@@ -126,6 +140,15 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   const skipped = useRef(new Set<string>());
   // Серия кончилась — отсчёт до следующей (отменяется)
   const [countdown, setCountdown] = useState<number | null>(null);
+  const roomRef = useRef(room);
+  roomRef.current = room;
+  const inRoom = Boolean(room);
+  // Насколько плеер разошёлся с комнатой (для отчёта)
+  const drift = useRef<number | null>(null);
+  const flash = useCallback((text: string) => {
+    setNotice(text);
+    setTimeout(() => setNotice((n) => (n === text ? null : n)), 3000);
+  }, []);
   useEffect(() => {
     if (countdown === null) return;
     if (countdown <= 0) { next?.go(); return; }
@@ -144,7 +167,10 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
       const caps = detectCaps();
       // Браузер не играет даже H.264 + AAC (встроенный просмотрщик VS Code — Electron без этих кодеков): сказать сразу
       if (!canPlayBasic()) throw new Error("Этот просмотрщик не умеет видео H.264/AAC (например, встроенный браузер VS Code) — откройте страницу в Chrome, Edge или Firefox");
-      const r = await api<PlayInfo>("/api/play", { method: "POST", json: { anilistId, ep, caps, ...opts, replace: sid.current } });
+      // В комнате — с её позиции
+      const rm = roomRef.current;
+      const start = opts.start ?? (rm ? positionAt(rm.state, rm.serverNow()) : undefined);
+      const r = await api<PlayInfo>("/api/play", { method: "POST", json: { anilistId, ep, caps, ...opts, start, replace: sid.current } });
       hevcSent.current = caps.hevc;
       recoveries.current = 0;
       sid.current = r.sid;
@@ -322,6 +348,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
       setSubSize: (pct) => { setSubSize(pct); store.set("player-sub-size", String(pct)); },
       // Появились новые дорожки (скачали с Jimaku) — та же серия с той же секунды
       reload: () => void open({ audio: info?.audioIndex ?? null, start: video.current?.currentTime || info?.start || 0 }),
+      position: () => ({ pos: video.current?.currentTime || info?.start || 0, playing: Boolean(video.current && !video.current.paused) }),
     };
   }
 
@@ -343,13 +370,73 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
     if (!started) { setStarted(true); return; }
     const v = video.current;
     if (!v) return;
-    if (v.paused) void v.play(); else v.pause();
-  }, [started]);
+    const rm = roomRef.current;
+    if (rm) {
+      if (!rm.canControl) { flash("Управляет организатор комнаты"); return; }
+      // Видео ещё не загрузилось — позиция комнаты, а не ноль
+      rm.command(v.paused ? "play" : "pause", v.readyState ? v.currentTime : positionAt(rm.state, rm.serverNow()));
+    }
+    if (v.paused) void v.play().catch(() => undefined); else v.pause();
+  }, [started, flash]);
   const seek = useCallback((to: number) => {
     const v = video.current;
     if (!v) return;
-    v.currentTime = Math.max(0, Math.min(to, (info?.duration || v.duration || to) - 0.5));
-  }, [info]);
+    const rm = roomRef.current;
+    if (rm && !rm.canControl) { flash("Управляет организатор комнаты"); return; }
+    const t = Math.max(0, Math.min(to, (info?.duration || v.duration || to) - 0.5));
+    v.currentTime = t;
+    rm?.command("seek", t);
+  }, [info, flash]);
+
+  // ---------------------------------------------------------------- комната
+  // Держаться позиции комнаты: пауза/просмотр как у неё, расхождение — скоростью или перемоткой (lib/room correction)
+  useEffect(() => {
+    if (!inRoom || !started || !info) return;
+    const t = setInterval(() => {
+      const rm = roomRef.current;
+      const v = video.current;
+      if (!rm || !v || v.ended) return;
+      const s = rm.state;
+      if (s.playing && v.paused) void v.play().catch(() => undefined);
+      if (!s.playing && !v.paused) v.pause();
+      if (v.readyState < 2 || v.seeking) return;
+      const target = positionAt(s, rm.serverNow());
+      drift.current = Math.round((v.currentTime - target) * 10) / 10;
+      const c = correction(v.currentTime - target, s.playing);
+      if (c.seek) v.currentTime = target;
+      if (v.playbackRate !== c.rate) v.playbackRate = c.rate;
+    }, 500);
+    return () => {
+      clearInterval(t);
+      if (video.current) video.current.playbackRate = 1;
+    };
+  }, [inRoom, started, info]);
+  // Отчёт комнате: грузится ли (дольше 1 с — комната ждёт), скорость потока, расхождение; раз в 5 с и при перемене
+  useEffect(() => {
+    if (!inRoom || !started) return;
+    let since: number | null = null;
+    let was: boolean | null = null;
+    const tick = (force: boolean) => {
+      const rm = roomRef.current;
+      const v = video.current;
+      if (!rm || !v) return;
+      // Загрузился — когда впереди хотя бы 5 с (иначе комната будет играть по 2 с и снова ждать)
+      const b = v.buffered;
+      let ahead = 0;
+      for (let i = 0; i < b.length; i++) if (b.start(i) <= v.currentTime + 0.5 && b.end(i) > v.currentTime) ahead = b.end(i) - v.currentTime;
+      const low = v.readyState < 3 || (was === true && ahead < 5 && v.currentTime + ahead < (v.duration || Infinity) - 1);
+      if (low && !v.ended) since ??= Date.now(); else since = null;
+      const buffering = since !== null && (was === true || Date.now() - since > 1000);
+      if (!force && buffering === was) return;
+      was = buffering;
+      const bw = hls.current?.bandwidthEstimate;
+      rm.report({ buffering, bw: bw && Number.isFinite(bw) ? Math.round(bw) : null, drift: drift.current });
+    };
+    tick(true);
+    const fast = setInterval(() => tick(false), 500);
+    const slow = setInterval(() => tick(true), 5000);
+    return () => { clearInterval(fast); clearInterval(slow); };
+  }, [inRoom, started]);
   const fullscreen = useCallback(() => {
     if (document.fullscreenElement) void document.exitFullscreen();
     else void box.current?.requestFullscreen();
@@ -408,7 +495,8 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   // Отрезок, в котором сейчас идёт серия (кнопка «Пропустить» — до последних 2 с отрезка)
   const seg = started ? info?.segments.find((x) => time >= x.start && time < x.end - 2) : undefined;
   useEffect(() => {
-    if (!seg || !autoSkip) return;
+    // В комнате пропускает тот, кто управляет (у остальных перемотка придёт от комнаты)
+    if (!seg || !autoSkip || (room && !room.canControl)) return;
     const id = `${seg.kind}:${seg.start}`;
     if (skipped.current.has(id)) return;
     skipped.current.add(id);
@@ -416,7 +504,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
     setNotice(`Пропустил ${SEG_LABEL[seg.kind]}`);
     const t = setTimeout(() => setNotice(null), 3000);
     return () => clearTimeout(t);
-  }, [seg, autoSkip, seek]);
+  }, [seg, autoSkip, seek, room]);
   const pct = (t: number) => `${duration ? Math.min(100, (t / duration) * 100) : 0}%`;
 
   return (

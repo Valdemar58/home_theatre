@@ -298,6 +298,27 @@ function migrate(db: Db) {
       last_activity INTEGER NOT NULL,
       ended_at INTEGER
     );
+    -- Комнаты совместного просмотра (одноразовые): состояние — где были в момент at (мс), участники и права
+    CREATE TABLE IF NOT EXISTS watch_rooms (
+      id TEXT PRIMARY KEY,
+      owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      anilist_id INTEGER NOT NULL,
+      preset TEXT NOT NULL DEFAULT 'equal',
+      state TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      last_activity INTEGER NOT NULL,
+      ended_at INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS watch_room_members (
+      room_id TEXT NOT NULL REFERENCES watch_rooms(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL,
+      control INTEGER NOT NULL DEFAULT 0,
+      invited_by INTEGER,
+      joined_at INTEGER NOT NULL,
+      PRIMARY KEY (room_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS watch_room_members_by_user ON watch_room_members (user_id);
     -- Портрет вкуса и готовые рекомендации пользователя
     CREATE TABLE IF NOT EXISTS user_taste (
       user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,

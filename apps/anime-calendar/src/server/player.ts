@@ -38,6 +38,8 @@ export type PlaySession = {
   anilistId: number;
   ep: number;
   itemId: string;
+  /** Серия видна пользователю в Jellyfin (иначе позицию туда не пишем — друг без библиотек) */
+  jfOwn: boolean;
   mediaSourceId: string;
   playSessionId: string;
   deviceId: string;
@@ -89,7 +91,7 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
   // (выбранная в плеере — раньше отмеченной в «Впечатлениях»)
   const voice = opts.voice ?? voicePref(user.id, anilistId)
     ?? db.prepare<[number, number], { voice: string | null }>("SELECT voice FROM list_entries WHERE user_id = ? AND anilist_id = ?").get(user.id, anilistId)?.voice ?? null;
-  const jf = await jellyfinUser(user.jellyfin_id);
+  const jf = await jellyfinUser(user.jellyfin_id, item.itemId);
   // Серия «Стрима», а озвучки в раздаче отдельными файлами: нужную — скачать и положить рядом с .strm
   const voices = item.strmPath ? await episodeVoices(item).catch(() => [] as EpisodeVoice[]) : [];
   // «lang:jpn» — выбрали оригинал, а не студию
@@ -131,7 +133,7 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
     : null;
   const duration = (ms.RunTimeTicks ?? 0) / 1e7 || (item.runtimeSec ?? 0);
   sessions.set(sid, {
-    sid, userId: user.id, anilistId, ep, itemId: item.itemId, mediaSourceId: ms.Id, playSessionId, deviceId, hlsPath,
+    sid, userId: user.id, anilistId, ep, itemId: item.itemId, jfOwn: jf === user.jellyfin_id, mediaSourceId: ms.Id, playSessionId, deviceId, hlsPath,
     stream: item.hash && item.index ? { hash: item.hash, index: item.index } : null,
     duration, audio, marked: false, jfAt: 0, seenAt: Date.now(),
   });
@@ -235,8 +237,9 @@ const defaultAudio = (ms: MediaSource) => {
  * Пользователь Jellyfin для PlaybackInfo (без него Jellyfin отвечает 400): свой, а у друзей без аккаунта Jellyfin
  * (или без доступа к библиотекам) — администратор календаря; поток от этого не зависит.
  */
-async function jellyfinUser(own: string): Promise<string> {
-  const ok = await jellyfin(`/Users/${own}`).then(() => true).catch(() => false);
+async function jellyfinUser(own: string, itemId: string): Promise<string> {
+  // Друг без библиотек: аккаунт есть, а серию Jellyfin ему не покажет (404) — смотрит через календарь
+  const ok = await jellyfin(`/Items/${itemId}?userId=${own}`).then(() => true).catch(() => false);
   if (ok) return own;
   const admin = db.prepare<[], { jellyfin_id: string }>("SELECT jellyfin_id FROM users WHERE is_admin = 1 ORDER BY id LIMIT 1").get();
   if (!admin) throw new ApiError(403, "Нет пользователя Jellyfin, от имени которого смотреть");
@@ -299,7 +302,7 @@ export async function reportProgress(user: { id: number; name: string; jellyfin_
     s.marked = true;
     await markWatched(user, s.anilistId, s.ep, "player");
   }
-  if (done || Date.now() - s.jfAt > 30_000) {
+  if (s.jfOwn && (done || Date.now() - s.jfAt > 30_000)) {
     s.jfAt = Date.now();
     await jellyfin(`/UserItems/${s.itemId}/UserData?userId=${user.jellyfin_id}`, {
       method: "POST",

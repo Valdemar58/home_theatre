@@ -18,6 +18,7 @@ export const NOTICE_KINDS: Record<string, KindInfo> = {
   friend: { label: "Друзья", group: "friends", icon: "user", tone: "special" },
   "shared-list": { label: "Общий список", group: "friends", icon: "list", tone: "warning" },
   together: { label: "Смотрели вместе", group: "friends", icon: "users", tone: "positive" },
+  room: { label: "Смотрим вместе", group: "friends", icon: "users", tone: "accent" },
   "together-suggest": { label: "Смотрели вместе?", group: "friends", icon: "users", tone: "positive" },
   comment: { label: "Ответ на комментарий", group: "friends", icon: "chat", tone: "info" },
   achievement: { label: "Награда", group: "achievements", icon: "trophy", tone: "warning" },
