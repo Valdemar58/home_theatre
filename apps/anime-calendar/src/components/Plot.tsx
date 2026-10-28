@@ -3,7 +3,7 @@ import { BookOpenIcon, CheckIcon, DocumentTextIcon, EyeIcon, EyeSlashIcon, Spark
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { api, useMe, usePlot, useTitleCast } from "@/lib/client";
+import { api, useEpisodeStatus, useMe, usePlot, useTitleCast } from "@/lib/client";
 import { stateAt } from "@/lib/plot-deep";
 import type { AnimeDetails, CorpusState, EpisodeInfo, EpisodeTexts, ListEntry, PlotInfo } from "@/lib/types";
 import { CORPUS_SOURCE_LABELS } from "@/lib/labels";
@@ -11,6 +11,7 @@ import { formatDate, formatTime, relative } from "@/lib/time";
 import { Img } from "./Img";
 import { NamedText, paragraphEps, useNames } from "./NamedText";
 import { Badge, cx, Skel, SkelText, Spinner } from "./ui";
+import { EpisodeReadiness } from "./WatchButton";
 
 // Сюжет на странице тайтла: описание (синопсис ИИ вместо заглушки), «Что было раньше», серии.
 
@@ -108,6 +109,8 @@ const SPOILERS_KEY = "episodes-show-all";
 /** Серии: кадр, название, дата, описание. Описания после вашей серии скрыты (спойлеры). */
 export function Episodes({ media, entry, now }: { media: AnimeDetails; entry?: ListEntry; now: number }) {
   const { data: plot, isLoading } = usePlot(media.id);
+  const { data: ready } = useEpisodeStatus(media.id);
+  const readyBy = new Map(ready?.episodes.map((s) => [s.ep, s]));
   const [showAll, setShowAll] = useState(false);
   const [spoilers, setSpoilers] = useState(false);
   const [opened, setOpened] = useState<Set<number>>(new Set());
@@ -182,6 +185,7 @@ export function Episodes({ media, entry, now }: { media: AnimeDetails; entry?: L
                     {watched && !r.info?.still && <CheckIcon className="ml-1.5 inline h-4 w-4 text-positive-300" />}
                   </span>
                   {isFinale && <Badge tone="special">Финал</Badge>}
+                  <EpisodeReadiness s={readyBy.get(r.number)} anilistId={media.id} />
                   <span className={cx("ml-auto text-xs", past ? "text-gray-500" : "text-gray-300")}>
                     {date}{!past && r.airingAt && <span className="ml-2 text-accent-300">{relative(r.airingAt, now)}</span>}
                   </span>

@@ -26,6 +26,7 @@ import { RequestButton } from "./RequestButton";
 import { TogetherBar } from "./TogetherBar";
 import { Scores } from "./Scores";
 import { VoicesButton } from "./VoicesButton";
+import { WatchButton } from "./WatchButton";
 import { TitleCard } from "./TitleCard";
 import { Videos } from "./Videos";
 import { Badge, cx, ErrorBox, Segmented, Skel, SkelText } from "./ui";
@@ -82,11 +83,15 @@ export function AnimeDetailsView({ id, openVoices, together, undo, comment }: {
   const [simSort, setSimSort] = useState<"similarity" | "match">("similarity");
   // Индекс в полноэкранном просмотре: 0 — постер из шапки, дальше — галерея (shot + 1)
   const [viewer, setViewer] = useState<number | null>(null);
+  // «Найти серию» у кнопки «Смотреть» — открыть окно озвучек
+  const [find, setFind] = useState(0);
 
   if (isLoading) return <TitlePageSkeleton />;
   if (error || !a) return <ErrorBox error={error ?? "Не найдено"} />;
 
   const finale = finaleOf(a, a.schedule);
+  const entry = myList.get(a.id);
+  const watched = entry?.status === "completed" ? (a.episodes ?? entry.episodes) : entry?.episodes ?? 0;
   const alt = secondaryTitle(a.title);
   const season = a.season ? `${SEASON_LABELS[a.season]} ${a.seasonYear}` : a.seasonYear;
   const images = gallery?.images ?? [];
@@ -156,9 +161,10 @@ export function AnimeDetailsView({ id, openVoices, together, undo, comment }: {
             </div>
             <MatchBadge id={a.id} />
             <div className="flex flex-wrap items-center gap-3 pt-2">
+              <WatchButton anilistId={a.id} watched={watched} onFind={() => setFind((n) => n + 1)} />
               <ListControl media={a} />
               <RequestButton media={a} />
-              <VoicesButton media={a} autoFetch initialOpen={openVoices} />
+              <VoicesButton media={a} autoFetch initialOpen={openVoices || find} />
               <EpisodeAlerts id={a.id} airing={a.status === "RELEASING" || a.status === "NOT_YET_RELEASED"} />
             </div>
             <TogetherBar media={a} together={together} undo={undo} />

@@ -12,11 +12,9 @@ import { getDetails } from "./anilist";
 import { db, now } from "./db";
 import { originalFile } from "./img-cache";
 import { bestOutput, hashOf, recordOutput } from "./knowledge";
-import { env } from "./env";
-import { mappingForAnilist } from "./idmap";
 import { LlmUnavailable, runTask } from "./llm";
 import { titleCharacters } from "./plot-graph";
-import { jellyfin, jellyfinSeries } from "./stream";
+import { episodeSource } from "./playback";
 import { registerHandler } from "./tasks";
 
 // Кадры из своих серий — картинки обликов, которых нет ни на AniList, ни на Fandom (Сатору до перерождения,
@@ -32,28 +30,6 @@ const KEEP_SCORE = 6;
 // ---------------------------------------------------------------- видео серии
 
 type Source = { url: string; headers: string };
-
-/** Видео серии AniList: эпизод сериала Jellyfin по TVDB (сезон и сдвиг — из сопоставления). */
-export async function episodeSource(anilistId: number, ep: number): Promise<Source | null> {
-  const m = await mappingForAnilist(anilistId);
-  if (!m || m.season === "a") return null;
-  const number = ep + m.offset;
-  const series = (await jellyfinSeries()).filter((s) => s.ProviderIds?.Tvdb === String(m.tvdb) || s.Path?.includes(`[tvdbid-${m.tvdb}]`));
-  for (const s of series) {
-    const r = await jellyfin<{ Items: { Id: string; IndexNumber?: number; Path?: string }[] }>(`/Shows/${s.Id}/Episodes?season=${m.season}&Fields=Path`).catch(() => null);
-    const e = r?.Items.find((x) => x.IndexNumber === number);
-    if (!e) continue;
-    // Серия «Стрима»: в .strm — ссылка на TorrServer, файл виден и нам (та же папка)
-    if (e.Path?.endsWith(".strm")) {
-      const local = e.Path.replace(env.jellyfinStreamPath, env.streamDir);
-      const url = fs.existsSync(local) ? fs.readFileSync(local, "utf-8").trim() : "";
-      if (url) return { url, headers: "" };
-      continue;
-    }
-    return { url: `${env.jellyfinUrl}/Videos/${e.Id}/stream?static=true`, headers: `Authorization: MediaBrowser Token="${env.jellyfinApiKey}"\r\n` };
-  }
-  return null;
-}
 
 /**
  * Кадр около секунды t (полный размер, JPEG): опорный кадр перед t (-noaccurate_seek). Из раздачи читается только он —

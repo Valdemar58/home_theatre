@@ -654,6 +654,8 @@ function migrate(db: Db) {
   )`);
   // Картинки сохранённых целиком тайтлов не вытесняются при нехватке места
   if (!columns("img_cache").has("pinned")) db.exec("ALTER TABLE img_cache ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
+  // Последняя серия, о которой сообщили «можно смотреть» (в библиотеке или «Стриме»); NULL — ещё не смотрели
+  if (!columns("episode_marks").has("ready")) db.exec("ALTER TABLE episode_marks ADD COLUMN ready INTEGER");
   // Точка места на карте: по подписи (label), внутри родителя (inside) или вручную (manual)
   db.exec(`CREATE TABLE IF NOT EXISTS plot_place_pos (
     entity_id INTEGER NOT NULL,

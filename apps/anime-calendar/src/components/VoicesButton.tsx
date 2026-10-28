@@ -25,12 +25,13 @@ function episodesText(r: RuRelease): string | null {
  * Кнопка «Озвучки»: список русских раздач тайтла и скачивание выбранной.
  * Поиск идёт фоновой задачей: окно можно закрыть, по готовности придёт уведомление.
  * autoFetch (страница тайтла) — начать поиск сразу при открытии страницы; ушли, не нажав, — отмена.
+ * initialOpen — открыть окно сразу; число — открыть при каждом его изменении («Найти серию» у кнопки «Смотреть»).
  */
 export function VoicesButton({ media, size = "md", autoFetch, initialOpen }: {
   media: MediaLite;
   size?: "sm" | "md";
   autoFetch?: boolean;
-  initialOpen?: boolean;
+  initialOpen?: boolean | number;
 }) {
   const { data: me } = useMe();
   const [open, setOpen] = useState(Boolean(initialOpen));
@@ -47,7 +48,11 @@ export function VoicesButton({ media, size = "md", autoFetch, initialOpen }: {
     return () => { window.removeEventListener("pagehide", leave); leave(); };
   }, [enabled, autoFetch, media.id, qc]);
 
-  useEffect(() => { if (initialOpen) setOpen(true); }, [initialOpen]);
+  useEffect(() => {
+    if (!initialOpen) return;
+    clicked.current = true;
+    setOpen(true);
+  }, [initialOpen]);
 
   if (!enabled) return null;
   const busy = state?.task && ["queued", "running"].includes(state.task.status);
