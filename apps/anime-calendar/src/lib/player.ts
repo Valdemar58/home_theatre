@@ -25,6 +25,8 @@ export type PlayInfo = {
   /** Шрифты из вложений файла — для ASS */
   fonts: string[];
   chapters: PlayChapter[];
+  /** Опенинг и эндинг серии (главы файла или звуковой отпечаток) — кнопка «Пропустить» и отметки на шкале */
+  segments: import("./fingerprint").Segment[];
   /** Миниатюры шкалы (trickplay Jellyfin): плитки cols×rows кадров width×height через interval мс; url + /<n>.jpg */
   trickplay: { width: number; height: number; cols: number; rows: number; count: number; interval: number; url: string } | null;
   /** Почему Jellyfin перекодирует (пусто — видео как есть) */

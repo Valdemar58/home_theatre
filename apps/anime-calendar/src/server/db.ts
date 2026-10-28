@@ -656,6 +656,26 @@ function migrate(db: Db) {
   if (!columns("img_cache").has("pinned")) db.exec("ALTER TABLE img_cache ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
   // Последняя серия, о которой сообщили «можно смотреть» (в библиотеке или «Стриме»); NULL — ещё не смотрели
   if (!columns("episode_marks").has("ready")) db.exec("ALTER TABLE episode_marks ADD COLUMN ready INTEGER");
+  // Опенинги и эндинги по звуку (segments.ts): отпечатки начала и конца файла серии и найденные отрезки.
+  // Ключ — файл («jf:<элемент Jellyfin>» / «ts:<раздача>:<файл>»): у разных релизов свои тайминги
+  db.exec(`CREATE TABLE IF NOT EXISTS episode_fp (
+    item_key TEXT PRIMARY KEY,
+    dur REAL NOT NULL,
+    head TEXT NOT NULL,
+    tail TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS episode_segments (
+    item_key TEXT NOT NULL,
+    anilist_id INTEGER NOT NULL,
+    ep INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    start_s REAL NOT NULL,
+    end_s REAL NOT NULL,
+    source TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (item_key, kind)
+  )`);
   // Плеер календаря: где остановился в серии (продолжить с того же места)
   db.exec(`CREATE TABLE IF NOT EXISTS playback_pos (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

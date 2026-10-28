@@ -9,7 +9,9 @@ import { db, now } from "./db";
 import { markWatched } from "./jellyfin-sync";
 import { episodeItems } from "./playback";
 import { guarded } from "./sources";
+import { segmentsFromChapters } from "@/lib/fingerprint";
 import { prebufferProgress } from "./prebuffer";
+import { ensureSegments, itemKey, storedSegments } from "./segments";
 import { sdhFile } from "./sdh";
 import { dropTorrentCache, jellyfin, torrentCached, torrentStats } from "./stream";
 import { episodeStatus } from "./availability";
@@ -118,6 +120,11 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
   const meta = await chaptersOf(item.itemId, ms.Id);
   const chapters = meta.chapters.filter((c) => c.start < duration);
   const trickplay = meta.trickplay && { ...meta.trickplay, url: `${base}/trickplay/${meta.trickplay.width}` };
+  // Опенинг и эндинг: главы файла точнее всего; нет глав — найденные по звуку (нет отпечатка — поиск в фон)
+  const byChapters = segmentsFromChapters(chapters, duration);
+  const key = itemKey(item);
+  if (!byChapters.length) ensureSegments(anilistId, key);
+  const segments = byChapters.length ? byChapters : storedSegments(key);
   return {
     sid,
     src: hlsPath ? `${base}/${hlsPath.replace(/^\/videos\/[^/]+\//i, "")}` : `${base}/stream`,
@@ -132,6 +139,7 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
     fonts: (ms.MediaAttachments ?? []).filter((a) => /font|ttf|otf|woff/i.test(`${a.MimeType} ${a.FileName}`)).map((a) => `${base}/font/${a.Index}`),
     chapters,
     trickplay,
+    segments,
     // Причины — в ответе или (Jellyfin 12) только в ссылке потока
     transcode: ms.TranscodeReasons?.length ? ms.TranscodeReasons : (new URLSearchParams(ms.TranscodingUrl?.split("?")[1] ?? "").get("TranscodeReasons")?.split(",").filter(Boolean) ?? []),
   };

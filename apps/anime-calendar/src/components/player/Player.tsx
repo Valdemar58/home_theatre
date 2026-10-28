@@ -18,6 +18,8 @@ import { StreamStatus, type Stage } from "./StreamStatus";
 // сессия с той же позиции (Jellyfin перекодирует звук под выбранную дорожку). Позиция — на сервер раз в 10 с.
 
 const QUALITY_KEY = "player-bitrate";
+const AUTOSKIP_KEY = "player-autoskip";
+const SEG_LABEL = { op: "опенинг", ed: "эндинг" } as const;
 const VOLUME_KEY = "player-volume";
 const SUB_KEY = "player-sub-lang";
 const QUALITIES = [
@@ -117,6 +119,9 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   const [notice, setNotice] = useState<string | null>(null);
   // До нажатия ▶ — превью: сессия уже открыта (Jellyfin прочитал файл), поток не запрошен
   const [started, setStarted] = useState(Boolean(autoPlay));
+  // Пропуск опенинга/эндинга: сам (настройка) — один раз за серию, отмотали назад вручную — не прыгаем снова
+  const [autoSkip, setAutoSkip] = useState(() => store.get(AUTOSKIP_KEY) === "1");
+  const skipped = useRef(new Set<string>());
   // Серия кончилась — отсчёт до следующей (отменяется)
   const [countdown, setCountdown] = useState<number | null>(null);
   useEffect(() => {
@@ -397,6 +402,18 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   const hidden = idle && playing && !menu;
 
   const duration = info?.duration || video.current?.duration || 0;
+  // Отрезок, в котором сейчас идёт серия (кнопка «Пропустить» — до последних 2 с отрезка)
+  const seg = started ? info?.segments.find((x) => time >= x.start && time < x.end - 2) : undefined;
+  useEffect(() => {
+    if (!seg || !autoSkip) return;
+    const id = `${seg.kind}:${seg.start}`;
+    if (skipped.current.has(id)) return;
+    skipped.current.add(id);
+    seek(seg.end);
+    setNotice(`Пропустил ${SEG_LABEL[seg.kind]}`);
+    const t = setTimeout(() => setNotice(null), 3000);
+    return () => clearTimeout(t);
+  }, [seg, autoSkip, seek]);
   const pct = (t: number) => `${duration ? Math.min(100, (t / duration) * 100) : 0}%`;
 
   return (
@@ -422,6 +439,12 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
       )}
       {Boolean(error) && <div className="absolute inset-x-6 top-1/3"><ErrorBox error={error} /></div>}
       {children?.(time, seek)}
+      {seg && !autoSkip && (
+        <button onClick={() => { skipped.current.add(`${seg.kind}:${seg.start}`); seek(seg.end); }}
+          className="absolute bottom-24 right-4 z-30 rounded-lg bg-black/80 px-4 py-2.5 text-sm font-medium text-white shadow-xl ring-1 ring-white/20 hover:bg-black/90">
+          Пропустить {SEG_LABEL[seg.kind]} ›
+        </button>
+      )}
       {countdown !== null && next && (
         <div className="absolute bottom-24 right-4 z-30 w-72 space-y-2 rounded-xl bg-black/85 p-4 text-sm text-white shadow-2xl ring-1 ring-white/10">
           <p className="text-gray-300">Следующая — <b className="text-white">{next.label}</b> через {countdown} с</p>
@@ -446,7 +469,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
       {/* Панель управления */}
       <div className={cx("absolute inset-x-0 bottom-0 z-10 bg-linear-to-t from-black/85 to-transparent px-3 pb-2 pt-10 transition-opacity", hidden && "pointer-events-none opacity-0")}>
         <SeekBar duration={duration} time={time} buffered={buffered} chapters={info?.chapters ?? []} onSeek={seek} pct={pct}
-          cached={status?.stream?.cached ?? []} trick={info?.trickplay ?? null} />
+          cached={status?.stream?.cached ?? []} trick={info?.trickplay ?? null} segments={info?.segments ?? []} />
         <div className="mt-1 flex items-center gap-1 text-white">
           <Ctl onClick={toggle} label={playing ? "Пауза (пробел)" : "Смотреть (пробел)"}>
             {playing ? <PauseIcon className="h-6 w-6" /> : <PlayIcon className="h-6 w-6" />}
@@ -479,10 +502,16 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
             items={[
               ...QUALITIES.map((q) => ({ key: q.value, label: q.label, active: q.value === (Number(store.get(QUALITY_KEY)) || 120e6) })),
               { key: -1, label: "Совместимый режим (H.264)", active: compat },
+              { key: -2, label: "Пропускать опенинг и эндинг сам", active: autoSkip },
             ]}
             onPick={(v) => {
               setMenu(null);
               // Совместимый режим — переключатель: видео всегда в H.264 (если HEVC в браузере показывает чёрный экран)
+              if (v === -2) {
+                store.set(AUTOSKIP_KEY, autoSkip ? "0" : "1");
+                setAutoSkip(!autoSkip);
+                return;
+              }
               if (v === -1) store.set(COMPAT_KEY, compat ? "0" : "1");
               else store.set(QUALITY_KEY, String(v));
               void open({ audio: info?.audioIndex ?? null, start: video.current?.currentTime ?? 0 });
@@ -554,12 +583,13 @@ function Menu({ open, onOpen, label, icon, items, onPick }: {
   );
 }
 
-function SeekBar({ duration, time, buffered, chapters, onSeek, pct, cached, trick }: {
+function SeekBar({ duration, time, buffered, chapters, onSeek, pct, cached, trick, segments }: {
   duration: number; time: number; buffered: number; chapters: { name: string; start: number }[];
   /** Скачано TorrServer — доли файла (серия «Стрима»); куда можно перематывать без ожидания */
   cached: [number, number][];
   /** Миниатюры (trickplay Jellyfin) — кадр над подсказкой времени */
   trick: PlayInfo["trickplay"];
+  segments: PlayInfo["segments"];
   onSeek: (t: number) => void; pct: (t: number) => string;
 }) {
   const bar = useRef<HTMLDivElement>(null);
@@ -576,6 +606,11 @@ function SeekBar({ duration, time, buffered, chapters, onSeek, pct, cached, tric
       <div className="absolute inset-x-0 top-1.5 h-1 rounded-full bg-white/25 transition-all group-hover/bar:top-1 group-hover/bar:h-2">
         <div className="absolute inset-y-0 left-0 rounded-full bg-white/35" style={{ width: pct(buffered) }} />
         <div className="absolute inset-y-0 left-0 rounded-full bg-accent-400" style={{ width: pct(time) }} />
+        {/* Опенинг и эндинг — отмечены на шкале */}
+        {segments.map((sg) => (
+          <span key={sg.kind + sg.start} title={SEG_LABEL[sg.kind]} className="absolute inset-y-0 bg-warning-300/45"
+            style={{ left: pct(sg.start), width: `${duration ? ((sg.end - sg.start) / duration) * 100 : 0}%` }} />
+        ))}
         {/* Скачанное с торрента — полоска под шкалой */}
         {cached.map(([a, b]) => (
           <span key={a} className="absolute -bottom-1.5 h-0.5 rounded-full bg-accent-500/70" style={{ left: `${a * 100}%`, width: `${Math.max(0.2, (b - a) * 100)}%` }} />
