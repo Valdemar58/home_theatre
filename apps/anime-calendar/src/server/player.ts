@@ -58,6 +58,8 @@ const g = globalThis as unknown as { __playSessions?: Map<string, PlaySession> }
 const sessions = (g.__playSessions ??= new Map());
 // Плеер шлёт позицию раз в 10 с (и на паузе): дольше 3 мин тишины — вкладку закрыли
 const IDLE_MS = 3 * 60_000;
+/** Выбор озвучки «оригинал» в voice_pref: «lang:jpn». */
+const ORIG = "lang:";
 
 export function playSession(sid: string, userId: number): PlaySession {
   const s = sessions.get(sid);
@@ -90,13 +92,15 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
   const jf = await jellyfinUser(user.jellyfin_id);
   // Серия «Стрима», а озвучки в раздаче отдельными файлами: нужную — скачать и положить рядом с .strm
   const voices = item.strmPath ? await episodeVoices(item).catch(() => [] as EpisodeVoice[]) : [];
-  const want = voice ? voices.find((v) => v.group.toLowerCase().includes(voice.toLowerCase())) : undefined;
+  // «lang:jpn» — выбрали оригинал, а не студию
+  const origLang = voice?.startsWith(ORIG) ? voice.slice(ORIG.length) : null;
+  const want = voice && !origLang ? voices.find((v) => v.group.toLowerCase().includes(voice.toLowerCase())) : undefined;
   if (want && !want.have) want.have = await placeVoice(item, want, Boolean(opts.voice));
   let probe = await info(item.itemId, jf, opts.caps, start);
   let audio = probe.MediaStreams.filter((m) => m.Type === "Audio").map(track);
   // Русской дорожки нет ни в файле, ни рядом — первая озвучка раздачи (дальше её и готовим к следующим сериям)
   const first = voices.find((v) => v.lang === "ru");
-  if (!want && !audio.some((a) => a.lang === "rus") && first && !first.have && await placeVoice(item, first, false)) {
+  if (!want && !origLang && !audio.some((a) => a.lang === "rus") && first && !first.have && await placeVoice(item, first, false)) {
     first.have = true;
     setVoicePref(user.id, anilistId, first.group);
     probe = await info(item.itemId, jf, opts.caps, start);
@@ -105,10 +109,14 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
   const same = prev && audio.find((a) => a.lang === prev.lang && a.title === prev.title && a.codec === prev.codec && a.external === prev.external);
   const audioIndex = opts.voice ? audio.find((a) => a.external && a.title === opts.voice)?.index ?? pickAudio(audio, voice)
     : opts.audio != null ? same?.index ?? (prev ? pickAudio(audio, voice) : opts.audio)
+    : origLang ? audio.find((a) => a.lang === origLang && !a.external)?.index ?? pickAudio(audio, null)
     : pickAudio(audio, voice);
-  // Выбрали озвучку сами — запомнить студию (следующие серии «Стрима» готовятся с ней)
+  // Выбрали озвучку сами — запомнить студию (следующие серии «Стрима» готовятся с ней), оригинал — языком
   const chosen = audio.find((a) => a.index === audioIndex);
-  if ((opts.voice || opts.audio != null) && chosen?.title && chosen.lang === "rus") setVoicePref(user.id, anilistId, chosen.title);
+  if ((opts.voice || opts.audio != null) && chosen) {
+    if (chosen.lang === "rus" && chosen.title) setVoicePref(user.id, anilistId, chosen.title);
+    else if (chosen.lang && chosen.lang !== "rus") setVoicePref(user.id, anilistId, `${ORIG}${chosen.lang}`);
+  }
   // Озвучка не та, что Jellyfin выбрал сам, — второй запрос уже с нужной дорожкой (перекодирование звука под неё)
   const ms = audioIndex !== null && audioIndex !== defaultAudio(probe) ? await info(item.itemId, jf, opts.caps, start, audioIndex) : probe;
 
@@ -117,6 +125,9 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
   const playSessionId = new URLSearchParams(ms.TranscodingUrl?.split("?")[1] ?? "").get("PlaySessionId") ?? sid;
   const hlsPath = ms.TranscodingUrl && !ms.SupportsDirectPlay
     ? ms.TranscodingUrl.replace(/([?&])ApiKey=[^&]*&?/i, "$1").replace(/([?&])DeviceId=[^&]*/i, `$1DeviceId=${deviceId}`)
+      // С внешними дорожками рядом Jellyfin пропускает AudioStreamIndex из PlaybackInfo и ставит первую внешнюю —
+      // поток же берёт дорожку из ссылки
+      .replace(/([?&])AudioStreamIndex=\d+/i, audioIndex !== null ? `$1AudioStreamIndex=${audioIndex}` : "$&")
     : null;
   const duration = (ms.RunTimeTicks ?? 0) / 1e7 || (item.runtimeSec ?? 0);
   sessions.set(sid, {
