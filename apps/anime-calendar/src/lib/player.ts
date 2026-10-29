@@ -15,6 +15,8 @@ export const STREAM_SUB = 200_000;
 /** Надписи из полной дорожки: SIGNS_SUB + номер исходной дорожки. */
 export const SIGNS_SUB = 1_000_000;
 export type PlayChapter = { name: string; start: number };
+/** «Перевести кадр»: надпись в кадре — текст, перевод и рамка в долях 0–1000 кадра. */
+export type FrameItem = { text: string; ru: string; box: [number, number, number, number] };
 
 export type PlayInfo = {
   sid: string;

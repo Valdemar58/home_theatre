@@ -35,7 +35,7 @@ type Source = { url: string; headers: string };
  * Кадр около секунды t (полный размер, JPEG): опорный кадр перед t (-noaccurate_seek). Из раздачи читается только он —
  * без декодирования секунд видео до точной метки; у BD опорный кадр к тому же самый чёткий.
  */
-function grab(src: Source, t: number): Promise<Buffer> {
+export function grab(src: Source, t: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const args = ["-hide_banner", "-loglevel", "error", ...(src.headers ? ["-headers", src.headers] : []), "-noaccurate_seek", "-ss", String(t), "-i", src.url, "-frames:v", "1", "-q:v", "3", "-f", "image2", "pipe:1"];
     const p = spawn("ffmpeg", args);

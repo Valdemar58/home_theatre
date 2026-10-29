@@ -1,7 +1,7 @@
 "use client";
 import {
   ArrowsPointingInIcon, ArrowsPointingOutIcon, BackwardIcon, ChatBubbleBottomCenterTextIcon, Cog6ToothIcon, ForwardIcon,
-  InformationCircleIcon, LanguageIcon, PauseIcon, PlayIcon, SpeakerWaveIcon, SpeakerXMarkIcon,
+  InformationCircleIcon, LanguageIcon, PauseIcon, PlayIcon, SpeakerWaveIcon, SpeakerXMarkIcon, ViewfinderCircleIcon,
 } from "@heroicons/react/24/solid";
 import type Hls from "hls.js";
 import type JASSUB from "jassub";
@@ -9,7 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/client";
 import { imgSrc } from "@/lib/img";
-import { COMPAT_KEY, type PlayCaps, type PlayInfo, type PlayStatus } from "@/lib/player";
+import { COMPAT_KEY, type FrameItem, type PlayCaps, type PlayInfo, type PlayStatus } from "@/lib/player";
 import { correction, positionAt, type RoomState } from "@/lib/room";
 import { cx, ErrorBox, Spinner } from "../ui";
 import { StreamStatus, type Stage } from "./StreamStatus";
@@ -131,6 +131,8 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   const [signs, setSigns] = useState<number | null>(null);
   const [signsState, setSignsState] = useState<SignsState>(null);
   const assSigns = useRef<JASSUB | null>(null);
+  // «Перевести кадр» на паузе: надписи кадра с переводом поверх видео (до «смотреть» или перемотки)
+  const [frame, setFrame] = useState<{ t: number; items: FrameItem[] | null } | null>(null);
   // Сдвиг — свой у тайтла (релизы разные), размер — общий
   const delayKey = `sub-delay:${anilistId}`;
   const [subDelay, setSubDelay] = useState(() => Number(store.get(delayKey)) || 0);
@@ -529,6 +531,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   const seek = useCallback((to: number) => {
     const v = video.current;
     if (!v) return;
+    setFrame(null);
     const rm = roomRef.current;
     if (rm && !rm.canControl) { flash("Управляет организатор комнаты"); return; }
     const t = Math.max(0, Math.min(to, (info?.duration || v.duration || to) - 0.5));
@@ -605,7 +608,29 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
     return () => document.removeEventListener("fullscreenchange", onFs);
   }, []);
 
-  // Горячие клавиши: пробел/K — пауза, ←/→ — 10 с, ↑/↓ — громкость, F — экран, M — звук, N — следующая
+  // Перевести кадр: пауза (если шло) → сервер берёт кадр у этой секунды, модель со зрением читает надписи
+  const translateFrame = useCallback(async () => {
+    const v = video.current;
+    if (!v || !sid.current || !started) return;
+    if (!v.paused) {
+      const rm = roomRef.current;
+      if (rm && !rm.canControl) { flash("Перевести кадр можно на паузе — паузу ставит организатор"); return; }
+      rm?.command("pause", v.currentTime);
+      v.pause();
+    }
+    const t = v.currentTime;
+    setFrame({ t, items: null });
+    try {
+      const r = await api<{ items: FrameItem[] }>(`/api/play/${sid.current}/frame`, { method: "POST", json: { t } });
+      setFrame((f) => (f?.t === t ? { t, items: r.items } : f));
+      if (!r.items.length) { setFrame(null); flash("В кадре надписей не нашлось"); }
+    } catch (e) {
+      setFrame(null);
+      flash(`Не получилось прочитать кадр: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }, [started, flash]);
+
+  // Горячие клавиши: пробел/K — пауза, ←/→ — 10 с, ↑/↓ — громкость, F — экран, M — звук, N — следующая, T — перевести кадр
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
@@ -621,6 +646,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
       else if (k === "f" || k === "а") fullscreen();
       else if (k === "m" || k === "ь") { v.muted = !v.muted; setMuted(v.muted); }
       else if ((k === "n" || k === "т") && next) next.go();
+      else if (k === "t" || k === "е") void translateFrame();
       else return;
       e.preventDefault();
     };
@@ -628,7 +654,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
     return () => window.removeEventListener("keydown", onKey);
     // setVol меняется каждый рендер, но читает только video.current
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toggle, seek, fullscreen, next]);
+  }, [toggle, seek, fullscreen, next, translateFrame]);
 
   // Панель прячется через 3 с без движения мыши (во время просмотра)
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -662,7 +688,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
       <style>{`.ac-video::cue { font-size: ${subSize}%; }`}</style>
       <video ref={video} className="ac-video h-full w-full" playsInline
         onClick={toggle} onDoubleClick={fullscreen}
-        onPlay={() => setPlaying(true)} onPause={() => { setPlaying(false); send(); }}
+        onPlay={() => { setPlaying(true); setFrame(null); }} onPause={() => { setPlaying(false); send(); }}
         onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
         onProgress={(e) => { const b = e.currentTarget.buffered; setBuffered(b.length ? b.end(b.length - 1) : 0); }}
         onEnded={() => { onEnded?.(); if (next) setCountdown(10); }}>
@@ -678,6 +704,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
       )}
       {/* Ошибка — только когда картинка встала: пока идёт запас, плеер восстанавливается молча */}
       {Boolean(error) && (!playing || loading) && <div className="absolute inset-x-6 top-1/3"><ErrorBox error={error} /></div>}
+      {frame && <FrameLayer frame={frame} video={video.current} />}
       {children?.(time, seek)}
       {seg && !autoSkip && (
         <button onClick={() => { skipped.current.add(`${seg.kind}:${seg.start}`); seek(seg.end); }}
@@ -756,6 +783,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
               else store.set(QUALITY_KEY, String(v));
               void open({ audio: info?.audioIndex ?? null, start: video.current?.currentTime ?? 0 });
             }} />
+          {started && <Ctl onClick={() => void translateFrame()} label="Перевести надписи в кадре (T)"><ViewfinderCircleIcon className="h-5 w-5" /></Ctl>}
           <Ctl onClick={() => setShowStatus((x) => !x)} label="Состояние потока"><InformationCircleIcon className="h-5 w-5" /></Ctl>
           <Ctl onClick={fullscreen} label="Во весь экран (F)">
             {full ? <ArrowsPointingInIcon className="h-5 w-5" /> : <ArrowsPointingOutIcon className="h-5 w-5" />}
@@ -883,5 +911,37 @@ function TrickThumb({ trick, t, left }: { trick: NonNullable<PlayInfo["trickplay
     <span className="pointer-events-none absolute -translate-x-1/2 overflow-hidden rounded-md shadow-xl ring-1 ring-white/20"
       style={{ left, bottom: 40, width: w, height: h, backgroundImage: `url(${trick.url}/${tile}.jpg)`,
         backgroundSize: `${trick.cols * w}px ${trick.rows * trick.height * k}px`, backgroundPosition: `-${x * w}px -${y * trick.height * k}px` }} />
+  );
+}
+
+/** Надписи кадра с переводом поверх видео: рамки — в долях 0–1000 кадра, кадр вписан в плеер с полями. */
+function FrameLayer({ frame, video }: { frame: { t: number; items: FrameItem[] | null }; video: HTMLVideoElement | null }) {
+  if (!frame.items) {
+    return (
+      <div className="pointer-events-none absolute inset-x-0 top-12 z-20 mx-auto flex w-fit items-center gap-2 rounded-lg bg-black/80 px-3 py-1.5 text-sm text-white ring-1 ring-white/10">
+        <Spinner className="h-4 w-4" /> Читаю надписи в кадре…
+      </div>
+    );
+  }
+  // Где на самом деле кадр внутри <video> (object-contain: поля сверху/снизу или по бокам)
+  const cw = video?.clientWidth ?? 0, ch = video?.clientHeight ?? 0;
+  const vw = video?.videoWidth || 16, vh = video?.videoHeight || 9;
+  const s = Math.min(cw / vw, ch / vh) || 0;
+  const w = vw * s, h = vh * s;
+  return (
+    <div className="pointer-events-none absolute z-20" style={{ left: (cw - w) / 2, top: (ch - h) / 2, width: w, height: h }}>
+      {frame.items.map((it, i) => {
+        const [x1, y1, x2, y2] = it.box;
+        const low = y2 > 800;
+        return (
+          <div key={i} className="absolute rounded ring-2 ring-accent-400/90" title={it.text}
+            style={{ left: `${x1 / 10}%`, top: `${y1 / 10}%`, width: `${(x2 - x1) / 10}%`, height: `${(y2 - y1) / 10}%` }}>
+            <span className={cx("absolute left-0 max-w-[28rem] rounded-md bg-black/85 px-2 py-1 text-sm leading-snug text-white shadow-lg ring-1 ring-white/10", low ? "bottom-full mb-1" : "top-full mt-1")}>
+              {it.ru}
+            </span>
+          </div>
+        );
+      })}
+    </div>
   );
 }
