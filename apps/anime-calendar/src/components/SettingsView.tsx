@@ -60,8 +60,8 @@ export function SettingsView() {
 
   const authorize = () =>
     run("authorize", async () => {
-      const { url } = await api<{ url: string }>("/api/shikimori/authorize");
-      if (s.oob) {
+      const { url, oob } = await api<{ url: string; oob: boolean }>("/api/shikimori/authorize");
+      if (oob) {
         window.open(url, "_blank", "noopener");
         return "Разреши доступ на Shikimori, скопируй код и вставь его ниже";
       }
@@ -94,7 +94,7 @@ export function SettingsView() {
           <div className="space-y-2 text-sm text-gray-300">
             <p>Синхронизация не настроена. Администратору нужно:</p>
             <ol className="list-decimal space-y-1 pl-5 text-gray-400">
-              <li>Создать приложение на <a className="text-indigo-300 underline" href={`${s.url}/oauth/applications`} target="_blank" rel="noreferrer">{s.url}/oauth/applications</a> (Redirect URI: <code>urn:ietf:wg:oauth:2.0:oob</code>, права: user_rates).</li>
+              <li>Создать приложение на <a className="text-indigo-300 underline" href={`${s.url}/oauth/applications`} target="_blank" rel="noreferrer">{s.url}/oauth/applications</a> (Redirect URI — две строки: <code>https://&lt;домен&gt;/api/shikimori/callback</code> и <code>urn:ietf:wg:oauth:2.0:oob</code>, права: user_rates).</li>
               <li>Вписать <code>SHIKIMORI_CLIENT_ID</code>, <code>SHIKIMORI_CLIENT_SECRET</code> и <code>SHIKIMORI_APP_NAME</code> в .env.</li>
               <li>Перезапустить: <code>docker compose up -d anime-calendar</code>.</li>
             </ol>

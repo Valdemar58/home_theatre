@@ -3,6 +3,7 @@ import { authed, json } from "@/server/route";
 import { setVisibility } from "@/server/social";
 import { db } from "@/server/db";
 import { isRemote } from "@/server/remote";
+import { shikiRedirectFor } from "@/server/shikimori";
 import type { Visibility } from "@/lib/social-rules";
 
 export type Me = {
@@ -55,7 +56,7 @@ export const GET = authed(async (req, user) => {
       syncedAt: user.shiki_synced_at,
       error: user.shiki_error,
       url: env.shikiUrl,
-      oob: env.shikiRedirectUri.startsWith("urn:"),
+      oob: shikiRedirectFor(isRemote(req)).startsWith("urn:"),
     },
   };
   return json(me);

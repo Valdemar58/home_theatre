@@ -99,7 +99,7 @@ Docker: `NODE_OPTIONS="--dns-result-order=ipv4first --no-network-family-autosele
 
 - Переезд на Linux завершён (стек с GPU, `DATA_ROOT=./data`, Windows-раздел read-only в `/mnt/windows`).
 - 2026-10-26: разработка продолжается на Windows. Код и база календаря перенесены с Linux-раздела (подключение из WSL: `wsl --mount \\.\PHYSICALDRIVE1 --partition 3 --type ext4 --options ro`, при пустой точке монтирования — `wsl -u root mount -o ro /dev/sdX3 <каталог>`), проект в git. На Windows нет `node_modules`, `data/`, моделей Ollama и `img-cache`.
-- **Заход 1 закрыт**, кроме 1.11 (Shikimori: OAuth-приложение можно создать только через сутки после регистрации — ждём ключи `SHIKIMORI_CLIENT_ID/SECRET/APP_NAME`).
+- **Заход 1 закрыт** (1.11 Shikimori подключён 2026-10-29: приложение «Anime Calendar», название = User-Agent, только латиница).
 - Список admin импортирован из AniLib (100 тайтлов), синхронизация AniLib — карточка в Настройках, раз в 30 мин.
 - Звёзды оценки — вариант 4 (временный, пользователь вернётся к дизайну; вариант 1 в `RatingStarsV1.tsx`).
 - Заходы 2 и 3 закрыты. **Заход 4 «Друзья»** закрыт (4.5 «Награды» принята в текущем виде 2026-10-29). Дальше — заход 5 «Манга/ранобе».

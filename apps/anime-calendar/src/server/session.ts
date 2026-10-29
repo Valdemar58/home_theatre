@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { db, now, stmt } from "./db";
 import { env } from "./env";
 
-export type SessionData = { userId?: number; shikiState?: string; oidc?: { state: string; verifier: string; next: string; redirect: string } };
+export type SessionData = { userId?: number; shikiState?: string; shikiRedirect?: string; oidc?: { state: string; verifier: string; next: string; redirect: string } };
 
 export type User = {
   id: number;

@@ -4,8 +4,8 @@ import { getSession, getUserById, type User } from "@/server/session";
 import { exchangeCode, whoami } from "@/server/shikimori";
 import { saveTokens, syncUser } from "@/server/sync";
 
-async function link(user: User, code: string) {
-  const tokens = await exchangeCode(code.trim());
+async function link(user: User, code: string, redirect?: string) {
+  const tokens = await exchangeCode(code.trim(), redirect);
   const profile = await whoami(tokens.access_token);
   saveTokens(user.id, tokens, profile);
   // Первый импорт списка
@@ -21,8 +21,9 @@ export const GET = authed(async (req, user) => {
   if (!expected || url.searchParams.get("state") !== expected) throw new ApiError(400, "Неверный state, начни привязку заново");
   const code = url.searchParams.get("code");
   if (!code) throw new ApiError(400, "Shikimori не вернул код авторизации");
-  await link(user, code);
-  return NextResponse.redirect(new URL("/settings?shikimori=linked", url.origin));
+  await link(user, code, session.shikiRedirect);
+  // Через Caddy адрес запроса внутренний — назад на тот, где открыт календарь
+  return NextResponse.redirect(new URL("/settings?shikimori=linked", session.shikiRedirect?.startsWith("http") ? session.shikiRedirect : url.origin));
 });
 
 /** OOB-режим: код, показанный Shikimori, вставляется вручную */

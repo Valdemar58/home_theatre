@@ -136,10 +136,17 @@ export function ruDescription(malId: number): Promise<string | null> {
 
 export type Tokens = { access_token: string; refresh_token: string; expires_in: number; created_at: number };
 
-export function authorizeUrl(state: string): string {
+/**
+ * Куда Shikimori вернёт код: из интернета (календарь на домене) — сразу на callback, дома — OOB (код вставляют руками:
+ * сессия на localhost/адресе в сети, а не на домене). В приложении Shikimori заведены оба адреса.
+ */
+export const shikiRedirectFor = (remote: boolean) =>
+  remote && env.publicUrl ? `${env.publicUrl}/api/shikimori/callback` : env.shikiRedirectUri;
+
+export function authorizeUrl(state: string, redirectUri = env.shikiRedirectUri): string {
   const p = new URLSearchParams({
     client_id: env.shikiClientId,
-    redirect_uri: env.shikiRedirectUri,
+    redirect_uri: redirectUri,
     response_type: "code",
     scope: "user_rates",
     state,
@@ -161,8 +168,8 @@ async function tokenRequest(params: Record<string, string>): Promise<Tokens> {
   return (await res.json()) as Tokens;
 }
 
-export const exchangeCode = (code: string) =>
-  tokenRequest({ grant_type: "authorization_code", code, redirect_uri: env.shikiRedirectUri });
+export const exchangeCode = (code: string, redirectUri = env.shikiRedirectUri) =>
+  tokenRequest({ grant_type: "authorization_code", code, redirect_uri: redirectUri });
 
 export const refreshTokens = (refresh: string) => tokenRequest({ grant_type: "refresh_token", refresh_token: refresh });
 
