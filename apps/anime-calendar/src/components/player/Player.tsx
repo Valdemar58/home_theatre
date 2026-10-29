@@ -132,6 +132,14 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   // HEVC заявлен в этой сессии (видео идёт как есть) и сколько раз уже восстанавливались после сбоя
   const hevcSent = useRef(false);
   const recoveries = useRef(0);
+  // Сбои загрузки кусков подряд и новые сессии подряд (сбрасываются первым же пришедшим куском)
+  const netFails = useRef(0);
+  const renewals = useRef(0);
+  // Новая сессия без пересоздания плеера: тот же hls.js, а куски просятся у новой сессии (номера кусков у Jellyfin —
+  // от начала файла, у старой и новой сессии одни и те же), запас в буфере остаётся
+  const swap = useRef(false);
+  const startAt = useRef(0);
+  const remap = useRef<{ from: string; dir: string; query: string } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   // До нажатия ▶ — превью: сессия уже открыта (Jellyfin прочитал файл), поток не запрошен
   const [started, setStarted] = useState(Boolean(autoPlay));
@@ -199,12 +207,50 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
     };
   }, [open]);
 
+  // Поток пропал (календарь перезапускался, Jellyfin остановил перекодирование): новая сессия с текущей секунды,
+  // поданная в тот же hls.js — картинка тем временем идёт из запаса
+  const renewing = useRef(false);
+  const renew = useCallback(async () => {
+    const v = video.current;
+    if (!v || !sid.current || renewing.current) return;
+    renewing.current = true;
+    try {
+      const old = sid.current;
+      const r = await api<PlayInfo>("/api/play", { method: "POST", json: { anilistId, ep, caps: detectCaps(), audio: info?.audioIndex ?? null, start: v.currentTime, replace: sid.current } });
+      // Адрес кусков новой сессии: каталог и параметры — из её плейлиста
+      const first = (text: string) => text.split("\n").map((l) => l.trim()).find((l) => l && !l.startsWith("#"));
+      const variant = new URL(first(await (await fetch(r.src)).text()) ?? "", new URL(r.src, location.href));
+      const seg = new URL(first(await (await fetch(variant)).text()) ?? "", variant);
+      remap.current = { from: remap.current?.from ?? `/api/play/${old}/`, dir: seg.pathname.replace(/[^/]+$/, ""), query: seg.search };
+      sid.current = r.sid;
+      swap.current = true;
+      setInfo(r);
+      hls.current?.startLoad(v.currentTime);
+    } catch (e) {
+      setError(e);
+    } finally {
+      renewing.current = false;
+    }
+  }, [anilistId, ep, info?.audioIndex]);
+  /** Сессии на сервере больше нет (404) — повторять бесполезно, сразу новая (не больше 3 раз без единого куска). */
+  const sessionLost = useCallback(() => {
+    if (renewals.current++ < 3) void renew();
+    else setError(new Error("Поток прервался: сессия просмотра пропала"));
+  }, [renew]);
+
   // Привязать поток к <video>
   useEffect(() => {
     const v = video.current;
     if (!v || !info || !started) return;
+    if (swap.current && hls.current) {
+      swap.current = false;
+      return;
+    }
+    swap.current = false;
+    remap.current = null;
     let alive = true;
     const at = info.start;
+    startAt.current = at;
     const attach = async () => {
       hls.current?.destroy();
       hls.current = null;
@@ -216,10 +262,28 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
         // Перекодирование первого сегмента — несколько секунд: ждём дольше обычного. Загрузка — сразу с нужной
         // позиции, без пробного первого сегмента (замер скорости): из холодной раздачи это лишние 10–20 МБ
         const h = new H({
-          autoStartLoad: false, testBandwidth: false, manifestLoadingTimeOut: 30_000, fragLoadingTimeOut: 60_000,
+          autoStartLoad: false, testBandwidth: false, manifestLoadingTimeOut: 30_000,
+          // Сессия сменилась на ходу (renew) — кусок просим у новой
+          xhrSetup: (xhr, url) => {
+            const m = remap.current;
+            const n = m && url.includes(m.from) ? /\/(\d+)\.mp4(\?|$)/.exec(url)?.[1] : null;
+            if (m && n) xhr.open("GET", `${m.dir}${n}.mp4${m.query}`, true);
+          },
           maxBufferLength: 60, backBufferLength: 90,
+          // Кусок не пришёл — повторить несколько раз с паузой (Jellyfin мог перезапускать перекодирование)
+          fragLoadPolicy: { default: {
+            maxTimeToFirstByteMs: 60_000, maxLoadTimeMs: 120_000,
+            timeoutRetry: { maxNumRetry: 4, retryDelayMs: 1000, maxRetryDelayMs: 8000 },
+            errorRetry: { maxNumRetry: 6, retryDelayMs: 1000, maxRetryDelayMs: 8000 },
+          } },
         });
         h.on(H.Events.ERROR, (_e, d) => {
+          // Кусок — 404: сессии на сервере больше нет (календарь перезапускался); hls.js сам повторял бы его без конца
+          if (d.details === H.ErrorDetails.FRAG_LOAD_ERROR && d.response?.code === 404 && hls.current === h) {
+            h.stopLoad();
+            sessionLost();
+            return;
+          }
           if (!d.fatal) return;
           if (d.type === H.ErrorTypes.MEDIA_ERROR) {
             // Браузер заявил HEVC, но не декодирует (так бывает в Electron, без аппаратного ускорения) — H.264
@@ -230,21 +294,34 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
               return;
             }
             if (recoveries.current++ < 2) { h.recoverMediaError(); return; }
-          } else if (d.type === H.ErrorTypes.NETWORK_ERROR && recoveries.current++ < 2) {
-            h.startLoad(v.currentTime || at);
-            return;
+          } else if (d.type === H.ErrorTypes.NETWORK_ERROR) {
+            // Тихо: сначала ещё раз с этого места, потом — новая сессия; ошибка — только если и это не помогло
+            const n = ++netFails.current;
+            if (n <= 2) {
+              setTimeout(() => { if (hls.current === h) h.startLoad(v.currentTime || at); }, 2000 * n);
+              return;
+            }
+            if (renewals.current++ < 3) {
+              netFails.current = 0;
+              void renew();
+              return;
+            }
           }
           setError(new Error(`Поток прервался: ${d.details}`));
         });
         h.on(H.Events.MANIFEST_PARSED, () => {
-          setStage({ step: "manifest", since: Date.now() });
-          h.startLoad(at);
+          setStage((s) => (s.step === "playing" ? s : { step: "manifest", since: Date.now() }));
+          h.startLoad(startAt.current);
         });
         // init-сегмент (без номера) — Jellyfin ещё запускает перекодирование
         h.on(H.Events.FRAG_LOADING, (_e, d) => setStage((s) => (s.step === "playing" || d.frag.sn === "initSegment" ? s : { step: "fragment", since: Date.now(), sn: Number(d.frag.sn), at: d.frag.start })));
-        h.on(H.Events.FRAG_LOADED, (_e, d) => setStage((s) => (s.step === "playing" ? s : {
-          ...s, lastMs: Math.round(d.frag.stats.loading.end - d.frag.stats.loading.start), lastBytes: d.frag.stats.total,
-        })));
+        h.on(H.Events.FRAG_LOADED, (_e, d) => {
+          netFails.current = 0;
+          renewals.current = 0;
+          setStage((s) => (s.step === "playing" ? s : {
+            ...s, lastMs: Math.round(d.frag.stats.loading.end - d.frag.stats.loading.start), lastBytes: d.frag.stats.total,
+          }));
+        });
         h.loadSource(info.src);
         h.attachMedia(v);
         hls.current = h;
@@ -272,9 +349,11 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   useEffect(() => {
     const t = setInterval(() => {
       const v = video.current;
-      if (!v || !info || error) return;
+      if (!v || !info) return;
       const waiting = !v.paused && v.readyState < 3;
       setLoading(waiting);
+      // Ошибка, а запас ещё играет — ни сторожа, ни состояния (ошибку покажем, когда картинка встанет)
+      if (error) return;
       if (!waiting) progressAt.current = Date.now();
       if (!v.paused && v.readyState >= 3) setStage((s) => (s.step === "playing" ? s : { step: "playing", since: Date.now() }));
       setStalled(waiting && Date.now() - progressAt.current > STALL_MS);
@@ -356,8 +435,10 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   const send = useCallback(() => {
     const v = video.current;
     if (!sid.current || !v || !v.currentTime) return;
-    void api<{ marked: boolean }>(`/api/play/${sid.current}`, { method: "POST", json: { pos: v.currentTime } }).then(onReport).catch(() => undefined);
-  }, [onReport]);
+    void api<{ marked: boolean }>(`/api/play/${sid.current}`, { method: "POST", json: { pos: v.currentTime } }).then(onReport)
+      // Сессии больше нет (календарь перезапускался) — новая, пока запас ещё играет
+      .catch((e: unknown) => { if (/Сессия просмотра закончилась/.test(String((e as Error).message))) sessionLost(); });
+  }, [onReport, sessionLost]);
   useEffect(() => {
     const t = setInterval(send, 10_000);
     const hide = () => send();
@@ -528,7 +609,8 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
         <StreamStatus status={status} stage={stage} transcode={info?.transcode ?? null} stalled={stalled} compat={compat}
           onRestart={() => restart(false)} onCompat={() => restart(true)} onClose={showStatus ? () => setShowStatus(false) : undefined} />
       )}
-      {Boolean(error) && <div className="absolute inset-x-6 top-1/3"><ErrorBox error={error} /></div>}
+      {/* Ошибка — только когда картинка встала: пока идёт запас, плеер восстанавливается молча */}
+      {Boolean(error) && (!playing || loading) && <div className="absolute inset-x-6 top-1/3"><ErrorBox error={error} /></div>}
       {children?.(time, seek)}
       {seg && !autoSkip && (
         <button onClick={() => { skipped.current.add(`${seg.kind}:${seg.start}`); seek(seg.end); }}
