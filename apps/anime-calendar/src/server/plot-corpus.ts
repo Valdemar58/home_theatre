@@ -231,11 +231,17 @@ async function fandomEpisodes(run: Run, wd: WdInfo | null): Promise<Found[]> {
 /** Серии тайтла в одной вики: категория серий → даты из инфобоксов → пересказы выбранных серий. */
 async function fandomWikiEpisodes(run: Run, slug: string): Promise<Found[]> {
   const api = `https://${slug}.fandom.com/api.php?format=json&formatversion=2&`;
-  const cats = await getJson<FandomQuery>(`${api}action=query&list=allcategories&aclimit=500&acmin=3`, limits.fandom);
-  const cat = episodeCategory((cats?.query?.allcategories ?? []).map((c) => c.category));
+  // Категории — все, по 500 (у «Атаки титанов» их 1600, «Episodes» по алфавиту дальше первой страницы)
+  const all: string[] = [];
+  let cont = "";
+  do {
+    const r = await getJson<FandomQuery>(`${api}action=query&list=allcategories&aclimit=500&acmin=3${cont}`, limits.fandom);
+    all.push(...(r?.query?.allcategories ?? []).map((c) => c.category));
+    cont = r?.continue?.accontinue ? `&accontinue=${encodeURIComponent(r.continue.accontinue)}` : "";
+  } while (cont && all.length < 10_000);
+  const cat = episodeCategory(all);
   if (!cat) return [];
   const titles: string[] = [];
-  let cont = "";
   do {
     const r = await getJson<FandomQuery>(`${api}action=query&list=categorymembers&cmnamespace=0&cmlimit=500&cmtitle=${encodeURIComponent(`Category:${cat}`)}${cont}`, limits.fandom);
     titles.push(...(r?.query?.categorymembers ?? []).map((m) => m.title));

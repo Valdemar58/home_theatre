@@ -71,8 +71,6 @@ def ensure_dirs(env: dict[str, str]) -> None:
     paths += [data_root / "torrents" / k for k in MEDIA_KINDS]
     paths += [data_root / "media" / k for k in MEDIA_KINDS]
     paths.append(data_root / "media" / STREAM_DIR)
-    # Дисковый кэш TorrServer («подготовить серию»)
-    paths.append(data_root / "torrserver-cache")
     for p in paths:
         p.mkdir(parents=True, exist_ok=True)
     print(f"+ каталоги готовы: CONFIG_ROOT={config_root}  DATA_ROOT={data_root}")

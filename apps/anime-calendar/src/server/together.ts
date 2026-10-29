@@ -4,11 +4,10 @@ import type {
   CoWatcher, SharedItem, SharedListDetail, SharedListSummary, SharedMember, WatchSessionInfo,
 } from "@/lib/types";
 import { db, now } from "./db";
-import { ensureMedia, getMedia, getRow, logWatch, upsertEntry, type EntryRow } from "./lists";
+import { ensureMedia, getMedia, getRow, logWatch, pushSoon, upsertEntry, type EntryRow } from "./lists";
 import { notify, resolveActions } from "./notifications";
 import { ApiError } from "./route";
 import { areFriends, friendIds } from "./social";
-import { pushEntry } from "./sync";
 
 // Совместный просмотр: общие списки, «посмотрели вместе» (с отменой) и режим «Смотрим вместе с…».
 // Статусы участников в общем списке не хранятся отдельно — это их личные записи (живые данные);
@@ -226,7 +225,6 @@ export async function markTogether(actor: { id: number; name: string }, anilistI
     upsertEntry(userId, media, { episodes: ch.to });
     logWatch(userId, media, ch.from, ch.to);
     changes.push({ userId, ...ch, before: live, afterAt: getRow(userId, anilistId)!.updated_at });
-    void pushEntry(userId, anilistId).catch(() => undefined);
   }
   if (!changes.length) return { eventId: null, changes: [] };
   const eventId = Number(db.prepare("INSERT INTO watch_events (actor_id, anilist_id, changes, created_at) VALUES (?, ?, ?, ?)")
@@ -264,7 +262,7 @@ export function undoTogether(userId: number, eventId: number): { undone: number;
     } else {
       db.prepare("UPDATE list_entries SET status = ?, episodes = ?, waiting = ?, aired_mark = ?, updated_at = ?, dirty = 1 WHERE user_id = ? AND anilist_id = ?")
         .run(c.before.status, c.before.episodes, c.before.waiting, c.before.aired_mark, now(), c.userId, ev.anilist_id);
-      void pushEntry(c.userId, ev.anilist_id).catch(() => undefined);
+      pushSoon(c.userId, ev.anilist_id);
     }
     c.undone = true;
     undone++;

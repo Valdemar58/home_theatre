@@ -7,8 +7,8 @@ import { isPrepared } from "./prep";
 import { registerHandler, startTask } from "./tasks";
 
 // «Подготовить серию»: фоновая задача скачивает серию целиком через qBittorrent (prep.ts, TASKS 9.8); если нельзя
-// (нет .torrent, qBittorrent или места) — читает её из TorrServer с начала, так же, как читал бы Jellyfin, и
-// TorrServer складывает её в кэш. По сглаженной скорости считаем, когда
+// (нет .torrent, qBittorrent или места) — читает её из TorrServer с начала, так же, как читал бы Jellyfin (кэш
+// TorrServer — 1 ГБ в памяти, серия целиком не помещается). По сглаженной скорости считаем, когда
 // можно включать и досмотреть без остановок (lib/buffer.ts), и шлём уведомление.
 // Ключ задачи: «<хэш>:<индекс файла>».
 //
@@ -123,9 +123,10 @@ registerHandler("prebuffer", {
     Object.assign(p, { done: p.read >= p.size, ready: true, etaSec: 0, updatedAt: Date.now() });
     // Подготовили по кнопке — следом следующую (она уже не тянет за собой дальше)
     if (ctx.origin === "user") await prepareNext(hash, index, ctx.userIds);
-    if (!p.readyAt) ctx.notify(`${code}: серия целиком в кэше — смотрите без остановок`);
+    // Кэш TorrServer в памяти меньше серии: прочитанное прогрело раздачу (пиры, скорость), но целиком не лежит
+    if (!p.readyAt) ctx.notify(`${code}: серия прочитана через TorrServer — можно включать`);
     p.readyAt ??= Date.now();
-    return { summary: `${code}: серия целиком в кэше`, isNew: false, silent: true };
+    return { summary: `${code}: серия прочитана через TorrServer`, isNew: false, silent: true };
   },
 });
 

@@ -1,6 +1,7 @@
 import "server-only";
 import type { JsonSchema } from "@/lib/json-lite";
 import { TIER } from "@/lib/llm-tier";
+import { applyEdits } from "@/lib/plot-edits";
 import {
   ABILITY_STATUS, ALIAS_KINDS, ENTITY_KINDS, EVENT_KINDS, IMPORTANCE, LINK_KINDS, LOOK_KINDS, PLACE_KINDS, PLACE_LINKS, RELATION_KINDS,
   anilistCandidates, emptyGraph, foldGraph, graphForPrompt, slug, type Graph, type GraphDelta, type GPersona,
@@ -15,6 +16,7 @@ import { prequelChain } from "./plot";
 import { checkLooks, fandomLooks } from "./plot-looks";
 import { mapStep } from "./plot-map";
 import { deepPlan, type DeepPlan } from "./plot-deep";
+import { activeEdits } from "./plot-edits";
 import { characterBase, seedCharacters, titleCharacters } from "./plot-graph";
 import { registerHandler } from "./tasks";
 
@@ -287,8 +289,13 @@ export async function materializeGraph(id: number): Promise<{ entities: number; 
     console.warn("[plot-graph] сверка не удалась:", e instanceof Error ? e.message : e);
     return { anilist: new Map<string, number>(), same: [] };
   });
-  g.identities.push(...check.same);
-  const keyRows = new Map(db.prepare<[number], { key: string; entity_id: number }>("SELECT key, entity_id FROM plot_key WHERE root_id = ?").all(root).map((r) => [r.key, r.entity_id]));
+  // Правки людей — поверх графа и сверки (вход сверки от них не зависит). Привязка к AniList из правки главнее любой
+  // другой, 0 — «не связан»: тогда и прежняя сущность AniList ключу не достаётся
+  const edits = activeEdits(root);
+  const applied = applyEdits(g, edits, check.same, check.anilist);
+  g.identities.push(...applied.same);
+  const pinned = new Map(edits.filter((e) => e.kind === "anilist").sort((a, b) => a.id - b.id).map((e) => [slug(e.key), (e.data as { charId: number }).charId]));
+  const keyRows =new Map(db.prepare<[number], { key: string; entity_id: number }>("SELECT key, entity_id FROM plot_key WHERE root_id = ?").all(root).map((r) => [r.key, r.entity_id]));
   const t = now();
   const entityOf = new Map<string, number>();
   const newEntity = db.prepare<[string, string, string | null, string | null, number, number], { id: number }>(
@@ -299,17 +306,19 @@ export async function materializeGraph(id: number): Promise<{ entities: number; 
   const personas = [...g.personas.values()];
   const { sure } = anilistCandidates(personas, chars);
   const anilistHit = (p: GPersona) => {
-    const c = sure.get(p.key) ?? check.anilist.get(p.key);
-    return c !== undefined ? db.prepare<[number], { id: number }>("SELECT id FROM plot_entity WHERE anilist_char_id = ?").get(c)?.id ?? null : null;
+    const c = pinned.has(p.key) ? pinned.get(p.key) : sure.get(p.key) ?? applied.anilist.get(p.key);
+    return c ? db.prepare<[number], { id: number }>("SELECT id FROM plot_entity WHERE anilist_char_id = ?").get(c)?.id ?? null : null;
   };
-  for (const p of personas) {
+  // Сначала привязки из правок: их сущность не может занять никто другой
+  for (const p of [...personas].sort((a, b) => Number(pinned.has(b.key)) - Number(pinned.has(a.key)))) {
     const hit = anilistHit(p);
     if (hit !== null && !claimed.has(hit)) { entityOf.set(p.key, hit); claimed.add(hit); }
   }
+  const boundToAnilist = (e: number) => Boolean(db.prepare<[number], { c: number | null }>("SELECT anilist_char_id AS c FROM plot_entity WHERE id = ?").get(e)?.c);
   for (const p of personas) {
     if (entityOf.has(p.key)) continue;
     const old = keyRows.get(p.key);
-    const e = old !== undefined && !claimed.has(old) ? old
+    const e = old !== undefined && !claimed.has(old) && !(pinned.get(p.key) === 0 && boundToAnilist(old)) ? old
       : newEntity.get(p.kind === "группа" ? "group" : "character", p.name_en || p.name_ru, p.name_ru || null, p.name_ja || null, t, t)!.id;
     entityOf.set(p.key, e);
     claimed.add(e);

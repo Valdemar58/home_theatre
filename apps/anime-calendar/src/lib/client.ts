@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import type { Me } from "@/app/api/me/route";
-import type { AnimeDetails, CharacterDetails, EventDetails, NameRefs, PlaceDetails, PlotMap, PlotViewMode, TitlePlaces, RelationMap, TitleCast, TitleEvents, AnimeImages, MatchInfo, PlotInfo, SimilarItem, CalendarResponse, ListEntryWithMedia, ListStatus, MediaLite, SeerrStatus, Notice, NoticeCounts, FriendOpinion, FriendPick, Person, SharedListDetail, SharedListSummary, TogetherState, Profile, TaskInfo, VoicesState } from "./types";
+import type { AnimeDetails, CharacterDetails, EventDetails, FranchiseView, NameRefs, PlaceDetails, PlotMap, PlotViewMode, TitlePlaces, RelationMap, TitleCast, TitleEvents, AnimeImages, MatchInfo, PlotInfo, SimilarItem, CalendarResponse, ListEntryWithMedia, ListStatus, MediaLite, SeerrStatus, Notice, NoticeCounts, FriendOpinion, FriendPick, Person, SharedListDetail, SharedListSummary, TogetherState, Profile, TaskInfo, VoicesState } from "./types";
 import { applyProgress } from "./entry-rules";
 import type { EpisodeStatus, TorrentCache } from "./playback";
 import { reportStale } from "./stale-data";
@@ -55,6 +55,13 @@ export const useCharacter = (param: string) =>
 /** Персонажи тайтла на серию курсора; at — «показать спойлер» (весь сезон) */
 export const useTitleCast = (id: number, at?: "all") =>
   useQuery({ queryKey: ["cast", id, at ?? "cursor"], queryFn: () => api<TitleCast>(`/api/anime/${id}/cast${at ? `?at=${at}` : ""}`), staleTime: 600_000, enabled: id > 0 });
+
+/** Франшиза тайтла; пока архив догружает страницы связанных тайтлов — переспрашиваем */
+export const useFranchise = (id: number) =>
+  useQuery({
+    queryKey: ["franchise", id], queryFn: () => api<FranchiseView>(`/api/franchise/${id}`), staleTime: 60_000, enabled: id > 0,
+    refetchInterval: (q) => (q.state.data?.partial ? 8000 : false),
+  });
 
 /** «Сюжет на серию»: прогресс по списку не меняется, меняется всё, что показано о сюжете тайтла */
 export function usePlotView(id: number) {

@@ -177,7 +177,12 @@ export function upsertEntry(userId: number, media: MediaLite, patch: EntryPatch)
        aired_mark = excluded.aired_mark, private = excluded.private`,
   ).run(userId, media.id, media.idMal, status, waiting ? 1 : 0, episodes, score, now(), onlyLocal && live ? 0 : 1,
     note, JSON.stringify(tags), voice, recommend === null ? null : recommend ? 1 : 0, airedMark, hidden ? 1 : 0, onlyLocal && live ? 1 : 0, onlyLocal && live ? 1 : 0);
+  if (!(onlyLocal && live)) pushSoon(userId, media.id);
 }
+
+/** На Shikimori — через несколько секунд после правки (sync.ts; импорт отложенный: sync.ts сам зависит от lists.ts). */
+export const pushSoon = (userId: number, anilistId: number) =>
+  void import("./sync").then((m) => m.schedulePush(userId, anilistId)).catch(() => undefined);
 
 /** Журнал просмотра: прогресс вырос с from до to серий (для кривой активности в профиле). */
 export function logWatch(userId: number, media: MediaLite, from: number, to: number): void {
@@ -191,9 +196,10 @@ export function deleteEntry(userId: number, anilistId: number): void {
   const row = getRow(userId, anilistId);
   if (!row) return;
   if (row.shiki_rate_id) {
-    // Удалим в Shikimori при синхронизации
+    // Удалим в Shikimori через несколько секунд (не вышло — при синхронизации)
     db.prepare("UPDATE list_entries SET deleted = 1, dirty = 1, updated_at = ? WHERE user_id = ? AND anilist_id = ?")
       .run(now(), userId, anilistId);
+    pushSoon(userId, anilistId);
   } else {
     db.prepare("DELETE FROM list_entries WHERE user_id = ? AND anilist_id = ?").run(userId, anilistId);
   }

@@ -1,16 +1,16 @@
 "use client";
-import { CheckIcon, ExclamationTriangleIcon, EyeIcon, EyeSlashIcon, MagnifyingGlassIcon } from "@heroicons/react/24/outline";
+import { CheckIcon, EyeIcon, EyeSlashIcon, MagnifyingGlassIcon } from "@heroicons/react/24/outline";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, useAnime, useEpisodeStatus, useList, useListMutation, usePlot } from "@/lib/client";
 import { FORMAT_LABELS, label, STATUS_LABELS } from "@/lib/labels";
-import { CACHE_WARN, playable, waitText, type EpisodeStatus, type TorrentCache } from "@/lib/playback";
+import { playable, waitText, type EpisodeStatus } from "@/lib/playback";
 import type { PlayInfo } from "@/lib/player";
 import type { RoomView } from "@/lib/room";
 import { displayTitle } from "@/lib/schedule";
-import { useAlert, useConfirm } from "../Dialogs";
+import { useAlert } from "../Dialogs";
 import { Discussion } from "../Discussion";
 import { EpisodeAlerts } from "../EpisodeAlerts";
 import { FriendOpinions } from "../FriendOpinions";
@@ -29,7 +29,6 @@ import { WatchSidebar } from "./WatchSidebar";
 // Страница просмотра серии (по мотивам AniLib): шапка тайтла, плеер и боковая панель «Озвучка / Субтитры», лента
 // серий (кадр, готовность, кэш TorrServer, «Подготовить», прогресс), под плеером — серия, сюжет, друзья, обсуждение.
 
-const gb = (b: number) => `${(b / 1e9).toFixed(1)} ГБ`;
 // Общий с «Показать все описания» на странице тайтла (Plot.tsx)
 const SPOILERS_KEY = "episodes-show-all";
 
@@ -161,7 +160,6 @@ export function WatchView({ id, ep }: { id: number; ep: number }) {
         </div>
       </div>
 
-      {st && <CacheWarnings caches={st.caches} anilistId={id} />}
       {eps.length > 0 && (
         <EpisodeStrip id={id} current={ep} statuses={eps} watched={watched} positions={st?.positions ?? []}
           titles={new Map(plot?.episodes.map((e) => [e.number, e]) ?? [])} onPick={(n) => pickEp(n)} />
@@ -193,37 +191,6 @@ export function WatchView({ id, ep }: { id: number; ep: number }) {
           <FriendOpinions id={id} />
         </aside>
       </div>
-    </div>
-  );
-}
-
-/** Кэш раздачи почти полон: подготовка следующих серий вытеснит скачанное. Варианты — сбросить или убрать раздачу. */
-function CacheWarnings({ caches, anilistId }: { caches: TorrentCache[]; anilistId: number }) {
-  const qc = useQueryClient();
-  const confirm = useConfirm();
-  const full = caches.filter((c) => c.capacity > 0 && c.filled / c.capacity >= CACHE_WARN);
-  if (!full.length) return null;
-  const act = async (c: TorrentCache, action: "drop" | "remove") => {
-    const ok = await confirm(action === "drop"
-      ? { title: "Сбросить кэш раздачи?", text: "Всё скачанное из раздачи освободится, подготовленные серии придётся готовить заново.", confirm: "Сбросить" }
-      : { title: "Убрать раздачу?", text: "Раздача и серии «Стрима» из неё пропадут; посмотреть снова — через «Озвучки».", confirm: "Убрать", danger: true });
-    if (!ok) return;
-    await api("/api/downloads/cache", { method: "POST", json: { hash: c.hash, action } });
-    await qc.invalidateQueries({ queryKey: ["episode-status", anilistId] });
-  };
-  return (
-    <div className="space-y-2">
-      {full.map((c) => (
-        <div key={c.hash} className="tone-warning soft flex flex-wrap items-center gap-2 rounded-xl px-3 py-2 text-sm ring-1 ring-inset">
-          <ExclamationTriangleIcon className="h-4 w-4 shrink-0" />
-          <p className="min-w-0 flex-1">
-            Кэш раздачи заполнен на {Math.round((c.filled / c.capacity) * 100)}% ({gb(c.filled)} из {gb(c.capacity)}): подготовка следующих серий
-            вытеснит уже скачанное (сначала — то, что дальше всего от просмотра).
-          </p>
-          <Button size="sm" onClick={() => act(c, "drop")}>Сбросить кэш</Button>
-          <Button size="sm" variant="ghost" onClick={() => act(c, "remove")}>Убрать раздачу</Button>
-        </div>
-      ))}
     </div>
   );
 }

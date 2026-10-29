@@ -21,7 +21,8 @@ export function parseDate(s: string): string | null {
   if (tpl) return `${tpl[1]}-${tpl[2].padStart(2, "0")}-${tpl[3].padStart(2, "0")}`;
   const iso = s.match(/(\d{4})-(\d{2})-(\d{2})/);
   if (iso) return iso[0];
-  const m = s.match(new RegExp(`\\b(${MON})\\.?\\s+(\\d{1,2}),?\\s+(\\d{4})|(\\d{1,2})\\s+(${MON})\\.?,?\\s+(\\d{4})`, "i"));
+  // День бывает с суффиксом: «April 1st, 2020» («Башня Бога»)
+  const m = s.match(new RegExp(`\\b(${MON})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})|(\\d{1,2})(?:st|nd|rd|th)?\\s+(${MON})\\.?,?\\s+(\\d{4})`, "i"));
   if (!m) return null;
   const [month, day, year] = m[1] ? [m[1], m[2], m[3]] : [m[5], m[4], m[6]];
   const n = MONTHS.split("|").findIndex((x) => x.startsWith(month.toLowerCase().slice(0, 3))) + 1;
@@ -46,8 +47,8 @@ export type FandomInfo = { date: string | null; season: string | null; number: s
  */
 export function infoboxInfo(wikitext: string): FandomInfo {
   const f = infoboxFields(wikitext);
-  const keys = [...f.keys()].filter((k) => /air ?date/.test(k) && !/english|^us |dub|^en /.test(k));
-  const key = keys.find((k) => /jp|japan/.test(k)) ?? keys[0];
+  const keys = [...f.keys()].filter((k) => /air ?date|release date/.test(k) && !/english|^us |\(us\)|dub|^en /.test(k));
+  const key = keys.find((k) => /jp|japan|\(ja\)/.test(k)) ?? keys[0];
   let date: string | null = null;
   if (key) {
     for (const part of f.get(key)!.split(/<br\s*\/?>|\n/i)) {
@@ -65,8 +66,8 @@ export function infoboxInfo(wikitext: string): FandomInfo {
   };
 }
 
-const PLOT = /^(summary|plot|plot details|plot summary|story|recap|full summary)$/i;
-const SHORT = /^(synopsis|overview|brief)$/i;
+const PLOT = /^(summary|plot|plot details|plot summary|story|recap|full summary|detailed summary)$/i;
+const SHORT = /^(synopsis|overview|brief|short summary|official synopsis)$/i;
 
 /** Разделы страницы серии: короткий анонс и подробный пересказ (самый длинный из «Summary / Plot / …»). */
 export function plotSections(html: string): { synopsis: string | null; plot: string | null } {

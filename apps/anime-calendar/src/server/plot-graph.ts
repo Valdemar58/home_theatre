@@ -515,6 +515,24 @@ const EVENT_COLS = "id, key, anilist_id, title, summary, kind, ep_from, ep_to, r
 const parseEvent = (e: RawEvent): EventRow => ({ ...e, data: e.data ? JSON.parse(e.data) : {} });
 const eventEp = (e: { revealed_ep: number | null; ep_to: number | null; ep_from: number | null }) => e.revealed_ep ?? e.ep_to ?? e.ep_from ?? 0;
 
+/**
+ * Арки сезона на курсор зрителя (страница франшизы): по порядку первой серии, с числом видимых событий; сколько
+ * событий ещё впереди. Без разбора серий — null.
+ */
+export function seasonArcs(userId: number, anilistId: number): { ep: number; events: number; ahead: number; arcs: { name: string; fromEp: number | null; events: number }[] } | null {
+  if (!db.prepare<[number], { n: number }>("SELECT 1 AS n FROM plot_title WHERE anilist_id = ?").get(anilistId)) return null;
+  const k = viewerCursor(userId).get(anilistId) ?? 0;
+  const all = db.prepare<[number], { n: number }>("SELECT COUNT(*) AS n FROM plot_event WHERE anilist_id = ? AND key IS NOT NULL").get(anilistId)!.n;
+  const events = visibleEvents(anilistId, k);
+  const arcs = new Map<string, { name: string; fromEp: number | null; events: number }>();
+  for (const e of events) {
+    if (!e.data.arc) continue;
+    const a = arcs.get(e.data.arc) ?? arcs.set(e.data.arc, { name: e.data.arc, fromEp: e.ep_from, events: 0 }).get(e.data.arc)!;
+    a.events++;
+  }
+  return { ep: k, events: events.length, ahead: all - events.length, arcs: [...arcs.values()] };
+}
+
 /** События тайтла, которые зритель уже видел (по серии раскрытия), по порядку серий. */
 function visibleEvents(anilistId: number, k: number): EventRow[] {
   return db.prepare<[number], RawEvent>(`SELECT ${EVENT_COLS} FROM plot_event WHERE anilist_id = ? AND key IS NOT NULL ORDER BY ep_from, id`).all(anilistId)

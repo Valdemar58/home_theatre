@@ -23,6 +23,8 @@ describe("parseDate", () => {
     expect(parseDate("Sept. 5, 2024")).toBe("2024-09-05");
     expect(parseDate("2020-12-05")).toBe("2020-12-05");
     expect(parseDate("{{Start date|2018|10|2}}")).toBe("2018-10-02");
+    expect(parseDate("April 1st, 2020")).toBe("2020-04-01");
+    expect(parseDate("23rd May 2024")).toBe("2024-05-23");
     expect(parseDate("TBA")).toBeNull();
   });
 });
@@ -37,6 +39,12 @@ describe("infoboxInfo", () => {
 
   it("японский показ, а не английский", () => {
     expect(infoboxInfo(boxes["spy-x-family"]["Episode 1"])).toMatchObject({ date: "2022-04-09", season: "1" });
+    // «Атака титанов»: (JA) и (US) в скобках, американский показ раньше в списке
+    expect(infoboxInfo("{{Infobox episode\n| Air date (US) = May 17, 2014\n| Air date (JA) = April 21, 2013\n}}").date).toBe("2013-04-21");
+  });
+
+  it("release_date вместо air date («Башня Бога»)", () => {
+    expect(infoboxInfo("{{Episode\n|name = BALL\n|season = 1\n|episode = 1\n|release_date = April 1st, 2020\n}}")).toMatchObject({ date: "2020-04-01", season: "1", number: "1" });
   });
 
   it("без предпоказа и режиссёрской версии", () => {
@@ -51,6 +59,13 @@ describe("plotSections", () => {
     expect(synopsis?.length).toBeGreaterThan(50);
     expect(plot?.length).toBeGreaterThan(3000);
     expect(plot).not.toMatch(/<|\[\d+\]|Sign in to edit/);
+  });
+
+  it("Short / Detailed Summary («Башня Бога»)", () => {
+    const h2 = (id: string, body: string) => `<h2><span class="mw-headline" id="${id}">${id}</span></h2><p>${body}</p>`;
+    const { synopsis, plot } = plotSections(h2("Official_Synopsis", "Анонс.") + h2("Short_Summary", "Коротко.") + h2("Detailed_Summary", "Подробный пересказ серии."));
+    expect(synopsis).toBe("Анонс.");
+    expect(plot).toBe("Подробный пересказ серии.");
   });
 });
 

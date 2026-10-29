@@ -588,11 +588,11 @@ def step_torrserver() -> None:
     settings.update(
         # Фиксированный порт для входящих соединений пиров (проброшен в compose): так поток быстрее
         PeersListenPort=6882,
-        # Кэш на диске (/cache = DATA_ROOT/torrserver-cache): серию можно «подготовить» целиком
-        # заранее (календарь → «Загрузки»), в памяти помещалось 256 МБ. 16 ГБ — пара серий BDRemux
-        UseDisk=True,
-        TorrentsSavePath="/cache",
-        CacheSize=16 * 1024 ** 3,
+        # Кэш в памяти, на раздачу: только запас живого потока на несколько минут. Серии заранее
+        # целиком качает qBittorrent («Подготовить», календарь), диск TorrServer больше не нужен
+        UseDisk=False,
+        TorrentsSavePath="",
+        CacheSize=1024 ** 3,
         # Кэш раздачи остаётся после её остановки — подготовленная серия не теряется
         RemoveCacheOnDrop=False,
         PreloadCache=25,
@@ -601,7 +601,7 @@ def step_torrserver() -> None:
         ConnectionsLimit=100,
     )
     api.post("/settings", {"action": "set", "sets": settings})
-    log("= TorrServer: порт пиров 6882, кэш 16 ГБ на диске, 100 соединений")
+    log("= TorrServer: порт пиров 6882, кэш 1 ГБ в памяти, 100 соединений")
 
 
 # ---------------------------------------------------------------- Ollama

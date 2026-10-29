@@ -1,7 +1,6 @@
 import { after } from "next/server";
 import { deleteEntry, ensureMedia, getRow, logWatch, upsertEntry, validatePatch, type EntryPatch } from "@/server/lists";
 import { ApiError, authed, intParam, json } from "@/server/route";
-import { pushEntry } from "@/server/sync";
 import { onProgress } from "@/server/together";
 import { achievementsOf } from "@/server/achievements";
 import { enqueue } from "@/server/archive";
@@ -19,8 +18,6 @@ export const PUT = authed<{ id: string }>(async (req, user, { id }) => {
   upsertEntry(user.id, media, patch);
   const now = getRow(user.id, anilistId);
   logWatch(user.id, media, before && !before.deleted ? before.episodes : 0, now?.episodes ?? 0);
-  // В Shikimori отправляем после ответа, чтобы интерфейс не ждал
-  after(() => pushEntry(user.id, anilistId));
   // Тайтл в списке — сохраняется в архив целиком (серии, персонажи, картинки)
   if (!before || before.deleted) after(() => { enqueue([anilistId], "full", "list"); });
   // Новые уровни наград — уведомлением
@@ -33,7 +30,7 @@ export const PUT = authed<{ id: string }>(async (req, user, { id }) => {
 
 export const DELETE = authed<{ id: string }>(async (_req, user, { id }) => {
   const anilistId = intParam(id, "id");
+  // На Shikimori отправит само удаление (lists.ts → sync.ts)
   deleteEntry(user.id, anilistId);
-  after(() => pushEntry(user.id, anilistId));
   return json({ ok: true });
 });

@@ -571,6 +571,44 @@ export type CastMember = {
   voice: string | null;
 };
 
+/** Редактор персонажа в графе сюжета (IDEAS #81): всё о нём без курсора и журнал правок. */
+export type PlotEditor = {
+  root: number;
+  key: string;
+  entityId: number;
+  anilistId: number;
+  /** Серий в тайтле (для выбора «с серии») */
+  total: number | null;
+  name: string;
+  anilistCharId: number | null;
+  candidates: { id: number; name: string; native: string | null; image: string | null; role: CharacterRole }[];
+  others: { key: string; entityId: number; name: string }[];
+  identities: { otherKey: string | null; name: string; anilistId: number; ep: number }[];
+  names: { name: string; anilistId: number; fromEp: number }[];
+  notes: { anilistId: number; upTo: number; description: string }[];
+  images: { url: string; source: string; label: string | null; anilistId: number | null; fromEp: number | null }[];
+  edits: { id: number; kind: import("./plot-edits").EditKind; anilistId: number; fromEp: number; author: string; at: number; undone: boolean; text: string }[];
+};
+
+/** Страница франшизы (IDEAS #80): тайтлы в порядке выхода, мой прогресс, арки сюжета на мой прогресс. */
+export type FranchiseView = {
+  root: number;
+  /** Сезон основной истории, состав которого показываем (где я сейчас) */
+  castTitle: number;
+  /** Что смотреть дальше */
+  next: number | null;
+  /** Часть страниц тайтлов ещё догружается архивом */
+  partial: boolean;
+  progress: { watched: number; total: number };
+  items: {
+    media: MediaLite;
+    kind: import("./franchise").FranchiseKind;
+    entry: { status: ListStatus; episodes: number } | null;
+    /** Разбор серий: арки на мой прогресс; null — разбора нет */
+    plot: { ep: number; events: number; ahead: number; arcs: { name: string; fromEp: number | null; events: number }[] } | null;
+  }[];
+};
+
 export type TitleCast = {
   cursor: PlotCursor;
   /** Граф построен (иначе — состав из AniList без сюжета) */

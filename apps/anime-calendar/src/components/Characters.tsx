@@ -3,7 +3,7 @@ import { ChevronDownIcon, MagnifyingGlassIcon, UserIcon } from "@heroicons/react
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useAnime, useCharacter, useList, usePlotView, useTitleCast } from "@/lib/client";
+import { useAnime, useCharacter, useList, useMe, usePlotView, useTitleCast } from "@/lib/client";
 import { LIST_LABELS } from "@/lib/labels";
 import { displayTitle } from "@/lib/schedule";
 import type { AnimeDetails, CastMember, CharacterDetails, GalleryImage, ListEntryWithMedia, PlotCursor, TitleCast } from "@/lib/types";
@@ -13,6 +13,7 @@ import { Gallery } from "./Gallery";
 import { useCharacterHover } from "./HoverCard";
 import { Img } from "./Img";
 import { Lightbox } from "./Lightbox";
+import { PlotEditButton } from "./PlotEditor";
 import { TitleCard } from "./TitleCard";
 import { Badge, Chip, cx, ErrorBox, Skel, SkelPosters, SkelText } from "./ui";
 
@@ -265,7 +266,8 @@ export function CharacterView({ param }: { param: string }) {
     label: displayTitle(a.media.title), href: `/anime/${a.media.id}`, current: a.media.id === from?.id, note: listNote(myList.get(a.media.id)),
   }));
   const crumbs = (name: string): Crumb[] => [
-    ...(from ? [{ label: displayTitle(from.title), href: `/anime/${from.id}`, options }, { label: "Персонажи", href: `/anime/${from.id}/characters` }] : []),
+    // Персонаж общий для франшизы — путь начинается с неё
+    ...(from ? [{ label: "Франшиза", href: `/franchise/${from.id}` }, { label: displayTitle(from.title), href: `/anime/${from.id}`, options }, { label: "Персонажи", href: `/anime/${from.id}/characters` }] : []),
     { label: name },
   ];
   if (c.hiddenUntil) {
@@ -278,7 +280,7 @@ export function CharacterView({ param }: { param: string }) {
       </div>
     );
   }
-  return <CharacterPage key={c.href} c={c} crumbs={crumbs(c.nameRu ?? c.name)} watching={watching && watching.id !== from?.id ? { id: watching.id, title: displayTitle(watching.title), ep: myList.get(watching.id)?.episodes ?? 0 } : null} />;
+  return <CharacterPage key={c.href} c={c} crumbs={crumbs(c.nameRu ?? c.name)} editAt={from?.id ?? null} watching={watching && watching.id !== from?.id ? { id: watching.id, title: displayTitle(watching.title), ep: myList.get(watching.id)?.episodes ?? 0 } : null} />;
 }
 
 /** Страница персонажа до загрузки — та же раскладка: крошки, облик слева, имя и описание, имена, появления. */
@@ -315,8 +317,9 @@ function listNote(e: ListEntryWithMedia | undefined): string | null {
   return LIST_LABELS[e.status].toLowerCase();
 }
 
-function CharacterPage({ c, crumbs, watching }: { c: CharacterDetails; crumbs: Crumb[]; watching: { id: number; title: string; ep: number } | null }) {
+function CharacterPage({ c, crumbs, watching, editAt }: { c: CharacterDetails; crumbs: Crumb[]; watching: { id: number; title: string; ep: number } | null; editAt: number | null }) {
   const { byId: myList } = useList();
+  const { data: me } = useMe();
   const [shot, setShot] = useState(Math.max(0, c.looks.length - 1));
   const [viewer, setViewer] = useState<number | null>(null);
   const [allNames, setAllNames] = useState(false);
@@ -334,6 +337,8 @@ function CharacterPage({ c, crumbs, watching }: { c: CharacterDetails; crumbs: C
     <div className="mx-auto max-w-6xl space-y-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Breadcrumbs items={crumbs} />
+        {/* Правка графа — админу, у персонажа из разбора серий; серия правки — в тайтле, откуда пришли */}
+        {me?.isAdmin && c.entityId && editAt && <span className="ml-auto"><PlotEditButton entityId={c.entityId} anilistId={editAt} /></span>}
         {/* Пришли из другого сезона — короткий путь в тот, что смотрю */}
         {watching && (
           <Link href={`/anime/${watching.id}`} className="rounded-full px-3 py-1 text-sm tone-accent soft">

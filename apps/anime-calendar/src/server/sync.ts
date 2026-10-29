@@ -87,7 +87,25 @@ export async function pushEntry(userId: number, anilistId: number): Promise<void
   }
 }
 
-export type SyncStats = { pushed: number; pulled: number; imported: number; removed: number; skipped: number };
+// Отправка сразу после правки — откуда бы она ни пришла (список, плеер, Jellyfin, «смотрим вместе», AniLib):
+// через несколько секунд (подряд идущие правки тайтла — одной отправкой) и строго по очереди — параллельные
+// обновления токена сожгли бы refresh-токен (Shikimori выдаёт новый при каждом обновлении). Одна очередь на процесс.
+const PUSH_DELAY_MS = 4000;
+const pushQ = ((globalThis as unknown as { __shikiPush?: { timers: Map<string, NodeJS.Timeout>; chain: Promise<void> } }).__shikiPush ??=
+  { timers: new Map(), chain: Promise.resolve() });
+
+/** Поставить отправку записи на Shikimori (если аккаунт привязан). */
+export function schedulePush(userId: number, anilistId: number): void {
+  const key = `${userId}:${anilistId}`;
+  clearTimeout(pushQ.timers.get(key));
+  pushQ.timers.set(key, setTimeout(() => {
+    pushQ.timers.delete(key);
+    if (!getUserById(userId)?.shiki_refresh) return;
+    pushQ.chain = pushQ.chain.then(() => pushEntry(userId, anilistId));
+  }, PUSH_DELAY_MS));
+}
+
+export type SyncStats ={ pushed: number; pulled: number; imported: number; removed: number; skipped: number };
 
 export async function syncUser(user: User): Promise<SyncStats> {
   const stats: SyncStats = { pushed: 0, pulled: 0, imported: 0, removed: 0, skipped: 0 };

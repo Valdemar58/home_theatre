@@ -849,6 +849,21 @@ function migrate(db: Db) {
     up_to INTEGER NOT NULL,
     built_at INTEGER NOT NULL
   )`);
+  // Правки графа людьми (IDEAS #81): слой поверх графа модели, накладывается при каждой записи графа (lib/plot-edits.ts).
+  // key — ключ персонажа во франшизе (plot_key), from_ep — серия тайтла anilist_id, с которой это известно
+  db.exec(`CREATE TABLE IF NOT EXISTS plot_edit (
+    id INTEGER PRIMARY KEY,
+    root_id INTEGER NOT NULL,
+    key TEXT NOT NULL,
+    anilist_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    data TEXT NOT NULL,
+    from_ep INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    undone_at INTEGER
+  )`);
+  db.exec("CREATE INDEX IF NOT EXISTS plot_edit_root ON plot_edit (root_id, key)");
   db.exec(`CREATE TABLE IF NOT EXISTS plot_view (
     user_id INTEGER NOT NULL,
     anilist_id INTEGER NOT NULL,

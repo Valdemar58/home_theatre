@@ -224,7 +224,10 @@ export function AnimeDetailsView({ id, openVoices, together, undo, comment }: {
 
             {a.relations.length > 0 && (
               <section>
-                <h2 className="mb-3 text-xl font-bold">Связанное</h2>
+                <div className="mb-3 flex flex-wrap items-baseline gap-3">
+                  <h2 className="mr-auto text-xl font-bold">Связанное</h2>
+                  <Link href={`/franchise/${a.id}`} className="text-sm text-accent-300 hover:text-accent-200">Вся франшиза по порядку</Link>
+                </div>
                 <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">
                   {a.relations.map((r) => (
                     <TitleCard key={r.media.id} media={r.media}
