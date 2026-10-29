@@ -1,0 +1,26 @@
+# Доступ к календарю из интернета (TASKS 9.4б): HTTPS на 443, наружу — только календарь (Jellyfin и прочее закрыты).
+# Сертификат Let's Encrypt — проверкой TLS-ALPN на этом же порту (порт 80 не пробрасывается).
+{
+	auto_https disable_redirects
+}
+
+{$PUBLIC_HOST} {
+	tls {
+		issuer acme {
+			disable_http_challenge
+		}
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+		-Server
+	}
+	reverse_proxy anime-calendar:5056 {
+		# Календарь отличает запросы из интернета (качество «Авто», ограничение входов); X-Forwarded-For
+		# Caddy ставит сам, чужой заменяет
+		header_up X-Public-Access 1
+		# События комнаты (SSE) — без буферизации
+		flush_interval -1
+	}
+}

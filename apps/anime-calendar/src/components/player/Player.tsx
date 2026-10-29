@@ -23,7 +23,9 @@ const AUTOSKIP_KEY = "player-autoskip";
 const SEG_LABEL = { op: "опенинг", ed: "эндинг" } as const;
 const VOLUME_KEY = "player-volume";
 const SUB_KEY = "player-sub-lang";
+// «Авто» — решает сервер: дома исходное, из интернета 6 Мбит/с
 const QUALITIES = [
+  { label: "Авто", value: 0 },
   { label: "Исходное", value: 120e6 },
   { label: "8 Мбит/с", value: 8e6 },
   { label: "4 Мбит/с", value: 4e6 },
@@ -42,7 +44,7 @@ const store = {
 function detectCaps(): PlayCaps {
   const ok = (c: string) => typeof MediaSource !== "undefined" && MediaSource.isTypeSupported(`video/mp4; codecs="${c}"`);
   const compat = store.get(COMPAT_KEY) === "1";
-  return { hevc: !compat && ok("hvc1.2.4.L120.B0"), av1: !compat && ok("av01.0.08M.10"), maxBitrate: Number(store.get(QUALITY_KEY)) || 120e6 };
+  return { hevc: !compat && ok("hvc1.2.4.L120.B0"), av1: !compat && ok("av01.0.08M.10"), maxBitrate: Number(store.get(QUALITY_KEY)) || 0 };
 }
 
 /** H.264 + AAC в MSE — без них не сыграть ничего (Jellyfin перекодирует именно в них). */
@@ -673,7 +675,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
           )}
           <Menu open={menu === "quality"} onOpen={() => setMenu(menu === "quality" ? null : "quality")} label="Качество" icon={<Cog6ToothIcon className="h-5 w-5" />}
             items={[
-              ...QUALITIES.map((q) => ({ key: q.value, label: q.label, active: q.value === (Number(store.get(QUALITY_KEY)) || 120e6) })),
+              ...QUALITIES.map((q) => ({ key: q.value, label: q.label, active: q.value === (Number(store.get(QUALITY_KEY)) || 0) })),
               { key: -1, label: "Совместимый режим (H.264)", active: compat },
               { key: -2, label: "Пропускать опенинг и эндинг сам", active: autoSkip },
             ]}

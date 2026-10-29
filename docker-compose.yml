@@ -145,6 +145,38 @@ services:
 
   # Стриминг серий прямо из торрента («Смотреть сейчас» в календаре):
   # календарь кладёт .strm-ссылки на TorrServer в библиотеку Jellyfin «Стрим»
+  # ---------- Доступ из интернета (профиль public) ----------
+  # Календарь по HTTPS на ${DUCKDNS_DOMAIN}.duckdns.org: на роутере — проброс TCP 443 на этот компьютер.
+  # Наружу только календарь; Jellyfin, *arr и прочее остаются в домашней сети.
+  caddy:
+    <<: *common
+    image: caddy:2.10-alpine
+    container_name: caddy
+    profiles: ["public"]
+    environment:
+      PUBLIC_HOST: ${DUCKDNS_DOMAIN:-}.duckdns.org
+    volumes:
+      - ./apps/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${CONFIG_ROOT}/caddy/data:/data
+      - ${CONFIG_ROOT}/caddy/config:/config
+    ports:
+      - "443:443"
+    depends_on:
+      - anime-calendar
+
+  # Домашний IP → DuckDNS (адрес узнаётся по STUN мимо VPN, раз в 5 минут)
+  ddns:
+    <<: *common
+    image: node:22-alpine
+    container_name: ddns
+    profiles: ["public"]
+    command: ["node", "/app/ddns.mjs"]
+    environment:
+      DUCKDNS_DOMAIN: ${DUCKDNS_DOMAIN:-}
+      DUCKDNS_TOKEN: ${DUCKDNS_TOKEN:-}
+    volumes:
+      - ./apps/ddns:/app:ro
+
   torrserver:
     <<: *common
     image: ghcr.io/yourok/torrserver:MatriX.145.1

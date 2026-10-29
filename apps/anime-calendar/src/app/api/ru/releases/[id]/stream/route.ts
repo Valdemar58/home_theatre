@@ -1,5 +1,5 @@
 import { env } from "@/server/env";
-import { ApiError, authed, intParam, json } from "@/server/route";
+import { adminOnly, ApiError, authed, intParam, json } from "@/server/route";
 import { streamRuRelease, streamUrl } from "@/server/ru/releases";
 
 const requireStream = () => {
@@ -13,7 +13,8 @@ export const GET = authed<{ id: string }>(async (_req, _user, { id }) => {
 });
 
 /** «Смотреть сейчас»: раздача в TorrServer, серии в Jellyfin */
-export const POST = authed<{ id: string }>(async (req, _user, { id }) => {
+export const POST = authed<{ id: string }>(async (req, user, { id }) => {
+  adminOnly(user);
   requireStream();
   const { guid } = (await req.json().catch(() => ({}))) as { guid?: string };
   if (!guid) throw new ApiError(400, "Не выбрана раздача");

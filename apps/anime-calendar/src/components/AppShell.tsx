@@ -151,7 +151,7 @@ export function AppShell({ userName, sidebar = "auto", children }: { userName: s
           <Logo textClass={bar.label} />
         </div>
         <nav className="mt-4 flex-1 space-y-1 overflow-y-auto overflow-x-hidden px-3">
-          {NAV.map(({ href, label, icon: Icon }) => {
+          {NAV.filter((n) => me?.isAdmin || n.href !== "/downloads").map(({ href, label, icon: Icon }) => {
             const active = pathname.startsWith(href);
             return (
               <Link
@@ -235,9 +235,11 @@ export function AppShell({ userName, sidebar = "auto", children }: { userName: s
           <Link href="/friends" className="rounded-md p-2 text-gray-400 hover:bg-gray-800 hover:text-white md:hidden" aria-label="Друзья">
             <UsersIcon className="h-6 w-6" />
           </Link>
-          <Link href="/downloads" className="rounded-md p-2 text-gray-400 hover:bg-gray-800 hover:text-white md:hidden" aria-label="Загрузки">
-            <ArrowDownTrayIcon className="h-6 w-6" />
-          </Link>
+          {me?.isAdmin && (
+            <Link href="/downloads" className="rounded-md p-2 text-gray-400 hover:bg-gray-800 hover:text-white md:hidden" aria-label="Загрузки">
+              <ArrowDownTrayIcon className="h-6 w-6" />
+            </Link>
+          )}
           <Link href="/settings" className="rounded-md p-2 text-gray-400 hover:bg-gray-800 hover:text-white md:hidden" aria-label="Настройки">
             <Cog6ToothIcon className="h-6 w-6" />
           </Link>
