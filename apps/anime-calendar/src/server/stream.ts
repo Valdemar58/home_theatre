@@ -38,14 +38,19 @@ async function addTorrent(release: ProwlarrRelease, title: string, poster: strin
   if (!release.downloadUrl) throw new Error("У раздачи нет ссылки на .torrent");
   const torrent = await fetch(release.downloadUrl, { signal: AbortSignal.timeout(60_000) });
   if (!torrent.ok) throw new Error(`Не удалось скачать .torrent: HTTP ${torrent.status}`);
+  const bytes = new Uint8Array(await torrent.arrayBuffer());
   const form = new FormData();
   form.append("save", "true");
   form.append("title", title);
   if (poster) form.append("poster", poster);
-  form.append("file", new Blob([await torrent.arrayBuffer()], { type: "application/x-bittorrent" }), "release.torrent");
+  form.append("file", new Blob([bytes], { type: "application/x-bittorrent" }), "release.torrent");
   const res = await fetch(`${env.torrserverUrl}/torrent/upload`, { method: "POST", body: form, signal: AbortSignal.timeout(60_000) });
   if (!res.ok) throw new Error(`TorrServer upload: HTTP ${res.status}`);
-  return (await res.json()) as TsTorrent;
+  const added = (await res.json()) as TsTorrent;
+  // .torrent — и для «Подготовить» (серию скачает qBittorrent)
+  const { saveTorrent } = await import("./prep");
+  saveTorrent(added.hash, bytes);
+  return added;
 }
 
 export const safe = (s: string) => s.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();

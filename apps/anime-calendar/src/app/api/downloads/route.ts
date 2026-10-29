@@ -1,5 +1,6 @@
 import { listQueue } from "@/server/downloads";
 import { prebufferProgress } from "@/server/prebuffer";
+import { prepSummary } from "@/server/prep";
 import { authed, json } from "@/server/route";
 import { listStreams } from "@/server/stream";
 import { activeTasks } from "@/server/tasks";
@@ -14,6 +15,8 @@ export const GET = authed(async () => {
     queueError: queue.status === "rejected" ? String(queue.reason) : null,
     // Подготовка серий: прогресс и задачи в очереди (ключ — «хэш:индекс»)
     prebuffer: prebufferProgress(),
+    // Скачанные серии «Стрима» (qBittorrent): сколько и сколько места из лимита
+    prep: prepSummary(),
     prebufferQueued: activeTasks("prebuffer").map((t) => t.key),
   });
 });

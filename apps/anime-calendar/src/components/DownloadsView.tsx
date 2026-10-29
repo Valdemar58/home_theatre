@@ -19,6 +19,7 @@ import { useAlert, useConfirm } from "./Dialogs";
 type Downloads = {
   streams: StreamItem[]; streamsError: string | null; queue: QueueItem[]; queueError: string | null;
   prebuffer: PrebufferProgress[]; prebufferQueued: string[];
+  prep?: { count: number; downloading: number; used: number; limit: number };
 };
 
 const size = (b: number) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} ГБ` : `${Math.round(b / 1e6)} МБ`);
@@ -179,10 +180,16 @@ export function DownloadsView() {
           <h2 className="text-xl font-bold">Онлайн-просмотр <Count n={data?.streams.length} /></h2>
           <p className="text-sm text-gray-400">
             Кнопка «Смотреть»: раздача в TorrServer, серии — в библиотеке Jellyfin «Стрим». Целиком она не качается —
-            TorrServer тянет куски под то, что сейчас смотрится. Если скорости не хватает — «Подготовить» серию:
-            она начнёт качаться заранее, и придёт уведомление, когда её можно включить и досмотреть без остановок.
-            «Убрать» — удалить раздачу и ссылки из Jellyfin.
+            TorrServer тянет куски под то, что сейчас смотрится. «Подготовить» серию — она скачается целиком
+            (qBittorrent) и будет играть с диска; придёт уведомление. Скачанное удаляется само: через 3 дня после
+            просмотра, через 14 дней без просмотра или когда места больше лимита. «Убрать» — удалить раздачу и ссылки из Jellyfin.
           </p>
+          {data?.prep && (data.prep.count > 0 || data.prep.downloading > 0) && (
+            <p className="mt-1 text-sm text-gray-300">
+              Скачано серий: {data.prep.count}{data.prep.downloading ? `, качается: ${data.prep.downloading}` : ""} ·{" "}
+              {(data.prep.used / 2 ** 30).toFixed(1).replace(".", ",")} из {Math.round(data.prep.limit / 2 ** 30)} ГБ
+            </p>
+          )}
         </div>
         {!data ? <RowSkeleton /> : data.streamsError && <ErrorBox error={`TorrServer недоступен: ${data.streamsError}`} />}
         {!data ? null : data.streams.length === 0 && !data.streamsError ? (

@@ -15,6 +15,7 @@ import { ensureSegments, itemKey, storedSegments } from "./segments";
 import { releaseTag, streamSubs, subsForVideo, syncStreamSubsSoon } from "./stream-subs";
 import { sdhFile } from "./sdh";
 import { episodeVoices, fetchVoice, setVoicePref, voicePref, type EpisodeVoice } from "./stream-voices";
+import { isPrepared } from "./prep";
 import { dropTorrentCache, jellyfin, torrentCached, torrentStats } from "./stream";
 import { episodeStatus } from "./availability";
 
@@ -333,9 +334,11 @@ export async function reportProgress(user: { id: number; name: string; jellyfin_
  */
 export async function playStatus(s: PlaySession): Promise<PlayStatus> {
   if (!s.stream) return { stream: null };
+  // Скачанная серия (prep.ts) отдаётся с диска — вся «скачана»
+  const local = isPrepared(s.stream.hash, s.stream.index);
   const [t, cached] = await Promise.all([
     torrentStats(s.stream.hash, s.stream.index).catch(() => null),
-    torrentCached(s.stream.hash, s.stream.index, s.duration).catch(() => []),
+    local ? Promise.resolve<[number, number][]>([[0, 1]]) : torrentCached(s.stream.hash, s.stream.index, s.duration).catch(() => []),
   ]);
   const p = prebufferProgress().find((x) => x.key === `${s.stream!.hash}:${s.stream!.index}`);
   return {

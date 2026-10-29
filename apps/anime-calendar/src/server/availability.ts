@@ -7,6 +7,7 @@ import { env } from "./env";
 import { mappingForAnilist } from "./idmap";
 import { episodeItems } from "./playback";
 import { prebufferProgress } from "./prebuffer";
+import { isPrepared } from "./prep";
 import { seriesByTvdb, sonarrGet } from "./ru/arr";
 import { torrentCaches, torrentFilesCached } from "./stream";
 
@@ -82,6 +83,10 @@ export async function episodeStatus(anilistId: number): Promise<{ episodes: Epis
         if (!e.preparing) e.ready = e.cached >= 0.97;
       }
     }
+  }
+  // Скачанные серии (prep.ts) — готовы целиком, с диска
+  for (const e of episodes) {
+    if (e.hash && e.index && isPrepared(e.hash, e.index)) Object.assign(e, { cached: 1, ready: true, downloaded: true });
   }
   return { episodes, aired, caches };
 }

@@ -327,7 +327,7 @@ function ReadyLine({ s }: { s: EpisodeStatus }) {
       <span className="flex min-w-0 flex-1 items-center gap-1.5" title={`В кэше TorrServer: ${c}%`}>
         <span className="h-1 w-12 shrink-0 overflow-hidden rounded-full bg-gray-700"><span className="block h-full bg-accent-500" style={{ width: `${c}%` }} /></span>
         <span className={cx("truncate", c >= 97 ? "text-positive-300" : "")}>
-          {s.preparing ? `готовлю${s.etaSec ? ` · ~${waitText(s.etaSec)}` : ` ${c}%`}` : c >= 97 ? "готова" : `${c}%`}
+          {s.preparing ? `качаю${s.etaSec ? ` · ~${waitText(s.etaSec)}` : ` ${c}%`}` : s.downloaded ? "скачана" : c >= 97 ? "готова" : `${c}%`}
         </span>
       </span>
     );

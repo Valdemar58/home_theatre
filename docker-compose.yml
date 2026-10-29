@@ -98,7 +98,15 @@ services:
       PROWLARR_API_KEY: ${PROWLARR_API_KEY}
       FLARESOLVERR_URL: http://flaresolverr:8191
       # «Смотреть сейчас»: TorrServer + библиотека Jellyfin «Стрим»
-      TORRSERVER_URL: http://torrserver:8090
+      TORRSERVER_URL: http://torrserver-core:8090
+      # В .strm пишется адрес маршрутизатора (stream-router): подготовленные серии он отдаёт с диска
+      TORRSERVER_INTERNAL_URL: http://torrserver:8090
+      # «Подготовить серию» — скачать её qBittorrent в ${DATA_ROOT}/media/stream/.prep (TASKS 9.8)
+      QBIT_URL: http://qbittorrent:8080
+      QBIT_USER: ${QBIT_USER:-admin}
+      QBIT_PASSWORD: ${QBIT_PASSWORD:-}
+      PREP_LIMIT_GB: ${PREP_LIMIT_GB:-20}
+      PREP_MIN_FREE_GB: ${PREP_MIN_FREE_GB:-15}
       STREAM_DIR: /stream
       JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:-}
       JELLYFIN_PUBLIC_URL: ${JELLYFIN_PUBLISHED_URL:-http://localhost:8096}
@@ -139,6 +147,8 @@ services:
       # Приоритеты озвучек для окна выбора раздачи (те же баллы, что у Sonarr)
       - ./profiles.toml:/profiles.toml:ro
       - ${DATA_ROOT}/media/stream:/stream
+      # База TorrServer: из неё — .torrent раздач, добавленных до «Подготовить» через qBittorrent
+      - ${CONFIG_ROOT}/torrserver:/torrserver:ro
     ports:
       - "5056:5056"
     depends_on:
@@ -256,10 +266,28 @@ services:
     volumes:
       - ./apps/ddns:/app:ro
 
-  torrserver:
+  # Ссылки .strm ведут на http://torrserver:8090 — это маршрутизатор: серию, заранее скачанную через qBittorrent
+  # («Подготовить»), он отдаёт с диска, остальное — в TorrServer (torrserver-core). Jellyfin .strm не перечитывает,
+  # поэтому подмена — здесь, а не в ссылках
+  stream-router:
+    <<: *common
+    image: node:22-alpine
+    container_name: stream-router
+    command: ["node", "/app/router.mjs"]
+    volumes:
+      - ./apps/stream-router:/app:ro
+      - ${DATA_ROOT}/media/stream:/stream:ro
+    networks:
+      default:
+        aliases:
+          - torrserver
+    depends_on:
+      - torrserver-core
+
+  torrserver-core:
     <<: *common
     image: ghcr.io/yourok/torrserver:MatriX.145.1
-    container_name: torrserver
+    container_name: torrserver-core
     environment:
       TZ: ${TZ}
       TS_PORT: 8090

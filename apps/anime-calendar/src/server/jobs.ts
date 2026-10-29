@@ -21,6 +21,7 @@ import { translateTags } from "./tags-ru";
 import { checkNewEpisodes } from "./episode-notices";
 import { groupTick } from "./groups";
 import { syncSignups } from "./accounts";
+import { cleanupPrepared } from "./prep";
 import { archiveInitial, archiveLists, archiveRecheck, archiveTick } from "./archive";
 
 const MINUTE = 60_000;
@@ -67,6 +68,10 @@ export function startJobs() {
   if (env.jellyfinApiKey) setInterval(() => void safe("prefetch-next", () => prefetchWhileWatching(playingStreams())), 30_000);
   // Уборка стриминга: .strm скачанных серий и раздачи TorrServer без ссылок
   if (env.jellyfinApiKey) setInterval(() => void safe("stream-cleanup", () => cleanupStreams()), 30 * MINUTE);
+  // Скачанные серии «Стрима»: досмотренные, забытые, сверх лимита места (TASKS 9.8)
+  // (и через минуту после старта: докачанное без задачи, пока календарь перезапускался, — в готовые)
+  setTimeout(() => void safe("prep-cleanup", cleanupPrepared), MINUTE);
+  setInterval(() => void safe("prep-cleanup", cleanupPrepared), 30 * MINUTE);
   // Плеер: сессии, брошенные без «стоп» (закрыли вкладку), — остановить перекодирование
   setInterval(() => void safe("play-sweep", async () => sweepPlayback()), MINUTE);
   // Группы просмотра: сеансы по расписанию (подготовка, напоминание, комната) и голосования по сроку

@@ -81,5 +81,5 @@ qbit.{$PUBLIC_HOST} {
 }
 
 torrserver.{$PUBLIC_HOST} {
-	import guarded torrserver:8090
+	import guarded torrserver-core:8090
 }

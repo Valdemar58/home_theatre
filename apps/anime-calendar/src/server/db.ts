@@ -260,6 +260,20 @@ function migrate(db: Db) {
       PRIMARY KEY (from_id, to_id)
     );
     CREATE INDEX IF NOT EXISTS friendships_to ON friendships (to_id);
+    -- Подготовленные серии «Стрима» (TASKS 9.8): файл раздачи, скачанный qBittorrent в STREAM_DIR/.prep;
+    -- key — «<хэш>:<номер файла>», rel — путь от .prep, users — кто просил (JSON), done_at — скачана
+    CREATE TABLE IF NOT EXISTS prepared_files (
+      key TEXT PRIMARY KEY,
+      hash TEXT NOT NULL,
+      idx INTEGER NOT NULL,
+      rel TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      anilist_id INTEGER,
+      ep INTEGER,
+      users TEXT NOT NULL DEFAULT '[]',
+      created_at INTEGER NOT NULL,
+      done_at INTEGER
+    );
     -- Приглашения в Authentik (TASKS 7.9в): id — pk приглашения Authentik; group_id — группа просмотра, куда позвать
     CREATE TABLE IF NOT EXISTS invites (
       id TEXT PRIMARY KEY,

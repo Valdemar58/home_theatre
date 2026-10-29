@@ -19,6 +19,8 @@ export type EpisodeStatus = {
   etaSec?: number | null;
   /** Стрим: какая доля файла уже лежит в кэше TorrServer (0–1) */
   cached?: number;
+  /** Серия скачана целиком (qBittorrent) — отдаётся с диска */
+  downloaded?: boolean;
 };
 
 /** Кэш раздачи TorrServer: сколько занято из ёмкости (ёмкость — на каждую раздачу). */
