@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chapterLabel, piecesToRanges, srtToVtt, deviceProfile, pickAudio, pickSub, trackLabel, videoTrackOf, type PlaySub, type PlayTrack } from "./player";
+import { chapterLabel, piecesToRanges, srtToVtt, deviceProfile, pickAudio, pickSub, rememberedSub, subChoiceOf, trackLabel, videoTrackOf, type PlaySub, type PlayTrack } from "./player";
 
 const t = (index: number, lang: string | null, title: string | null = null): PlayTrack => ({ index, lang, title, codec: "aac", label: "" });
 const s = (index: number, lang: string | null, title: string | null = null, forced = false): PlaySub =>
@@ -21,6 +21,23 @@ describe("дорожки по умолчанию", () => {
     expect(pickSub([s(5, "eng"), s(7, "rus")], audio[1])).toBeNull();
     expect(pickSub(subs, audio[0])).toBe(7);
     expect(pickSub([s(5, "eng")], audio[0])).toBe(5);
+  });
+
+  it("запомненные субтитры: та же дорожка, потом источник и язык, дорожка без языка не теряется", () => {
+    const lab = (x: PlaySub, label: string, extra: Partial<PlaySub> = {}) => ({ ...x, label, ...extra });
+    const subs = [lab(s(5, "eng"), "Английский"), lab(s(6, "rus"), "Русский · Crunchyroll"), lab(s(7, "rus"), "Русский · Полные"),
+      lab(s(200_001, null), "Rus Subs", { torrent: true }), lab(s(100_000, "jpn"), "Японский · Jimaku", { jimaku: true })];
+    // Вторая русская дорожка — она же, а не первая русская
+    expect(rememberedSub(subs, subChoiceOf(subs[2]), 6)).toBe(7);
+    // Дорожка из раздачи без языка — раньше запоминалась как «выключены»
+    expect(rememberedSub(subs, subChoiceOf(subs[3]), 6)).toBe(200_001);
+    expect(rememberedSub(subs, subChoiceOf(subs[4]), 6)).toBe(100_000);
+    expect(rememberedSub(subs, { off: true }, 6)).toBeNull();
+    // В другой серии названия другие: тот же источник и язык, иначе язык, иначе — предложение сервера
+    expect(rememberedSub(subs, { from: "file", lang: "rus", label: "Русский · другая" }, 5)).toBe(6);
+    expect(rememberedSub(subs, { from: "external", lang: "eng", label: "x" }, 6)).toBe(5);
+    expect(rememberedSub(subs, { from: "file", lang: "fre", label: "x" }, 6)).toBe(6);
+    expect(rememberedSub(subs, null, 6)).toBe(6);
   });
 
   it("подпись дорожки по-русски, название без повтора языка", () => {

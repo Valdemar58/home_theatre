@@ -67,7 +67,8 @@ export function StreamStatus({ status, stage, transcode, stalled, compat, onRest
         <p className="text-gray-400">Прошлый сегмент: {mb(stage.lastBytes)} за {(stage.lastMs / 1000).toFixed(1)} с</p>
       )}
       {transcode && <p className="text-gray-400">{transcodeText(transcode)}{compat ? " · совместимый режим" : ""}</p>}
-      {s && (
+      {s?.local && <p className="border-t border-white/10 pt-1.5 text-positive-300">Серия скачана — идёт с диска, раздача не нужна</p>}
+      {s && !s.local && (
         <div className="space-y-1 border-t border-white/10 pt-1.5">
           <p>
             Раздача: <span className="text-gray-400">{s.state}</span> · пиры {s.peers}{s.totalPeers ? ` из ${s.totalPeers}` : ""} · сиды {s.seeders}

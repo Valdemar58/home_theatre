@@ -14,6 +14,29 @@ export const JIMAKU_SUB = 100_000;
 export const STREAM_SUB = 200_000;
 /** Надписи из полной дорожки: SIGNS_SUB + номер исходной дорожки. */
 export const SIGNS_SUB = 1_000_000;
+/**
+ * Выбранные субтитры, как их запомнить между перезагрузками и сериями: номер дорожки у другой серии другой, поэтому —
+ * откуда дорожка, её язык и название. off — выключены.
+ */
+export type SubChoice = { off: true } | { from: "jimaku" | "torrent" | "external" | "file"; lang: string | null; label: string };
+
+export const subChoiceOf = (s: PlaySub | null | undefined): SubChoice =>
+  !s ? { off: true } : { from: s.jimaku ? "jimaku" : s.torrent ? "torrent" : s.external ? "external" : "file", lang: s.lang, label: s.label };
+
+/**
+ * Дорожка для запомненного выбора: та же (источник и название) → того же источника и языка → того же языка →
+ * что предложил сервер. Без выбора — тоже предложение сервера.
+ */
+export function rememberedSub(subs: PlaySub[], saved: SubChoice | null, fallback: number | null): number | null {
+  if (!saved) return fallback;
+  if ("off" in saved) return null;
+  const main = subs.filter((s) => !s.fromSub);
+  const from = (s: PlaySub) => subChoiceOf(s) as Exclude<SubChoice, { off: true }>;
+  return (main.find((s) => from(s).from === saved.from && s.label === saved.label)
+    ?? main.find((s) => from(s).from === saved.from && s.lang === saved.lang)
+    ?? (saved.lang ? main.find((s) => s.lang === saved.lang && !s.signs) : undefined))?.index ?? fallback;
+}
+
 export type PlayChapter = { name: string; start: number };
 /** «Перевести кадр»: надпись в кадре — текст, перевод и рамка в долях 0–1000 кадра. */
 export type FrameItem = { text: string; ru: string; box: [number, number, number, number] };
@@ -54,6 +77,8 @@ export type PlayStatus = {
     prebuffer: { read: number; size: number; ready: boolean; done: boolean; etaSec: number | null } | null;
     /** Что уже скачано TorrServer: доли файла [начало, конец) — полоска под шкалой */
     cached: [number, number][];
+    /** Серия скачана целиком (qBittorrent, «Подготовить») и идёт с диска — раздача не участвует */
+    local?: boolean;
   } | null;
 };
 

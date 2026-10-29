@@ -109,13 +109,14 @@ function VoicesDialog({ media, onClose, onSubs }: { media: MediaLite; onClose: (
     void startTask("voices", media.id, "user").then(() => qc.invalidateQueries({ queryKey: ["voices", media.id] }));
   };
 
-  const run = async (r: RuRelease, action: Action) => {
-    setBusy(`${r.guid}:${action}`);
+  // shownOn — у какой карточки показать итог («+ RU субтитры» у оригинальной раздачи берёт субтитры русской)
+  const run = async (r: RuRelease, action: Action, shownOn = r.guid) => {
+    setBusy(`${shownOn}:${action}`);
     setResult(null);
     try {
       const path = action === "download" ? `/api/ru/releases/${media.id}` : `/api/ru/releases/${media.id}/${action}`;
       const res = await api<{ ok: boolean; message: string }>(path, { method: "POST", json: { guid: r.guid } });
-      setResult({ guid: r.guid, action, ...res });
+      setResult({ guid: shownOn, action, ...res });
       if (action === "download") qc.invalidateQueries({ queryKey: ["seerr", media.id] });
       if (action === "subs" && res.ok) onSubs?.();
       // Ждём, пока Jellyfin отсканирует новый сериал, и показываем ссылку на него
@@ -124,20 +125,28 @@ function VoicesDialog({ media, onClose, onSubs }: { media: MediaLite; onClose: (
           await new Promise((ok) => setTimeout(ok, 5000));
           const { url } = await api<{ url: string | null }>(`/api/ru/releases/${media.id}/stream`).catch(() => ({ url: null }));
           if (url) {
-            setResult((prev) => (prev && prev.guid === r.guid ? { ...prev, url } : prev));
+            setResult((prev) => (prev && prev.guid === shownOn ? { ...prev, url } : prev));
             break;
           }
         }
       }
     } catch (err) {
-      setResult({ guid: r.guid, action, ok: false, message: err instanceof Error ? err.message : String(err) });
+      setResult({ guid: shownOn, action, ok: false, message: err instanceof Error ? err.message : String(err) });
     } finally {
       setBusy(null);
     }
   };
 
+  const orig = data?.orig ?? [];
+  // Русские субтитры к оригинальной раздаче — из самой раздаваемой русской раздачи с субтитрами
+  const ruSubs = data?.releases.filter(hasSubs).sort((a, b) => b.seeders - a.seeders)[0] ?? null;
+  const card = (r: RuRelease) => (
+    <ReleaseCard key={r.guid} r={r} busy={busy} result={result} canStream={Boolean(me?.ru.stream)} ruSubs={r.origin === "orig" ? ruSubs : null}
+      onRun={(rel, action) => run(rel, action, r.guid)} />
+  );
+
   return (
-    <Modal open onClose={onClose} title="Раздачи с русской озвучкой" wide>
+    <Modal open onClose={onClose} title="Раздачи" wide>
       {isLoading ? (
         <div className="flex justify-center py-12"><Spinner className="h-8 w-8" /></div>
       ) : error ? (
@@ -149,34 +158,79 @@ function VoicesDialog({ media, onClose, onSubs }: { media: MediaLite; onClose: (
           ) : (
             <>
               <Spinner className="h-8 w-8" />
-              <p className="text-gray-200">Ищу раздачи на RuTracker и читаю описания — это фоновая задача.</p>
+              <p className="text-gray-200">Ищу раздачи на трекерах (русские и оригинал) и читаю описания — это фоновая задача.</p>
               <p>Окно можно закрыть: когда всё будет готово, придёт уведомление, и озвучки откроются сразу.</p>
             </>
           )}
         </div>
-      ) : !data?.releases.length ? (
-        <EmptyState title="Русских раздач не нашлось">
-          Возможно, тайтл ещё не озвучили или он называется на трекере иначе.
+      ) : !data.releases.length && !orig.length ? (
+        <EmptyState title="Раздач не нашлось">
+          Ни русских, ни оригинальных: возможно, тайтл называется на трекерах иначе.
         </EmptyState>
       ) : (
         <div className="space-y-3">
-          <p className="text-sm text-gray-400">
-            Отсортировано по твоим приоритетам из profiles.toml (★ — баллы, как их посчитает Sonarr).
-            {!data.inSonarr && " Сериала пока нет в Sonarr: он будет добавлен, скачается только выбранная раздача."}
-          </p>
           <div className="flex flex-wrap items-center gap-2 rounded-md bg-gray-900/60 px-3 py-2 text-xs text-gray-400 ring-1 ring-gray-700">
             {searching
               ? <><Spinner className="h-4 w-4" /> Обновляю в фоне — список сменится сам, окно можно закрыть.</>
               : <>Найдено {state?.fetchedAt ? ago(state.fetchedAt) : ""}{data.pending > 0 && ` · ещё ${data.pending} описаний не дочитано`}</>}
             {!searching && <Button size="sm" variant="ghost" className="ml-auto" onClick={refresh}>Обновить</Button>}
           </div>
-          {data.releases.map((r) => (
-            <div key={r.guid} className={cx("rounded-lg bg-gray-900/60 p-3 ring-1", result?.guid === r.guid && result.ok ? "ring-green-500" : "ring-gray-700")}>
+          <h4 className="pt-1 font-semibold">Русская озвучка <span className="font-normal text-gray-500">{data.releases.length}</span></h4>
+          {data.releases.length ? (
+            <p className="text-sm text-gray-400">
+              Отсортировано по твоим приоритетам из profiles.toml (★ — баллы, как их посчитает Sonarr).
+              {!data.inSonarr && " Сериала пока нет в Sonarr: он будет добавлен, скачается только выбранная раздача."}
+            </p>
+          ) : <p className="text-sm text-gray-400">Русских раздач не нашлось — возможно, тайтл ещё не озвучили или он называется на трекере иначе.</p>}
+          {data.releases.map(card)}
+          {orig.length > 0 && <OrigSection list={orig} card={card} ruSubs={Boolean(ruSubs)} />}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+/** Оригинал и другие языки (Nyaa, 1337x): сначала пачки серий, отдельные серии — по кнопке. */
+function OrigSection({ list, card, ruSubs }: { list: RuRelease[]; card: (r: RuRelease) => React.ReactNode; ruSubs: boolean }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? list : list.slice(0, 8);
+  return (
+    <>
+      <h4 className="pt-3 font-semibold">Оригинал и другие языки <span className="font-normal text-gray-500">{list.length}</span></h4>
+      <p className="text-sm text-gray-400">
+        Японский звук, субтитры — какие указаны в раздаче.{ruSubs ? " «+ RU субтитры» — взять русские субтитры из русской раздачи выше (видео не качается); тайминг бывает от другого релиза — поправьте сдвигом в плеере." : ""}
+      </p>
+      {shown.map(card)}
+      {list.length > shown.length && <Button size="sm" variant="ghost" onClick={() => setAll(true)}>Показать все ({list.length})</Button>}
+    </>
+  );
+}
+
+const LANG_LABELS: Record<string, string> = { JAP: "японский", ENG: "английский", RUS: "русский", MULTI: "много языков" };
+const SUB_LABELS: Record<string, string> = { ENG: "EN", RUS: "RU", MULTI: "мульти", "нет": "без субтитров" };
+
+function ReleaseCard({ r, busy, result, canStream, ruSubs, onRun }: {
+  r: RuRelease; busy: string | null; result: { guid: string; action: Action; ok: boolean; message: string; url?: string | null } | null;
+  canStream: boolean; ruSubs: RuRelease | null; onRun: (r: RuRelease, action: Action) => void;
+}) {
+  const orig = r.origin === "orig";
+  return (
+            <div className={cx("rounded-lg bg-gray-900/60 p-3 ring-1", result?.guid === r.guid && result.ok ? "ring-green-500" : "ring-gray-700")}>
               <div className="flex flex-wrap items-center gap-1.5">
-                {r.voices.length
-                  ? r.voices.map((v) => <Badge key={v} tone="accent">{v}</Badge>)
-                  : <span className="text-sm text-gray-500">студии не указаны</span>}
-                {r.kinds.map((k) => <Badge key={k}>{KIND_LABELS[k] ?? k}</Badge>)}
+                {orig ? (
+                  <>
+                    {r.group ? <Badge tone="accent">{r.group}</Badge> : <span className="text-sm text-gray-500">группа не указана</span>}
+                    <Badge>звук: {r.langs.filter((l) => l !== "MULTI").map((l) => LANG_LABELS[l] ?? l).join(" + ")}</Badge>
+                    {r.subs.map((s) => <Badge key={s} tone={s === "RUS" ? "positive" : "neutral"}>{s === "нет" ? SUB_LABELS[s] : `субтитры ${SUB_LABELS[s] ?? s}`}</Badge>)}
+                  </>
+                ) : (
+                  <>
+                    {r.voices.length
+                      ? r.voices.map((v) => <Badge key={v} tone="accent">{v}</Badge>)
+                      : <span className="text-sm text-gray-500">студии не указаны</span>}
+                    {r.kinds.map((k) => <Badge key={k}>{KIND_LABELS[k] ?? k}</Badge>)}
+                  </>
+                )}
                 {r.rus === "int" && <Badge tone="positive">RU в файле</Badge>}
                 {r.rus === "ext" && <Badge tone="warning">RU отдельными файлами</Badge>}
                 {r.score > 0 && (
@@ -188,34 +242,41 @@ function VoicesDialog({ media, onClose, onSubs }: { media: MediaLite; onClose: (
                 {episodesText(r) && <span>{episodesText(r)}</span>}
                 <span>{gb(r.size)}</span>
                 <span className={r.seeders > 0 ? "text-green-400" : "text-red-400"}>▲ {r.seeders}</span>
-                {r.langs.length > 0 && <span className="text-gray-500">{r.langs.join(", ")}</span>}
+                {!orig && r.langs.length > 0 && <span className="text-gray-500">{r.langs.join(", ")}</span>}
               </div>
-              <div className="mt-2 flex items-center gap-3">
-                <p className="min-w-0 flex-1 truncate text-xs text-gray-500" title={r.title}>{r.title}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <p className="min-w-0 flex-1 basis-40 truncate text-xs text-gray-500" title={r.title}>{r.title}</p>
                 {r.infoUrl && (
                   <a href={r.infoUrl} target="_blank" rel="noreferrer" className="text-gray-400 hover:text-white" title="Открыть раздачу">
                     <ArrowTopRightOnSquareIcon className="h-4 w-4" />
                   </a>
                 )}
-                {me?.ru.stream && hasSubs(r) && (
-                  <Button size="sm" onClick={() => run(r, "subs")} disabled={Boolean(busy)}
+                {canStream && !orig && hasSubs(r) && (
+                  <Button size="sm" onClick={() => onRun(r, "subs")} disabled={Boolean(busy)}
                     title="Взять из раздачи только субтитры и шрифты (видео не качается) — для серий, которые уже есть">
                     <ChatBubbleBottomCenterTextIcon className="h-4 w-4" /> {busy === `${r.guid}:subs` ? "Беру…" : "Субтитры"}
                   </Button>
                 )}
-                {me?.ru.stream && (
-                  <Button size="sm" onClick={() => run(r, "stream")} disabled={Boolean(busy)}
+                {canStream && ruSubs && !r.subs.includes("RUS") && (
+                  <Button size="sm" onClick={() => onRun(ruSubs, "subs")} disabled={Boolean(busy)}
+                    title={`Русские субтитры из «${ruSubs.title}» (видео не качается) — к этой раздаче в плеере`}>
+                    <ChatBubbleBottomCenterTextIcon className="h-4 w-4" /> {busy === `${r.guid}:subs` ? "Беру…" : "+ RU субтитры"}
+                  </Button>
+                )}
+                {canStream && (
+                  <Button size="sm" onClick={() => onRun(r, "stream")} disabled={Boolean(busy)}
                     title={r.rus === "ext" ? "Русская озвучка в этой раздаче отдельными файлами — онлайн её не будет, только скачать" : "Смотреть сразу, не дожидаясь загрузки"}>
                     <PlayIcon className="h-4 w-4" /> {busy === `${r.guid}:stream` ? "Готовлю…" : "Смотреть"}
                   </Button>
                 )}
-                <Button size="sm" variant="primary" onClick={() => run(r, "download")}
-                  disabled={Boolean(busy) || (result?.guid === r.guid && result.action === "download" && result.ok)}>
+                <Button size="sm" variant="primary" onClick={() => onRun(r, "download")}
+                  disabled={Boolean(busy) || (result?.guid === r.guid && result.action === "download" && result.ok)}
+                  title={orig ? "В Sonarr по названию раздачи; профиль «Anime RU» может её отклонить — причина будет здесь" : undefined}>
                   <ArrowDownTrayIcon className="h-4 w-4" />
                   {busy === `${r.guid}:download` ? "Отправка…" : result?.guid === r.guid && result.action === "download" && result.ok ? "В загрузке" : "Скачать"}
                 </Button>
               </div>
-              {me?.ru.stream && r.rus === "ext" && (
+              {canStream && r.rus === "ext" && (
                 <p className="mt-1 text-xs text-yellow-300/80">Русская озвучка здесь отдельными файлами: онлайн будет только оригинал, для озвучки — «Скачать».</p>
               )}
               {result?.guid === r.guid && (
@@ -230,9 +291,5 @@ function VoicesDialog({ media, onClose, onSubs }: { media: MediaLite; onClose: (
                 </div>
               )}
             </div>
-          ))}
-        </div>
-      )}
-    </Modal>
   );
 }

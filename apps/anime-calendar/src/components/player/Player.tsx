@@ -9,7 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "@/lib/client";
 import { imgSrc } from "@/lib/img";
-import { COMPAT_KEY, type FrameItem, type PlayCaps, type PlayInfo, type PlayStatus, videoTrackOf } from "@/lib/player";
+import { COMPAT_KEY, rememberedSub, subChoiceOf, type FrameItem, type PlayCaps, type PlayInfo, type PlayStatus, type SubChoice, videoTrackOf } from "@/lib/player";
 import { correction, positionAt, type RoomState } from "@/lib/room";
 import { cx, ErrorBox, Spinner } from "../ui";
 import { StreamStatus, type Stage } from "./StreamStatus";
@@ -23,6 +23,7 @@ const AUTOSKIP_KEY = "player-autoskip";
 const SEG_LABEL = { op: "опенинг", ed: "эндинг" } as const;
 const VOLUME_KEY = "player-volume";
 const SUB_KEY = "player-sub-lang";
+const subTitleKey = (anilistId: number) => `player-sub:${anilistId}`;
 // Слой «Надписи поверх»: off / ru (русские надписи) / translate (по-русски из полной дорожки)
 const SIGNS_KEY = "player-signs";
 // «Авто» — решает сервер: дома исходное, из интернета 6 Мбит/с
@@ -38,6 +39,26 @@ const store = {
   get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } },
   set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* без хранилища — не запоминаем */ } },
 };
+
+/**
+ * Параметры куска новой сессии (renew): её идентификаторы, но время — этого куска из прежнего адреса. Jellyfin по
+ * runtimeTicks решает, с какой секунды перезапустить перекодирование; с временем первого куска новой сессии он
+ * запускал ffmpeg без -ss — куски с номером 78 и картинкой с начала серии (TASKS 9.7, прыжок назад после пропуска OP).
+ */
+function remapQuery(sessionQuery: string, oldUrl: string): string {
+  const q = new URLSearchParams(sessionQuery);
+  const old = new URL(oldUrl, location.href).searchParams;
+  for (const [k, v] of old) if (/ticks/i.test(k)) q.set(k, v);
+  return `?${q}`;
+}
+
+/** Запомненный выбор субтитров; старый формат — только язык («ru» / «off»). */
+function readChoice(key: string): SubChoice | null {
+  const v = store.get(key);
+  if (!v) return null;
+  if (v === "off") return { off: true };
+  try { return JSON.parse(v) as SubChoice; } catch { return { from: "file", lang: v, label: "" }; }
+}
 
 /**
  * Что браузер декодирует сам (HEVC 10 бит — Chrome/Edge с аппаратным декодером, Safari).
@@ -198,10 +219,11 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
       recoveries.current = 0;
       sid.current = r.sid;
       setInfo(r);
-      // Выбор субтитров запоминается по языку (русские / английские / выкл.)
-      const lang = store.get(SUB_KEY);
-      const byLang = lang === "off" ? null : lang ? r.subs.find((s) => s.lang === lang && !s.signs)?.index ?? r.subIndex : r.subIndex;
-      setSub((prev) => (opts.audio !== undefined || opts.voice ? prev : byLang));
+      // Выбор субтитров запоминается у тайтла (та же дорожка в следующих сериях и после перезагрузки), без него —
+      // язык последнего выбора в любом тайтле
+      const saved = readChoice(subTitleKey(anilistId)) ?? readChoice(SUB_KEY);
+      const picked = rememberedSub(r.subs, saved, r.subIndex);
+      setSub((prev) => (opts.audio !== undefined || opts.voice ? prev : picked));
     } catch (e) {
       setError(e);
       setLoading(false);
@@ -303,7 +325,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
           xhrSetup: (xhr, url) => {
             const m = remap.current;
             const n = m && url.includes(m.from) ? /\/(\d+)\.mp4(\?|$)/.exec(url)?.[1] : null;
-            if (m && n) xhr.open("GET", `${m.dir}${n}.mp4${m.query}`, true);
+            if (m && n) xhr.open("GET", `${m.dir}${n}.mp4${remapQuery(m.query, url)}`, true);
           },
           maxBufferLength: 60, backBufferLength: 90,
           // Кусок не пришёл — повторить несколько раз с паузой (Jellyfin мог перезапускать перекодирование)
@@ -514,7 +536,10 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   const chooseSub = (index: number | null) => {
     const s = info?.subs.find((x) => x.index === index);
     setSub(s ? s.index : null);
-    if (!s || !s.signs) store.set(SUB_KEY, s?.lang ?? "off");
+    const choice = JSON.stringify(subChoiceOf(s));
+    store.set(subTitleKey(anilistId), choice);
+    // Общий выбор (для тайтлов, где ещё не выбирали) — только с языком: дорожку без языка в другом тайтле не найти
+    if (!s || s.lang) store.set(SUB_KEY, choice);
   };
   const chooseSigns = (index: number | null) => {
     const s = info?.subs.find((x) => x.index === index);

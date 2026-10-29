@@ -173,7 +173,8 @@ async function digestEpisode(id: number, f: FileRow, parsed: ParsedSubs, glossar
     `Серия ${f.ep}. Субтитры («人物A» — персонаж, чьё имя зритель ещё не слышал):\n${scriptText(parsed)}`,
   ].filter(Boolean).join("\n\n");
   const localOnly = getLlmConfig().tasks.sdh === "local" || getLlmConfig().mode === "local";
-  const res = await runTask<Digest>("sdh", { schema: SCHEMA, system: SYSTEM, user, maxTokens: 14_000, timeoutMs: 600_000, minTier: localOnly ? 0 : TIER.cheap });
+  // Рассуждение модели тоже в лимите: на длинной серии 14 тыс. обрывало ответ («Хроники Акаши», 9-я)
+  const res = await runTask<Digest>("sdh", { schema: SCHEMA, system: SYSTEM, user, maxTokens: 28_000, timeoutMs: 600_000, minTier: localOnly ? 0 : TIER.cheap });
   recordOutput("sdh", subject(id, f.ep), res, res.value, { schemaV: 1, promptV: PROMPT_V, inputHash });
   return res.value;
 }

@@ -334,11 +334,14 @@ export async function reportProgress(user: { id: number; name: string; jellyfin_
  */
 export async function playStatus(s: PlaySession): Promise<PlayStatus> {
   if (!s.stream) return { stream: null };
-  // Скачанная серия (prep.ts) отдаётся с диска — вся «скачана»
-  const local = isPrepared(s.stream.hash, s.stream.index);
+  // Скачанная серия (prep.ts) отдаётся с диска — вся «скачана»; TorrServer не спрашиваем: статистика будит раздачу,
+  // и она начинает качать впустую, а пиры и сиды в панели плеера путают — смотрится будто стрим
+  if (isPrepared(s.stream.hash, s.stream.index)) {
+    return { stream: { state: "скачана", speed: 0, peers: 0, seeders: 0, totalPeers: 0, fileSize: null, rate: null, prebuffer: null, cached: [[0, 1]], local: true } };
+  }
   const [t, cached] = await Promise.all([
     torrentStats(s.stream.hash, s.stream.index).catch(() => null),
-    local ? Promise.resolve<[number, number][]>([[0, 1]]) : torrentCached(s.stream.hash, s.stream.index, s.duration).catch(() => []),
+    torrentCached(s.stream.hash, s.stream.index, s.duration).catch(() => []),
   ]);
   const p = prebufferProgress().find((x) => x.key === `${s.stream!.hash}:${s.stream!.index}`);
   return {

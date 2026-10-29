@@ -84,7 +84,11 @@ const HANDLERS: Record<string, Handler> = Object.assign(state.handlers, {
       const ru = d.idMal ? (await shikiInfo([d.idMal])).get(d.idMal)?.russian : null;
       return ru ?? d.title.romaji ?? d.title.english ?? `#${key}`;
     },
-    fresh: (key) => (getCached<CachedVoices>(voicesKey(key), true)?.at ?? 0) > now() - VOICES_FRESH,
+    // Результат без оригинальных раздач (до IDEAS #88) — устаревший: искать заново
+    fresh: (key) => {
+      const c = getCached<CachedVoices>(voicesKey(key), true);
+      return Boolean(c?.data.orig) && (c?.at ?? 0) > now() - VOICES_FRESH;
+    },
     run: async (key, signal) => {
       const prev = getCached<CachedVoices>(voicesKey(key), true);
       const data = await ruReleases(Number(key), { signal, budgetMs: 90_000 });
