@@ -558,6 +558,14 @@ def step_jellyfin() -> None:
         api.post("/System/Configuration/encoding", enc)
         log(f"= аппаратное транскодирование: {accel}")
 
+    # Перекодирование — не дальше 2 мин вперёд, просмотренное старше 12 мин удаляется. Без этого перепаковка
+    # (копия видео) пролетает всю серию за полминуты и оставляет её целиком в /cache/transcodes, файлы копятся
+    # тысячами, а Jellyfin перед отдачей сегмента перебирает папку — на диске Windows это ~20 с на сегмент
+    enc = api.get("/System/Configuration/encoding")
+    enc.update(EnableThrottling=True, ThrottleDelaySeconds=120, EnableSegmentDeletion=True, SegmentKeepSeconds=720)
+    api.post("/System/Configuration/encoding", enc)
+    log("= перекодирование с ограничением скорости и удалением просмотренных сегментов")
+
     # Миниатюры на шкале плеера (trickplay): только по опорным кадрам, с ускорением, плановой задачей (ночью), а не
     # при сканировании. Кроме «Стрима»: Jellyfin пришлось бы выкачать раздачу целиком
     sys_cfg = api.get("/System/Configuration")

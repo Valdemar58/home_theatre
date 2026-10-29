@@ -39,6 +39,35 @@ export type CalendarResponse = { media: Record<number, MediaLite>; airings: Airi
 export const LIST_STATUSES = ["watching", "planned", "completed", "on_hold", "dropped", "rewatching"] as const;
 export type ListStatus = (typeof LIST_STATUSES)[number];
 
+/** Разовый импорт AnimeGo: проверка плана перед записью (server/animego-import.ts). */
+export type AgValues = { status: ListStatus | null; score: number | null };
+export type AgItem = {
+  agId: number;
+  url: string;
+  title: string;
+  original: string | null;
+  /** Как на AnimeGo */
+  ag: AgValues;
+  /** Как сопоставлено: уже в списке, поиском, поиском без точного совпадения, вручную, не найдено */
+  how: "list" | "search" | "check" | "manual" | "none";
+  anilistId: number | null;
+  media: { id: number; title: string; romaji: string | null; cover: string | null; format: string | null; year: number | null; episodes: number | null } | null;
+  /** Как сейчас в календаре (null — тайтла в списке нет) */
+  local: AgValues | null;
+  /** Что запишется */
+  status: ListStatus | null;
+  score: number | null;
+  include: boolean;
+  edited: boolean;
+  /** К этому тайтлу привязано несколько записей AnimeGo */
+  duplicate: boolean;
+};
+export type AgReview = {
+  profile: number | null;
+  items: AgItem[];
+  progress: { done: number; total: number; failed: string[]; startedAt: number; finishedAt?: number; error?: string } | null;
+};
+
 export type ListEntry = {
   anilistId: number;
   malId: number | null;

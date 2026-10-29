@@ -53,6 +53,7 @@ const NAV = [
 // Служебные страницы (превью, лаборатории) — только админу, отдельным блоком меню
 export const ADMIN_NAV = [
   { href: "/accounts", label: "Пользователи", icon: IdentificationIcon },
+  { href: "/import/animego", label: "Импорт AnimeGo", icon: InboxArrowDownIcon },
   { href: "/cards-preview", label: "Варианты карточек", icon: BeakerIcon },
   { href: "/upscale-lab", label: "ИИ-апскейл", icon: SparklesIcon },
   { href: "/achievements-preview", label: "Награды (прототип)", icon: TrophyIcon },
