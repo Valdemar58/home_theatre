@@ -335,7 +335,7 @@ export async function playStatus(s: PlaySession): Promise<PlayStatus> {
   if (!s.stream) return { stream: null };
   const [t, cached] = await Promise.all([
     torrentStats(s.stream.hash, s.stream.index).catch(() => null),
-    torrentCached(s.stream.hash, s.stream.index).catch(() => []),
+    torrentCached(s.stream.hash, s.stream.index, s.duration).catch(() => []),
   ]);
   const p = prebufferProgress().find((x) => x.key === `${s.stream!.hash}:${s.stream!.index}`);
   return {

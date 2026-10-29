@@ -6,10 +6,10 @@ import {
 import type Hls from "hls.js";
 import type JASSUB from "jassub";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "@/lib/client";
 import { imgSrc } from "@/lib/img";
-import { COMPAT_KEY, type FrameItem, type PlayCaps, type PlayInfo, type PlayStatus } from "@/lib/player";
+import { COMPAT_KEY, type FrameItem, type PlayCaps, type PlayInfo, type PlayStatus, videoTrackOf } from "@/lib/player";
 import { correction, positionAt, type RoomState } from "@/lib/room";
 import { cx, ErrorBox, Spinner } from "../ui";
 import { StreamStatus, type Stage } from "./StreamStatus";
@@ -276,7 +276,28 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
       if (H && H.isSupported()) {
         // Перекодирование первого сегмента — несколько секунд: ждём дольше обычного. Загрузка — сразу с нужной
         // позиции, без пробного первого сегмента (замер скорости): из холодной раздачи это лишние 10–20 МБ
+        // Шкала = время файла: Jellyfin пишет метки как в файле, но при копировании видео первый кусок начинается
+        // с опорного кадра раньше своего места в плейлисте, а hls.js берёт начало отсчёта от первого куска — и вся
+        // шкала (субтитры, главы, OP/ED, позиция) уезжает на секунды. Init-сегмент грузится до разбора первого куска:
+        // по нему задаём hls.js начало отсчёта 0 (videoTrackOf — номер и единица времени видеодорожки)
+        type InitPts = { baseTime: number; timescale: number; trackId: number };
+        let self: { streamController?: { initPTS: (InitPts | undefined)[] } } | null = null;
+        type LoadArgs = [{ frag?: { sn: unknown; cc: number } }, unknown, { onSuccess: (r: { data: unknown }, ...rest: unknown[]) => void }];
+        const Base = H.DefaultConfig.loader as unknown as new (c: unknown) => { load(...a: LoadArgs): void };
+        class FileTimeLoader extends Base {
+          load(ctx: LoadArgs[0], cfg: unknown, cb: LoadArgs[2]) {
+            const frag = ctx.frag;
+            if (frag?.sn !== "initSegment") return super.load(ctx, cfg, cb);
+            super.load(ctx, cfg, { ...cb, onSuccess: (r, ...rest) => {
+              const sc = self?.streamController;
+              const vt = r.data instanceof ArrayBuffer ? videoTrackOf(r.data) : null;
+              if (vt && sc && !sc.initPTS[frag.cc]) sc.initPTS[frag.cc] = { baseTime: 0, ...vt };
+              cb.onSuccess(r, ...rest);
+            } });
+          }
+        }
         const h = new H({
+          fLoader: FileTimeLoader as never,
           autoStartLoad: false, testBandwidth: false, manifestLoadingTimeOut: 30_000,
           // Сессия сменилась на ходу (renew) — кусок просим у новой
           xhrSetup: (xhr, url) => {
@@ -292,6 +313,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
             errorRetry: { maxNumRetry: 6, retryDelayMs: 1000, maxRetryDelayMs: 8000 },
           } },
         });
+        self = h as unknown as typeof self;
         h.on(H.Events.ERROR, (_e, d) => {
           // Кусок — 404: сессии на сервере больше нет (календарь перезапускался); hls.js сам повторял бы его без конца
           if (d.details === H.ErrorDetails.FRAG_LOAD_ERROR && d.response?.code === 404 && hls.current === h) {
@@ -471,9 +493,22 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
     }
   }, [subDelay]);
   useEffect(() => {
-    for (const a of [ass.current, assSigns.current]) if (a) (a as unknown as { timeOffset: number }).timeOffset = -subDelay;
+    const v = video.current;
+    for (const a of [ass.current, assSigns.current]) {
+      if (!a) continue;
+      const j = a as unknown as { timeOffset: number; sendMessage?: (t: string, d: unknown) => void };
+      j.timeOffset = -subDelay;
+      // JASSUB берёт сдвиг при новом кадре — на паузе кадров нет: перерисовать сразу, чтобы сдвиг был виден вживую
+      if (v?.paused) j.sendMessage?.("demand", { time: v.currentTime - subDelay });
+    }
     shiftCues();
   }, [subDelay, shiftCues]);
+  const changeDelay = (sec: number) => {
+    const d = Math.round(sec * 10) / 10;
+    setSubDelay(d);
+    store.set(delayKey, String(d));
+    flash(`Сдвиг субтитров: ${d > 0 ? "+" : ""}${d.toFixed(1).replace(".", ",")} с`);
+  };
   const vttSub = info?.subs.find((x) => x.index === sub && !x.ass);
 
   const chooseSub = (index: number | null) => {
@@ -492,7 +527,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
       setVoice: (group) => void open({ voice: group, start: video.current?.currentTime || info?.start || 0 }),
       setSub: chooseSub,
       setSigns: chooseSigns,
-      setSubDelay: (sec) => { const d = Math.round(sec * 10) / 10; setSubDelay(d); store.set(delayKey, String(d)); },
+      setSubDelay: changeDelay,
       setSubSize: (pct) => { setSubSize(pct); store.set("player-sub-size", String(pct)); },
       // Появились новые дорожки (скачали с Jimaku) — та же серия с той же секунды
       reload: () => void open({ audio: info?.audioIndex ?? null, start: video.current?.currentTime || info?.start || 0 }),
@@ -630,7 +665,12 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
     }
   }, [started, flash]);
 
-  // Горячие клавиши: пробел/K — пауза, ←/→ — 10 с, ↑/↓ — громкость, F — экран, M — звук, N — следующая, T — перевести кадр
+  // Горячие клавиши: пробел/K — пауза, ←/→ — 10 с, ↑/↓ — громкость, F — экран, M — звук, N — следующая, T — перевести кадр,
+  // Z/X — субтитры раньше/позже на 0,1 с (с Shift — на 1 с)
+  const delayRef = useRef(subDelay);
+  delayRef.current = subDelay;
+  const changeDelayRef = useRef(changeDelay);
+  changeDelayRef.current = changeDelay;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
@@ -647,6 +687,8 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
       else if (k === "m" || k === "ь") { v.muted = !v.muted; setMuted(v.muted); }
       else if ((k === "n" || k === "т") && next) next.go();
       else if (k === "t" || k === "е") void translateFrame();
+      else if (k === "z" || k === "я") changeDelayRef.current(delayRef.current - (e.shiftKey ? 1 : 0.1));
+      else if (k === "x" || k === "ч") changeDelayRef.current(delayRef.current + (e.shiftKey ? 1 : 0.1));
       else return;
       e.preventDefault();
     };
@@ -867,6 +909,14 @@ function SeekBar({ duration, time, buffered, chapters, onSeek, pct, cached, tric
     return Math.max(0, Math.min(1, (clientX - r.left) / r.width)) * duration;
   };
   const chapterAt = (t: number) => [...chapters].reverse().find((c) => c.start <= t)?.name;
+  // Подсказка у края шкалы не уходит за рамку плеера: центр — не ближе половины её ширины к краю
+  const tip = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const el = tip.current, b = bar.current;
+    if (!el || !b || hover === null || !duration) return;
+    const W = b.clientWidth, w = el.offsetWidth;
+    el.style.left = `${Math.max(w / 2, Math.min(W - w / 2, (hover / duration) * W))}px`;
+  }, [hover, duration]);
   return (
     <div ref={bar} className="group/bar relative h-4 cursor-pointer" role="slider" aria-label="Перемотка" aria-valuemin={0} aria-valuemax={duration} aria-valuenow={time}
       onMouseMove={(e) => setHover(at(e.clientX))} onMouseLeave={() => setHover(null)}
@@ -889,7 +939,7 @@ function SeekBar({ duration, time, buffered, chapters, onSeek, pct, cached, tric
       </div>
       {hover !== null && trick && <TrickThumb trick={trick} t={hover} left={pct(hover)} />}
       {hover !== null && (
-        <span className="pointer-events-none absolute -top-7 -translate-x-1/2 whitespace-nowrap rounded bg-black/80 px-1.5 py-0.5 text-xs text-white" style={{ left: pct(hover) }}>
+        <span ref={tip} className="pointer-events-none absolute -top-7 -translate-x-1/2 whitespace-nowrap rounded bg-black/80 px-1.5 py-0.5 text-xs text-white" style={{ left: pct(hover) }}>
           {clock(hover)}{chapterAt(hover) ? ` · ${chapterAt(hover)}` : ""}
         </span>
       )}
@@ -909,7 +959,7 @@ function TrickThumb({ trick, t, left }: { trick: NonNullable<PlayInfo["trickplay
   const k = w / trick.width;
   return (
     <span className="pointer-events-none absolute -translate-x-1/2 overflow-hidden rounded-md shadow-xl ring-1 ring-white/20"
-      style={{ left, bottom: 40, width: w, height: h, backgroundImage: `url(${trick.url}/${tile}.jpg)`,
+      style={{ left: `clamp(${w / 2}px, ${left}, calc(100% - ${w / 2}px))`, bottom: 40, width: w, height: h, backgroundImage: `url(${trick.url}/${tile}.jpg)`,
         backgroundSize: `${trick.cols * w}px ${trick.rows * trick.height * k}px`, backgroundPosition: `-${x * w}px -${y * trick.height * k}px` }} />
   );
 }

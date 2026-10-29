@@ -8,7 +8,6 @@ import { formatDate, relative } from "@/lib/time";
 import type { ListEntryWithMedia, ListStatus } from "@/lib/types";
 import { useUrlState } from "@/lib/useUrlState";
 import { entryKey, ListControl } from "./ListControl";
-import { ListsSwitch } from "./SharedListsView";
 import { TitleCard } from "./TitleCard";
 import { cx, EmptyState, ErrorBox, Skel } from "./ui";
 
@@ -45,7 +44,7 @@ export function ListsView({ owner }: { owner?: { id: number; name: string } } = 
 
   return (
     <div>
-      {!owner && <ListsSwitch active="mine" />}
+      {!owner && <h1 className="mb-5 text-2xl font-bold sm:text-3xl">Мои списки</h1>}
       <div className="mb-6 flex gap-1 overflow-x-auto border-b border-gray-700">
         {TABS.map((t) => (
           <button key={t} onClick={() => setParams({ tab: t === "watching" ? null : t })}

@@ -266,9 +266,9 @@ function EpisodeStrip({ id, current, statuses, watched, positions, titles, onPic
         <h2 className="text-lg font-bold">Серии <span className="text-sm font-normal text-gray-500">{statuses.length}</span></h2>
         {statuses.some((s) => s.ep > watched + 1) && (
           <button onClick={toggleShots} className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-200"
-            title="Кадры серий дальше вашей размыты, чтобы не подсмотреть сюжет">
+            title="Кадры и названия серий дальше вашей размыты, чтобы не подсмотреть сюжет">
             {shots ? <EyeSlashIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
-            {shots ? "Размыть кадры дальше моей серии" : "Показать кадры"}
+            {shots ? "Размыть серии дальше моей" : "Показать кадры и названия"}
           </button>
         )}
         <form onSubmit={jump} className="ml-auto flex items-center gap-1 rounded-lg bg-gray-800/60 px-2 ring-1 ring-gray-700">
@@ -284,19 +284,21 @@ function EpisodeStrip({ id, current, statuses, watched, positions, titles, onPic
           const can = playable(s);
           const seen = s.ep <= watched;
           const progress = seen ? 1 : p?.dur ? Math.min(1, p.pos / p.dur) : 0;
+          // Дальше следующей серии — кадр и название размыты (не подсмотреть сюжет); открытая сейчас — видна
+          const hide = !shots && s.ep > watched + 1 && s.ep !== current;
           return (
             <div key={s.ep} data-ep={s.ep} className={cx("w-44 shrink-0 snap-start overflow-hidden rounded-lg bg-gray-800/60 ring-1",
               s.ep === current ? "ring-2 ring-accent-400" : "ring-gray-700", !can && "opacity-60")}>
               <button onClick={() => onPick(s.ep)} disabled={!can} title={STATE_TIP[s.state]} className="block w-full text-left disabled:cursor-not-allowed">
                 <div className="relative aspect-video overflow-hidden bg-gray-900">
-                  {t?.still && <Img src={t.still} size="thumb" className={cx("absolute inset-0 h-full w-full object-cover", !shots && s.ep > watched + 1 && "blur-[2px] brightness-75")} />}
+                  {t?.still && <Img src={t.still} size="thumb" className={cx("absolute inset-0 h-full w-full object-cover", hide && "blur-[2px] brightness-75")} />}
                   <span className="absolute left-1.5 top-1.5 rounded bg-black/70 px-1.5 text-xs font-semibold tabular-nums text-white">{s.ep}</span>
                   {seen && <span className="absolute right-1.5 top-1.5 rounded-full bg-black/70 p-0.5"><CheckIcon className="h-3.5 w-3.5 text-positive-300" /></span>}
                   {p && !seen && p.pos > 5 && <span className="absolute bottom-1.5 right-1.5 rounded bg-black/70 px-1 text-[10px] text-gray-200">{clock(p.pos)}</span>}
                   {/* Прогресс просмотра */}
                   {progress > 0 && <span className="absolute inset-x-0 bottom-0 h-1 bg-black/50"><span className="block h-full bg-accent-400" style={{ width: `${progress * 100}%` }} /></span>}
                 </div>
-                <p className="truncate px-2 pt-1.5 text-xs text-gray-200">{t?.title ?? `Серия ${s.ep}`}</p>
+                <p className={cx("truncate px-2 pt-1.5 text-xs text-gray-200", hide && t?.title && "select-none blur-[4px]")}>{t?.title ?? `Серия ${s.ep}`}</p>
               </button>
               <div className="flex h-7 items-center gap-1.5 px-2 pb-1.5 text-[11px] text-gray-400">
                 <ReadyLine s={s} />

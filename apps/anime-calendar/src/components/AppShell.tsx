@@ -24,6 +24,7 @@ import {
   UserCircleIcon,
   IdentificationIcon,
   UsersIcon,
+  UserGroupIcon,
 } from "@heroicons/react/24/outline";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -34,6 +35,7 @@ import { Avatar } from "./Avatar";
 import { HoverCardHost } from "./HoverCard";
 import { Notifications } from "./Notifications";
 import { SearchBox } from "./SearchBox";
+import { useGroupInvites } from "./SharedListsView";
 import { StaleBanner } from "./StaleBanner";
 import { cx } from "./ui";
 
@@ -42,6 +44,7 @@ const NAV = [
   { href: "/browse", label: "Каталог", icon: Squares2X2Icon },
   { href: "/lists", label: "Мои списки", icon: QueueListIcon },
   { href: "/friends", label: "Друзья", icon: UsersIcon },
+  { href: "/groups", label: "Группы", icon: UserGroupIcon },
   { href: "/recommendations", label: "Для тебя", icon: SparklesIcon },
   { href: "/graph", label: "Карта", icon: MapIcon },
   { href: "/downloads", label: "Загрузки", icon: ArrowDownTrayIcon },
@@ -138,6 +141,8 @@ export function AppShell({ userName, sidebar = "auto", children }: { userName: s
   const pathname = usePathname();
   const { data: me } = useMe();
   const bar = useSidebar(sidebar);
+  // Приглашения в группы — значком у пункта меню
+  const groupInvites = useGroupInvites();
   const logout = async () => {
     const res = await api<{ redirect: string | null }>("/api/auth/logout", { method: "POST" });
     window.location.href = res.redirect ?? "/login";
@@ -165,7 +170,12 @@ export function AppShell({ userName, sidebar = "auto", children }: { userName: s
                   active ? "bg-linear-to-br from-indigo-600 to-purple-600 text-white shadow" : "text-gray-300 hover:bg-gray-700/60 hover:text-white",
                 )}
               >
-                <Icon className="h-6 w-6 shrink-0" />
+                <span className="relative shrink-0">
+                  <Icon className="h-6 w-6" />
+                  {href === "/groups" && groupInvites > 0 && (
+                    <span className="absolute -right-1.5 -top-1 rounded-full bg-indigo-500 px-1 text-[10px] font-semibold leading-4 text-white">{groupInvites}</span>
+                  )}
+                </span>
                 <Label cls={bar.label}>{label}</Label>
               </Link>
             );

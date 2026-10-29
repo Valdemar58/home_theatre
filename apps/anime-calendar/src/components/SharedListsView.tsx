@@ -10,20 +10,21 @@ import { Avatar } from "./Avatar";
 import { Img } from "./Img";
 import { Button, EmptyState, ErrorBox, Modal, Skel } from "./ui";
 
-// Общие списки: приглашения, мои списки (обложки, участники, сколько смотрим/досмотрели), создание.
+// Группы просмотра (своё меню): приглашения, мои группы (обложки, участники, сколько смотрим/досмотрели), создание.
 
-export function ListsSwitch({ active }: { active: "mine" | "shared" }) {
-  const { data } = useSharedLists();
-  const invites = data?.filter((l) => l.role === "invited").length ?? 0;
-  const tab = (href: string, on: boolean, text: React.ReactNode) => (
-    <Link href={href} className={on ? "text-white" : "text-gray-500 hover:text-gray-300"}>{text}</Link>
-  );
+/** Заголовок раздела «Группы»; на странице группы — ссылка ко всем группам. */
+export function GroupsTitle({ back }: { back?: boolean }) {
   return (
-    <h1 className="mb-5 flex flex-wrap items-baseline gap-x-5 gap-y-1 text-2xl font-bold sm:text-3xl">
-      {tab("/lists", active === "mine", "Мои списки")}
-      {tab("/lists/shared", active === "shared", <>Группы{invites > 0 && <span className="ml-1.5 rounded-full bg-indigo-500 px-2 py-0.5 align-middle text-xs text-white">{invites}</span>}</>)}
+    <h1 className="mb-5 text-2xl font-bold sm:text-3xl">
+      {back ? <Link href="/groups" className="text-gray-500 hover:text-gray-300">Группы</Link> : "Группы"}
     </h1>
   );
+}
+
+/** Сколько приглашений в группы ждут ответа (значок у пункта меню). */
+export function useGroupInvites() {
+  const { data } = useSharedLists();
+  return data?.filter((l) => l.role === "invited").length ?? 0;
 }
 
 export function CreateListModal({ open, onClose, withTitle }: { open: boolean; onClose: () => void; withTitle?: number }) {
@@ -38,7 +39,7 @@ export function CreateListModal({ open, onClose, withTitle }: { open: boolean; o
     try {
       const { id } = await api<{ id: number }>("/api/shared-lists", { method: "POST", json: { name, invite: [...picked] } });
       if (withTitle) await api(`/api/shared-lists/${id}/items`, { method: "POST", json: { anilistId: withTitle } });
-      router.push(`/lists/shared/${id}`);
+      router.push(`/groups/${id}`);
     } finally {
       setBusy(false);
     }
@@ -105,7 +106,7 @@ function ListCard({ l }: { l: SharedListSummary }) {
       </div>
     </div>
   );
-  return <Link href={`/lists/shared/${l.id}`} className="block overflow-hidden rounded-xl bg-gray-800/60 ring-1 ring-gray-700 transition hover:ring-gray-500">{body}</Link>;
+  return <Link href={`/groups/${l.id}`} className="block overflow-hidden rounded-xl bg-gray-800/60 ring-1 ring-gray-700 transition hover:ring-gray-500">{body}</Link>;
 }
 
 export function SharedListsView() {
@@ -120,9 +121,9 @@ export function SharedListsView() {
   const mine = lists.filter((l) => l.role !== "invited");
   return (
     <div>
-      <ListsSwitch active="shared" />
+      <GroupsTitle />
       <div className="mb-6 flex flex-wrap items-center gap-3">
-        <p className="text-sm text-gray-400">Списки на нескольких: видно, кто что смотрел, «Посмотрели вместе» отмечает серии сразу всем.</p>
+        <p className="text-sm text-gray-400">Группы просмотра: общая очередь тайтлов, сеансы и голосования, видно, кто что смотрел, а «Посмотрели вместе» отмечает серии сразу всем.</p>
         <Button variant="primary" className="ml-auto" onClick={() => setCreate(true)}><PlusIcon className="h-4 w-4" />Создать</Button>
       </div>
       {isLoading && (

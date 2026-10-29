@@ -83,7 +83,7 @@ export function TogetherBar({ media, together, undo }: { media: MediaLite; toget
                   <span className="truncate">{l.name}</span>
                 </button>
               ))}
-              <Link href={`/lists/shared?create=${media.id}`} className="flex items-center gap-2 border-t border-gray-700 px-3 py-2 text-sm text-indigo-300 hover:bg-gray-700">
+              <Link href={`/groups?create=${media.id}`} className="flex items-center gap-2 border-t border-gray-700 px-3 py-2 text-sm text-indigo-300 hover:bg-gray-700">
                 <PlusIcon className="h-4 w-4" />Новый общий список…
               </Link>
             </div>

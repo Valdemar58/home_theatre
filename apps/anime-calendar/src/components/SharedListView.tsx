@@ -15,7 +15,7 @@ import { useHoverCard } from "./HoverCard";
 import { Img } from "./Img";
 import { useConfirm } from "./Dialogs";
 import { GroupPlan } from "./GroupPlan";
-import { ListsSwitch } from "./SharedListsView";
+import { GroupsTitle } from "./SharedListsView";
 import { Button, EmptyState, ErrorBox, Skel, cx } from "./ui";
 import { WatchTogetherDialog } from "./WatchTogetherDialog";
 
@@ -117,7 +117,7 @@ function AddTitle({ listId, onAdded }: { listId: number; onAdded: () => void }) 
 function SharedListSkeleton({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
   return (
     <div className="space-y-6" aria-busy>
-      <ListsSwitch active="shared" />
+      <GroupsTitle back />
       <div className="flex flex-wrap items-center gap-3">
         <Skel className="h-8 w-56" />
         <Skel className="ml-auto h-8 w-32 rounded-lg" />
@@ -172,7 +172,7 @@ export function SharedListView({ id }: { id: number }) {
   };
   const action = async (body: { action: string; userId?: number }) => {
     await api(`/api/shared-lists/${id}`, { method: "POST", json: body });
-    if (body.action === "leave" || body.action === "decline") { router.push("/lists/shared"); return; }
+    if (body.action === "leave" || body.action === "decline") { router.push("/groups"); return; }
     refresh();
   };
   const owner = list.role === "owner";
@@ -183,7 +183,7 @@ export function SharedListView({ id }: { id: number }) {
 
   return (
     <div className="space-y-6">
-      <ListsSwitch active="shared" />
+      <GroupsTitle back />
       <div className="flex flex-wrap items-center gap-3">
         {rename !== null ? (
           <form className="flex gap-2" onSubmit={async (e) => {
@@ -207,7 +207,7 @@ export function SharedListView({ id }: { id: number }) {
             <Button size="sm" variant="ghost" onClick={async () => {
               if (!(await confirm({ title: `Удалить группу «${list.name}»?`, text: "Он исчезнет у всех участников. Личные списки не изменятся.", confirm: "Удалить", danger: true }))) return;
               await api(`/api/shared-lists/${id}`, { method: "DELETE" });
-              router.push("/lists/shared");
+              router.push("/groups");
             }}>Удалить группу</Button>
           ) : list.role === "member" && <Button size="sm" variant="ghost" onClick={async () => { if (await confirm({ title: `Покинуть «${list.name}»?`, text: "Вернуться можно будет только по новому приглашению.", confirm: "Покинуть", danger: true })) void action({ action: "leave" }); }}>Покинуть</Button>}
         </div>

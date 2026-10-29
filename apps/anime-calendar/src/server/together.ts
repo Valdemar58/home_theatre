@@ -54,7 +54,7 @@ export function inviteToList(by: { id: number; name: string }, listId: number, u
   if (!areFriends(by.id, userId)) throw new ApiError(400, "Пригласить можно только друга");
   if (roleIn(listId, userId)) return;
   db.prepare("INSERT INTO shared_list_members (list_id, user_id, status, invited_by, joined_at) VALUES (?, ?, 'invited', ?, ?)").run(listId, userId, by.id, now());
-  notify(userId, { kind: "shared-list", actorId: by.id, title: `зовёт в общий список «${listRow(listId)!.name}»`, href: `/lists/shared/${listId}`, actions: [{ type: "shared-invite", listId }] });
+  notify(userId, { kind: "shared-list", actorId: by.id, title: `зовёт в группу «${listRow(listId)!.name}»`, href: `/groups/${listId}`, actions: [{ type: "shared-invite", listId }] });
 }
 
 export function memberAction(user: { id: number; name: string }, listId: number, action: "accept" | "decline" | "leave" | "remove", target?: number) {
@@ -65,7 +65,7 @@ export function memberAction(user: { id: number; name: string }, listId: number,
   if (action === "accept" && role === "invited") {
     db.prepare("UPDATE shared_list_members SET status = 'member', joined_at = ? WHERE list_id = ? AND user_id = ?").run(now(), listId, user.id);
     for (const m of membersOf(listId)) if (m.user_id !== user.id && m.status === "member")
-      notify(m.user_id, { kind: "shared-list", actorId: user.id, title: `присоединился к «${list.name}»`, href: `/lists/shared/${listId}` });
+      notify(m.user_id, { kind: "shared-list", actorId: user.id, title: `присоединился к «${list.name}»`, href: `/groups/${listId}` });
   } else if (action === "decline" && role === "invited") del(user.id);
   if (action === "accept" || action === "decline") resolveActions(user.id, (a) => a.type === "shared-invite" && a.listId === listId);
   else if (action === "leave" && role === "member") del(user.id);
@@ -90,7 +90,7 @@ export async function addItem(user: { id: number; name: string }, listId: number
   if (!res.changes) return;
   const list = listRow(listId)!;
   for (const m of membersOf(listId)) if (m.user_id !== user.id && m.status === "member")
-    notify(m.user_id, { kind: "shared-list", anilistId, actorId: user.id, title: `${user.name} добавил в «${list.name}»`, href: `/lists/shared/${listId}` });
+    notify(m.user_id, { kind: "shared-list", anilistId, actorId: user.id, title: `${user.name} добавил в «${list.name}»`, href: `/groups/${listId}` });
 }
 
 export function removeItem(userId: number, listId: number, anilistId: number) {

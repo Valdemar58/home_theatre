@@ -1,6 +1,7 @@
 import "server-only";
 import fs from "node:fs";
 import path from "node:path";
+import { byteToTime, elementSize, mkvCues, mkvHead } from "@/lib/mkv-index";
 import { piecesToRanges } from "@/lib/player";
 import { env } from "./env";
 import { anilistForTvdb, mappingForAnilist } from "./idmap";
@@ -409,8 +410,43 @@ export async function dropTorrentCache(hash: string): Promise<void> {
   await ts("/torrents", { action: "drop", hash });
 }
 
-/** Какие части файла раздачи уже скачаны в кэш TorrServer — доли файла (для полоски в плеере). */
-export async function torrentCached(hash: string, index: number): Promise<[number, number][]> {
+/** Часть файла раздачи через TorrServer (Range; без &play он отдаёт пустой ответ). */
+async function tsRange(hash: string, index: number, from: number, to: number): Promise<Uint8Array> {
+  const res = await fetch(`${env.torrserverUrl}/stream/file.mkv?link=${hash}&index=${index}&play`, {
+    headers: { Range: `bytes=${from}-${to}` }, signal: AbortSignal.timeout(60_000),
+  });
+  if (!res.ok) throw new Error(`TorrServer: HTTP ${res.status}`);
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+// Индекс MKV по файлу раздачи — один раз за жизнь процесса (файл раздачи не меняется)
+const mkvMaps = new Map<string, Promise<{ t: number; pos: number }[] | null>>();
+function mkvPoints(hash: string, index: number): Promise<{ t: number; pos: number }[] | null> {
+  const key = `${hash}:${index}`;
+  let p = mkvMaps.get(key);
+  if (!p) {
+    p = (async () => {
+      const h = mkvHead(await tsRange(hash, index, 0, 256 * 1024 - 1));
+      if (!h?.cues) return null;
+      const size = elementSize(await tsRange(hash, index, h.cues, h.cues + 15));
+      if (!size || size > 16 * 1024 * 1024) return null;
+      const pts = mkvCues(await tsRange(hash, index, h.cues, h.cues + size - 1), h.segment, h.timecodeScale);
+      return pts.length > 1 ? pts : null;
+    })().catch((e) => {
+      console.warn(`[stream] индекс MKV ${key}: ${String(e)}`);
+      mkvMaps.delete(key);
+      return null;
+    });
+    mkvMaps.set(key, p);
+  }
+  return p;
+}
+
+/**
+ * Какие части файла раздачи уже скачаны в кэш TorrServer — доли длительности (для полоски в плеере). У MKV — по индексу
+ * Cues (точно), иначе пропорционально размеру.
+ */
+export async function torrentCached(hash: string, index: number, duration?: number): Promise<[number, number][]> {
   const c = await cacheOf(hash);
   const files = [...(c.Torrent?.file_stats ?? [])].sort((a, b) => a.id - b.id);
   const file = files.find((f) => f.id === index);
@@ -418,7 +454,11 @@ export async function torrentCached(hash: string, index: number): Promise<[numbe
   // Файлы идут в раздаче подряд по порядку: смещение — сумма предыдущих
   const offset = files.filter((f) => f.id < index).reduce((s, f) => s + f.length, 0);
   const done = Object.values(c.Pieces ?? {}).filter((p) => p.Completed).map((p) => p.Id);
-  return piecesToRanges(done, c.PiecesLength, offset, file.length);
+  const ranges = piecesToRanges(done, c.PiecesLength, offset, file.length);
+  const pts = duration && /\.mkv$/i.test(file.path) ? await mkvPoints(hash, index) : null;
+  if (!pts || !duration) return ranges;
+  const toTime = byteToTime(pts, file.length, duration);
+  return ranges.map(([a, b]) => [toTime(a * file.length) / duration, toTime(b * file.length) / duration]);
 }
 
 /** Нужная для просмотра скорость: средний размер видеофайла ÷ длительность серии. */

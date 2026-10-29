@@ -115,7 +115,7 @@ export function deviceProfile(caps: PlayCaps) {
     // HLS fMP4: видео копируется, если браузер его умеет (HEVC 10 бит в Chrome с аппаратным декодером), звук — AAC
     TranscodingProfiles: [{
       Container: "mp4", Type: "Video", VideoCodec: video, AudioCodec: "aac", Protocol: "hls", Context: "Streaming",
-      MaxAudioChannels: "2", MinSegments: 1, BreakOnNonKeyFrames: true,
+      MaxAudioChannels: "2", MinSegments: 1, BreakOnNonKeyFrames: false,
     }],
     // ASS и текстовые — файлом (рисует плеер), картинки (PGS) — вжигаются в видео
     SubtitleProfiles: [
@@ -154,10 +154,10 @@ export function srtToVtt(srt: string): string {
 
 // Главы из файла — обычно по-английски и по-японски: Intro, OP, Part A, ED, Next Episode, Avant, Eyecatch
 const CHAPTER_RU: [RegExp, string][] = [
-  [/^(intro|prologue|avant|cold open|アバン)$/i, "Вступление"],
+  [/^(intro|prologue|avant|avant ?title|abantitle|cold open|アバン)$/i, "Вступление"],
   [/^(op|opening|oped|op\d*|opening \d+|オープニング)$/i, "Опенинг"],
   [/^(ed|ending|ed\d*|ending \d+|credits|エンディング)$/i, "Эндинг"],
-  [/^(next( episode)?|preview|next time|to be continued|予告|次回予告)$/i, "Анонс"],
+  [/^(next( episode)?|preview|next time|to be continued|yokoku|jikai yokoku|予告|次回予告)$/i, "Анонс"],
   [/^(eyecatch|eye ?catch|アイキャッチ)$/i, "Перебивка"],
   [/^(recap|previously)$/i, "Ранее"],
   [/^(epilogue|post[- ]credits?|c ?part)$/i, "После титров"],
@@ -168,7 +168,8 @@ const CHAPTER_RU: [RegExp, string][] = [
 export function chapterLabel(name: string): string {
   const n = name.trim();
   for (const [re, ru] of CHAPTER_RU) if (re.test(n)) return ru;
-  const part = /^(?:part|パート)\s*([a-z0-9]+)$/i.exec(n);
+  // «Part A» и «A Part» / «A-part» / «Aパート»
+  const part = /^(?:part|パート)\s*([a-z0-9]+)$/i.exec(n) ?? /^([a-z0-9])[\s_-]*(?:part|パート)$/i.exec(n);
   if (part) return `Часть ${part[1].toUpperCase()}`;
   const ch = /^chapter\s*(\d+)$/i.exec(n);
   if (ch) return `Глава ${Number(ch[1])}`;
@@ -177,3 +178,46 @@ export function chapterLabel(name: string): string {
 
 /** Досмотрел: серия отмечается просмотренной после 85% (титры и превью следующей — не обязательно). */
 export const WATCHED_SHARE = 0.85;
+
+/**
+ * Видеодорожка init-сегмента fMP4 (moov → trak с hdlr «vide»): номер и единица времени.
+ * Нужны, чтобы привязать шкалу hls.js ко времени файла: Jellyfin пишет метки как в файле (-copyts), но при копировании
+ * видео кусок начинается с опорного кадра раньше своего места в плейлисте, и hls.js сдвигает всю шкалу на эту разницу
+ * (субтитры, главы, отрезки OP/ED и позиция «уезжают» на секунды — каждый запуск по-разному).
+ */
+export function videoTrackOf(buf: ArrayBuffer): { trackId: number; timescale: number } | null {
+  const d = new DataView(buf);
+  const kids = (start: number, end: number) => {
+    const out: { type: string; body: number; end: number }[] = [];
+    for (let i = start; i + 8 <= end;) {
+      let size = d.getUint32(i);
+      let hdr = 8;
+      if (size === 1) { size = Number(d.getBigUint64(i + 8)); hdr = 16; }
+      if (size < 8 || i + size > end) break;
+      out.push({ type: String.fromCharCode(d.getUint8(i + 4), d.getUint8(i + 5), d.getUint8(i + 6), d.getUint8(i + 7)), body: i + hdr, end: i + size });
+      i += size;
+    }
+    return out;
+  };
+  const one = (list: ReturnType<typeof kids>, type: string) => list.find((b) => b.type === type);
+  const moov = one(kids(0, buf.byteLength), "moov");
+  if (!moov) return null;
+  for (const trak of kids(moov.body, moov.end).filter((b) => b.type === "trak")) {
+    const inner = kids(trak.body, trak.end);
+    const tkhd = one(inner, "tkhd");
+    const mdia = one(inner, "mdia");
+    if (!tkhd || !mdia) continue;
+    const m = kids(mdia.body, mdia.end);
+    const hdlr = one(m, "hdlr");
+    const mdhd = one(m, "mdhd");
+    if (!hdlr || !mdhd) continue;
+    const handler = String.fromCharCode(...[8, 9, 10, 11].map((k) => d.getUint8(hdlr.body + k)));
+    if (handler !== "vide") continue;
+    const v1 = (b: number) => d.getUint8(b) === 1;
+    return {
+      trackId: d.getUint32(tkhd.body + (v1(tkhd.body) ? 20 : 12)),
+      timescale: d.getUint32(mdhd.body + (v1(mdhd.body) ? 20 : 12)),
+    };
+  }
+  return null;
+}

@@ -45,7 +45,7 @@ function canPlan(g: ReturnType<typeof groupRow>, userId: number) {
 
 /** Сказать участникам группы (кроме автора). */
 function tell(listId: number, except: number | null, n: { title: string; body?: string; anilistId?: number; actorId?: number }) {
-  for (const u of activeMembers(listId)) if (u !== except) notify(u, { kind: "group", href: `/lists/shared/${listId}`, subject: listRow(listId)?.name ?? null, ...n });
+  for (const u of activeMembers(listId)) if (u !== except) notify(u, { kind: "group", href: `/groups/${listId}`, subject: listRow(listId)?.name ?? null, ...n });
 }
 
 const sessionView = (s: SessionRow): GroupSession => ({
@@ -263,7 +263,7 @@ export async function groupTick() {
       if (step === "remind") {
         db.prepare("UPDATE group_sessions SET reminded = 1 WHERE id = ?").run(s.id);
         for (const u of goingTo(s)) notify(u, {
-          kind: "group", anilistId: s.anilist_id, href: `/lists/shared/${s.list_id}`, subject: listRow(s.list_id)?.name ?? null,
+          kind: "group", anilistId: s.anilist_id, href: `/groups/${s.list_id}`, subject: listRow(s.list_id)?.name ?? null,
           title: "Сеанс через 15 минут", body: `${titleOf(s.anilist_id)}, ${sessionEps(s)}`,
         });
       }

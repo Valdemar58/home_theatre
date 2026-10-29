@@ -153,11 +153,14 @@ function SubSettingsPanel({ settings, controls, ass }: { settings: SubSettings; 
       <div className="flex items-center gap-2">
         <span className="flex-1 text-gray-300">Сдвиг</span>
         <Step onClick={() => controls.current?.setSubDelay(d - 0.5)} label="Раньше на 0,5 с"><MinusIcon className="h-3.5 w-3.5" /></Step>
-        <button onClick={() => controls.current?.setSubDelay(0)} title="Сбросить" className="w-16 text-center tabular-nums text-gray-200">
+        <Step onClick={() => controls.current?.setSubDelay(d - 0.1)} label="Раньше на 0,1 с (клавиша Z)"><span className="text-[10px]">−0,1</span></Step>
+        <button onClick={() => controls.current?.setSubDelay(0)} title="Сбросить" className="w-14 text-center tabular-nums text-gray-200">
           {d > 0 ? "+" : ""}{d.toFixed(1).replace(".", ",")} с
         </button>
+        <Step onClick={() => controls.current?.setSubDelay(d + 0.1)} label="Позже на 0,1 с (клавиша X)"><span className="text-[10px]">+0,1</span></Step>
         <Step onClick={() => controls.current?.setSubDelay(d + 0.5)} label="Позже на 0,5 с"><PlusIcon className="h-3.5 w-3.5" /></Step>
       </div>
+      <p className="text-xs text-gray-500">Подстраивать на ходу — клавиши Z / X (с Shift — по секунде). Сдвиг запоминается для всего тайтла.</p>
       <div className={cx("flex items-center gap-2", ass && "opacity-50")} title={ass ? "ASS рисуется стилями из файла — размер не меняется" : undefined}>
         <span className="flex-1 text-gray-300">Размер</span>
         <input type="range" min={60} max={200} step={10} value={settings.size} disabled={ass}
