@@ -21,7 +21,7 @@ export function ListsSwitch({ active }: { active: "mine" | "shared" }) {
   return (
     <h1 className="mb-5 flex flex-wrap items-baseline gap-x-5 gap-y-1 text-2xl font-bold sm:text-3xl">
       {tab("/lists", active === "mine", "Мои списки")}
-      {tab("/lists/shared", active === "shared", <>Общие{invites > 0 && <span className="ml-1.5 rounded-full bg-indigo-500 px-2 py-0.5 align-middle text-xs text-white">{invites}</span>}</>)}
+      {tab("/lists/shared", active === "shared", <>Группы{invites > 0 && <span className="ml-1.5 rounded-full bg-indigo-500 px-2 py-0.5 align-middle text-xs text-white">{invites}</span>}</>)}
     </h1>
   );
 }

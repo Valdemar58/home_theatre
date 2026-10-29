@@ -23,7 +23,10 @@ const ACTIONS_KEPT = 30;
 export const roomEvents = new EventEmitter();
 roomEvents.setMaxListeners(0);
 
-type RoomRow = { id: string; owner_id: number; anilist_id: number; preset: RoomPreset; state: string; last_activity: number; ended_at: number | null };
+type RoomRow = {
+  id: string; owner_id: number; anilist_id: number; preset: RoomPreset; state: string; last_activity: number; ended_at: number | null;
+  group_id: number | null; session_id: number | null;
+};
 type MemberRow = { user_id: number; status: RoomMember["status"]; control: number };
 
 type Live = {
@@ -99,13 +102,18 @@ export function roomForTitle(userId: number, anilistId: number): RoomView | null
 /** Друзья — кого можно позвать. */
 export const inviteable = (userId: number) => friendIds(userId).map((id) => ({ id, name: userName(id) }));
 
+/** Участники группы комнаты (их можно звать и без дружбы с тем, кто зовёт). */
+const groupMembers = (groupId: number | null) => new Set(groupId === null ? [] : db.prepare<[number], { user_id: number }>(
+  "SELECT user_id FROM shared_list_members WHERE list_id = ? AND status = 'member'").all(groupId).map((r) => r.user_id));
+
 function invite(by: { id: number; name: string }, r: RoomRow, ids: number[]) {
+  const group = groupMembers(r.group_id);
   const have = new Map(memberRows(r.id).map((m) => [m.user_id, m.status]));
   const state = JSON.parse(r.state) as RoomState;
   const m = getMedia(r.anilist_id);
   const href = `/anime/${r.anilist_id}/watch/${state.ep}?room=${r.id}`;
   for (const uid of new Set(ids)) {
-    if (uid === by.id || have.get(uid) === "joined" || !areFriends(by.id, uid)) continue;
+    if (uid === by.id || have.get(uid) === "joined" || !(group.has(uid) || areFriends(by.id, uid))) continue;
     db.prepare(`INSERT INTO watch_room_members (room_id, user_id, status, invited_by, joined_at) VALUES (?, ?, 'invited', ?, ?)
       ON CONFLICT (room_id, user_id) DO UPDATE SET status = 'invited', invited_by = excluded.invited_by`).run(r.id, uid, by.id, Date.now());
     notify(uid, {
@@ -116,16 +124,22 @@ function invite(by: { id: number; name: string }, r: RoomRow, ids: number[]) {
   }
 }
 
-/** Создать комнату (прежние комнаты создателя по этому тайтлу заканчиваются) и позвать друзей. */
-export function createRoom(owner: { id: number; name: string }, anilistId: number, ep: number, ids: number[], pos = 0, playing = false): RoomView {
+/** Комната группы: пресет и пульт — от группы, звать — всех участников. */
+export type RoomGroup = { id: number; sessionId?: number; preset: RoomPreset; control: number[] };
+
+/** Создать комнату (прежние комнаты создателя по этому тайтлу заканчиваются) и позвать друзей (или группу). */
+export function createRoom(owner: { id: number; name: string }, anilistId: number, ep: number, ids: number[], pos = 0, playing = false, group?: RoomGroup): RoomView {
   db.prepare("UPDATE watch_rooms SET ended_at = ? WHERE owner_id = ? AND anilist_id = ? AND ended_at IS NULL").run(now(), owner.id, anilistId);
   const id = randomBytes(6).toString("base64url");
   const state: RoomState = { ep, playing, pos: Math.max(0, pos), at: Date.now(), hold: [] };
-  db.prepare("INSERT INTO watch_rooms (id, owner_id, anilist_id, preset, state, created_at, last_activity) VALUES (?, ?, ?, 'equal', ?, ?, ?)")
-    .run(id, owner.id, anilistId, JSON.stringify(state), now(), now());
+  db.prepare(`INSERT INTO watch_rooms (id, owner_id, anilist_id, preset, state, created_at, last_activity, group_id, session_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, owner.id, anilistId, group?.preset ?? "equal", JSON.stringify(state), now(), now(), group?.id ?? null, group?.sessionId ?? null);
   db.prepare("INSERT INTO watch_room_members (room_id, user_id, status, control, joined_at) VALUES (?, ?, 'joined', 1, ?)").run(id, owner.id, Date.now());
   log(id, owner.id, "join", null);
-  invite(owner, roomRow(id)!, ids);
+  // Группа без списка — зовём всех её участников (у сеанса — кроме ответивших «не приду»)
+  invite(owner, roomRow(id)!, group && !ids.length ? [...groupMembers(group.id)] : ids);
+  // Пульт — у тех, кому его дал организатор группы
+  if (group) for (const u of group.control) db.prepare("UPDATE watch_room_members SET control = 1 WHERE room_id = ? AND user_id = ?").run(id, u);
   return view(roomRow(id)!, owner.id);
 }
 
@@ -285,4 +299,10 @@ export function roomPresence(userId: number, id: string, online: boolean) {
 /** Можно ли слушать комнату (вошёл или приглашён). */
 export function roomListener(userId: number, id: string) {
   return mine(userId, id, ["joined", "invited", "left"]).m;
+}
+
+/** Комната закончилась (или её нет) — сеанс группы завершён. */
+export function roomEnded(id: string) {
+  const r = roomRow(id);
+  return !r || !isActive(r);
 }

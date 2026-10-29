@@ -53,7 +53,7 @@ export function WatchView({ id, ep }: { id: number; ep: number }) {
   const urlRoom = params.get("room");
   const { data: rooms, refetch: refetchRooms } = useQuery({
     queryKey: ["rooms", id],
-    queryFn: () => api<{ room: RoomView | null; friends: { id: number; name: string }[] }>(`/api/rooms?anilistId=${id}`),
+    queryFn: () => api<{ room: RoomView | null; friends: { id: number; name: string }[]; groups: { id: number; name: string; members: { id: number; name: string }[] }[] }>(`/api/rooms?anilistId=${id}`),
   });
   const mineJoined = rooms?.room?.members.find((m) => m.id === rooms.room!.me)?.status === "joined";
   const rid = urlRoom ?? (mineJoined ? rooms!.room!.id : null);
@@ -148,11 +148,11 @@ export function WatchView({ id, ep }: { id: number; ep: number }) {
         </Player>
         <div className="space-y-4">
           {a && <WatchSidebar media={a} info={player.info} sub={player.sub} subs={player.subs} controls={controls} />}
-          <RoomPanel handle={rm} friends={rooms?.friends ?? []}
+          <RoomPanel handle={rm} friends={rooms?.friends ?? []} groups={rooms?.groups ?? []}
             invited={!inRoom && rooms?.room && rooms.room.members.find((m) => m.id === rooms.room!.me)?.status === "invited" ? rooms.room : null}
             onJoin={(r) => router.replace(`/anime/${id}/watch/${rooms?.room?.state.ep ?? ep}?room=${r}`)}
-            onCreate={async (ids) => {
-              const r = await api<RoomView>("/api/rooms", { method: "POST", json: { anilistId: id, ep, invite: ids, ...controls.current?.position() } });
+            onCreate={async (ids, group) => {
+              const r = await api<RoomView>("/api/rooms", { method: "POST", json: { anilistId: id, ep, invite: ids, group, ...controls.current?.position() } });
               await refetchRooms();
               router.replace(`/anime/${id}/watch/${ep}?room=${r.id}`);
             }}

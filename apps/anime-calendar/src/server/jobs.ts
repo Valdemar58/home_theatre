@@ -19,6 +19,7 @@ import { playingStreams, sweepPlayback } from "./player";
 import { syncJellyfinPlays } from "./jellyfin-sync";
 import { translateTags } from "./tags-ru";
 import { checkNewEpisodes } from "./episode-notices";
+import { groupTick } from "./groups";
 import { archiveInitial, archiveLists, archiveRecheck, archiveTick } from "./archive";
 
 const MINUTE = 60_000;
@@ -67,6 +68,8 @@ export function startJobs() {
   if (env.jellyfinApiKey) setInterval(() => void safe("stream-cleanup", () => cleanupStreams()), 30 * MINUTE);
   // Плеер: сессии, брошенные без «стоп» (закрыли вкладку), — остановить перекодирование
   setInterval(() => void safe("play-sweep", async () => sweepPlayback()), MINUTE);
+  // Группы просмотра: сеансы по расписанию (подготовка, напоминание, комната) и голосования по сроку
+  setInterval(() => void safe("groups", groupTick), MINUTE);
   setInterval(async () => {
     await safe("lists-media", () => refreshListMedia());
     await safe("shikimori-sync", syncAll);

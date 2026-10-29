@@ -140,6 +140,18 @@ function migrate(db: Db) {
   // Синхронизация с AniLib: профиль пользователя (по публичным закладкам)
   const userCols = columns("users");
   if (!userCols.has("lib_user_id")) db.exec("ALTER TABLE users ADD COLUMN lib_user_id INTEGER");
+  // Группа просмотра: пресет управления комнатой, пульт у участников, очередь и озвучка группы у тайтлов;
+  // комната группы — из какой группы и сеанса (таблицы может не быть — урезанная схема в тестах)
+  const addCol = (table: string, col: string, def: string) => {
+    const cols = columns(table);
+    if (cols.size && !cols.has(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+  };
+  addCol("shared_lists", "preset", "TEXT NOT NULL DEFAULT 'equal'");
+  addCol("shared_list_members", "control", "INTEGER NOT NULL DEFAULT 0");
+  addCol("shared_list_items", "queue_pos", "INTEGER");
+  addCol("shared_list_items", "voice", "TEXT");
+  addCol("watch_rooms", "group_id", "INTEGER");
+  addCol("watch_rooms", "session_id", "INTEGER");
   if (!userCols.has("lib_nickname")) db.exec("ALTER TABLE users ADD COLUMN lib_nickname TEXT");
   if (!userCols.has("lib_synced_at")) db.exec("ALTER TABLE users ADD COLUMN lib_synced_at INTEGER");
   if (!userCols.has("lib_error")) db.exec("ALTER TABLE users ADD COLUMN lib_error TEXT");
@@ -319,6 +331,49 @@ function migrate(db: Db) {
       PRIMARY KEY (room_id, user_id)
     );
     CREATE INDEX IF NOT EXISTS watch_room_members_by_user ON watch_room_members (user_id);
+    -- Группы просмотра (общие списки, которые смотрят вместе): сеансы с ответами «приду / не приду» и голосования
+    CREATE TABLE IF NOT EXISTS group_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      list_id INTEGER NOT NULL REFERENCES shared_lists(id) ON DELETE CASCADE,
+      anilist_id INTEGER NOT NULL,
+      ep INTEGER NOT NULL,
+      count INTEGER NOT NULL DEFAULT 1,
+      starts_at INTEGER NOT NULL,
+      created_by INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'planned',
+      room_id TEXT,
+      prepared INTEGER NOT NULL DEFAULT 0,
+      reminded INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS group_sessions_by_list ON group_sessions (list_id, starts_at);
+    CREATE TABLE IF NOT EXISTS group_rsvp (
+      session_id INTEGER NOT NULL REFERENCES group_sessions(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      answer TEXT NOT NULL,
+      PRIMARY KEY (session_id, user_id)
+    );
+    CREATE TABLE IF NOT EXISTS group_polls (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      list_id INTEGER NOT NULL REFERENCES shared_lists(id) ON DELETE CASCADE,
+      created_by INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      closes_at INTEGER NOT NULL,
+      closed_at INTEGER,
+      winner INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS group_poll_options (
+      poll_id INTEGER NOT NULL REFERENCES group_polls(id) ON DELETE CASCADE,
+      anilist_id INTEGER NOT NULL,
+      ord INTEGER NOT NULL,
+      PRIMARY KEY (poll_id, anilist_id)
+    );
+    CREATE TABLE IF NOT EXISTS group_poll_votes (
+      poll_id INTEGER NOT NULL REFERENCES group_polls(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      anilist_id INTEGER NOT NULL,
+      PRIMARY KEY (poll_id, user_id, anilist_id)
+    );
     -- Портрет вкуса и готовые рекомендации пользователя
     CREATE TABLE IF NOT EXISTS user_taste (
       user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,

@@ -14,11 +14,13 @@ import { Avatar } from "./Avatar";
 import { useHoverCard } from "./HoverCard";
 import { Img } from "./Img";
 import { useConfirm } from "./Dialogs";
+import { GroupPlan } from "./GroupPlan";
 import { ListsSwitch } from "./SharedListsView";
 import { Button, EmptyState, ErrorBox, Skel, cx } from "./ui";
 import { WatchTogetherDialog } from "./WatchTogetherDialog";
 
-// Общий список: участники, тайтлы с живыми статусами каждого, «Посмотрели вместе», добавление поиском.
+// Группа (общий список): участники, план группы (сеансы, очередь, голосование, пульт — GroupPlan), тайтлы с живыми
+// статусами каждого, «Посмотрели вместе», добавление поиском.
 
 const TABS = [["watching", "Смотрим"], ["planned", "В планах"], ["done", "Все посмотрели"]] as const;
 type Tab = (typeof TABS)[number][0];
@@ -203,10 +205,10 @@ export function SharedListView({ id }: { id: number }) {
         <div className="ml-auto flex gap-2">
           {owner ? (
             <Button size="sm" variant="ghost" onClick={async () => {
-              if (!(await confirm({ title: `Удалить список «${list.name}»?`, text: "Он исчезнет у всех участников. Личные списки не изменятся.", confirm: "Удалить", danger: true }))) return;
+              if (!(await confirm({ title: `Удалить группу «${list.name}»?`, text: "Он исчезнет у всех участников. Личные списки не изменятся.", confirm: "Удалить", danger: true }))) return;
               await api(`/api/shared-lists/${id}`, { method: "DELETE" });
               router.push("/lists/shared");
-            }}>Удалить список</Button>
+            }}>Удалить группу</Button>
           ) : list.role === "member" && <Button size="sm" variant="ghost" onClick={async () => { if (await confirm({ title: `Покинуть «${list.name}»?`, text: "Вернуться можно будет только по новому приглашению.", confirm: "Покинуть", danger: true })) void action({ action: "leave" }); }}>Покинуть</Button>}
         </div>
       </div>
@@ -219,7 +221,7 @@ export function SharedListView({ id }: { id: number }) {
             <Link href={`/users/${m.id}`} className="hover:text-indigo-300">{m.id === me?.id ? "Вы" : m.name}</Link>
             {m.status === "invited" && <span className="text-xs text-gray-400">приглашён</span>}
             {owner && m.id !== me?.id && (
-              <button onClick={async () => { if (await confirm({ title: `Убрать ${m.name} из списка?`, confirm: "Убрать", danger: true })) void action({ action: "remove", userId: m.id }); }} className="text-gray-500 hover:text-white" aria-label="Убрать">
+              <button onClick={async () => { if (await confirm({ title: `Убрать ${m.name} из группы?`, confirm: "Убрать", danger: true })) void action({ action: "remove", userId: m.id }); }} className="text-gray-500 hover:text-white" aria-label="Убрать">
                 <XMarkIcon className="h-4 w-4" />
               </button>
             )}
@@ -244,12 +246,13 @@ export function SharedListView({ id }: { id: number }) {
 
       {list.role === "invited" ? (
         <div className="flex flex-wrap items-center gap-3 rounded-xl bg-indigo-500/10 p-4 ring-1 ring-indigo-500/30">
-          <span>Вас пригласили в этот список.</span>
+          <span>Вас пригласили в эту группу.</span>
           <Button variant="primary" size="sm" onClick={() => action({ action: "accept" })}>Присоединиться</Button>
           <Button size="sm" onClick={() => action({ action: "decline" })}>Отклонить</Button>
         </div>
       ) : (
         <>
+          <GroupPlan list={list} />
           <AddTitle listId={id} onAdded={refresh} />
           <div className="flex gap-1 overflow-x-auto border-b border-gray-700">
             {TABS.map(([t, text]) => (

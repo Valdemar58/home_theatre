@@ -11,6 +11,8 @@ import type { RoomHandle } from "./useRoom";
 // участники (кто смотрит, кто на паузе, кто грузится и отстаёт, связь), кто что нажал, приглашения и права.
 
 type Friend = { id: number; name: string };
+/** Группа, где есть этот тайтл: позвать всех её участников с её пресетом и пультом. */
+type Group = { id: number; name: string; members: Friend[] };
 
 const ACTION_TEXT: Record<RoomAction["kind"], string> = {
   play: "смотреть", pause: "пауза", seek: "перемотка", ep: "серия", join: "в комнате", leave: "вне комнаты",
@@ -34,12 +36,13 @@ function memberLine(m: RoomMember, s: RoomState): { text: string; tone: string; 
 
 const NET_DOT = { positive: "bg-positive-400", warning: "bg-warning-400", negative: "bg-negative-400", neutral: "bg-gray-500" } as const;
 
-export function RoomPanel({ handle, invited, friends, onCreate, onJoin, onLeave }: {
+export function RoomPanel({ handle, invited, friends, groups, onCreate, onJoin, onLeave }: {
   handle: RoomHandle;
   /** Позвали в комнату тайтла (ещё не вошли) */
   invited: RoomView | null;
   friends: Friend[];
-  onCreate: (ids: number[]) => Promise<void>;
+  groups: Group[];
+  onCreate: (ids: number[], group?: number) => Promise<void>;
   onJoin: (id: string) => void;
   onLeave: () => void;
 }) {
@@ -54,7 +57,7 @@ export function RoomPanel({ handle, invited, friends, onCreate, onJoin, onLeave 
       </h2>
       {inRoom ? <InRoom room={room} handle={handle} friends={friends} onLeave={onLeave} />
         : invited ? <Invite room={invited} onJoin={onJoin} />
-        : <Create friends={friends} ended={handle.ended} onCreate={onCreate} />}
+        : <Create friends={friends} groups={groups} ended={handle.ended} onCreate={onCreate} />}
     </section>
   );
 }
@@ -70,14 +73,27 @@ function Invite({ room, onJoin }: { room: RoomView; onJoin: (id: string) => void
   );
 }
 
-function Create({ friends, ended, onCreate }: { friends: Friend[]; ended: boolean; onCreate: (ids: number[]) => Promise<void> }) {
+function Create({ friends, groups, ended, onCreate }: { friends: Friend[]; groups: Group[]; ended: boolean; onCreate: (ids: number[], group?: number) => Promise<void> }) {
   const [pick, setPick] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
+  const run = async (f: () => Promise<void>) => { setBusy(true); try { await f(); } finally { setBusy(false); } };
   return (
     <div className="space-y-2 text-sm">
       <p className="text-xs text-gray-400">
         {ended ? "Комната закончилась. " : ""}Комната — на один сеанс: пауза, перемотка и смена серии у всех сразу, поток у каждого свой.
       </p>
+      {groups.length > 0 && (
+        <div className="space-y-1">
+          {groups.map((g) => (
+            <button key={g.id} disabled={busy} onClick={() => void run(() => onCreate([], g.id))}
+              className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left ring-1 ring-gray-700 hover:bg-gray-700/50">
+              <span className="flex -space-x-1.5">{g.members.slice(0, 4).map((m) => <Avatar key={m.id} user={m} className="h-5 w-5 text-[10px] ring-1 ring-gray-900" />)}</span>
+              <span className="min-w-0 flex-1 truncate">Позвать группу «{g.name}»</span>
+              <span className="text-xs text-gray-500">{g.members.length}</span>
+            </button>
+          ))}
+        </div>
+      )}
       {friends.length ? (
         <div className="max-h-40 space-y-0.5 overflow-y-auto">
           {friends.map((f) => (
@@ -91,7 +107,7 @@ function Create({ friends, ended, onCreate }: { friends: Friend[]; ended: boolea
         </div>
       ) : <p className="text-xs text-gray-500">Друзей пока нет — комнату можно создать и позвать позже.</p>}
       <Button size="sm" variant="primary" disabled={busy}
-        onClick={async () => { setBusy(true); try { await onCreate([...pick]); } finally { setBusy(false); } }}>
+        onClick={() => void run(() => onCreate([...pick]))}>
         {busy && <Spinner className="h-3.5 w-3.5" />} Создать комнату{pick.size ? ` и позвать (${pick.size})` : ""}
       </Button>
     </div>

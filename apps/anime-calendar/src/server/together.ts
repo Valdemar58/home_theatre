@@ -21,12 +21,12 @@ const userName = (id: number) => db.prepare<[number], { name: string }>("SELECT 
 
 // ---------------------------------------------------------------- общие списки
 
-const listRow = (id: number) => db.prepare<[number], ListRow>("SELECT * FROM shared_lists WHERE id = ?").get(id);
-const membersOf = (listId: number) => db.prepare<[number], MemberRow>(
+export const listRow = (id: number) => db.prepare<[number], ListRow>("SELECT * FROM shared_lists WHERE id = ?").get(id);
+export const membersOf = (listId: number) => db.prepare<[number], MemberRow>(
   `SELECT m.list_id, m.user_id, m.status, u.name FROM shared_list_members m JOIN users u ON u.id = m.user_id
    WHERE m.list_id = ? ORDER BY m.joined_at`).all(listId);
 
-function roleIn(listId: number, userId: number): "owner" | "member" | "invited" | null {
+export function roleIn(listId: number, userId: number): "owner" | "member" | "invited" | null {
   const l = listRow(listId);
   if (!l) return null;
   if (l.owner_id === userId) return "owner";
@@ -34,7 +34,7 @@ function roleIn(listId: number, userId: number): "owner" | "member" | "invited" 
     "SELECT status FROM shared_list_members WHERE list_id = ? AND user_id = ?").get(listId, userId)?.status ?? null;
 }
 
-function requireMember(listId: number, userId: number) {
+export function requireMember(listId: number, userId: number) {
   const role = roleIn(listId, userId);
   if (role !== "owner" && role !== "member") throw new ApiError(403, "Вы не участник этого списка");
   return role;
@@ -136,7 +136,7 @@ export function myLists(userId: number): SharedListSummary[] {
   });
 }
 
-function itemsOf(listId: number, members: MemberRow[], ids?: number[]): SharedItem[] {
+export function itemsOf(listId: number, members: MemberRow[], ids?: number[]): SharedItem[] {
   const rows = db.prepare<[number], { anilist_id: number; added_by: number | null; added_at: number }>(
     "SELECT anilist_id, added_by, added_at FROM shared_list_items WHERE list_id = ? ORDER BY added_at DESC").all(listId)
     .filter((r) => !ids || ids.includes(r.anilist_id));
