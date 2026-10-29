@@ -8,6 +8,7 @@ import type { Person } from "@/lib/types";
 import { Avatar } from "./Avatar";
 import { Button, EmptyState, ErrorBox, Skel } from "./ui";
 import { useConfirm } from "./Dialogs";
+import { InvitePanel } from "./InvitePanel";
 
 // Друзья: входящие заявки, друзья (с совпадением вкусов), отправленные, остальные пользователи сервера.
 
@@ -110,7 +111,7 @@ export function FriendsView() {
       <h1 className="text-2xl font-bold sm:text-3xl">Друзья</h1>
       {!all.length && (
         <EmptyState title="На сервере пока только вы">
-          Друзья появятся здесь, когда войдут со своим аккаунтом Jellyfin (аккаунты заводит администратор Jellyfin).
+          Позовите друзей ссылкой-приглашением ниже: после одобрения админом они появятся здесь.
         </EmptyState>
       )}
       <Section title="Заявки в друзья" people={by("incoming")} />
@@ -118,6 +119,7 @@ export function FriendsView() {
       <Section title="Отправленные заявки" people={by("outgoing")} />
       <Section title="Другие пользователи сервера" people={by("none")}
         hint="Друзья видят профиль и списки друг друга (если не выбрано «Только я»), могут смотреть вместе и вести общие списки." />
+      <InvitePanel />
     </div>
   );
 }

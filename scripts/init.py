@@ -19,7 +19,7 @@ import sys
 from common import ENV_EXAMPLE, ENV_FILE, ROOT, parse_env, resolve
 
 CONFIG_DIRS = ["jellyfin", "jellyfin-cache", "seerr", "anime-calendar", "torrserver", "ollama", "sonarr", "radarr",
-               "prowlarr", "bazarr", "qbittorrent", "gluetun", "mapvec"]
+               "prowlarr", "bazarr", "qbittorrent", "gluetun", "mapvec", "authentik/data", "authentik/templates"]
 MEDIA_KINDS = ["movies", "tv", "anime"]
 # Папка .strm-ссылок для «Смотреть сейчас» (только в media)
 STREAM_DIR = "stream"
@@ -32,6 +32,10 @@ GENERATED = {
     "QBIT_PASSWORD": lambda: secrets.token_urlsafe(12),
     "ANIME_CALENDAR_SECRET": lambda: secrets.token_urlsafe(32),
     "ANIME_CALENDAR_TORZNAB_KEY": lambda: secrets.token_hex(16),
+    "AUTHENTIK_SECRET_KEY": lambda: secrets.token_urlsafe(48),
+    "AUTHENTIK_DB_PASSWORD": lambda: secrets.token_urlsafe(24),
+    "AUTHENTIK_BOOTSTRAP_PASSWORD": lambda: secrets.token_urlsafe(16),
+    "AUTHENTIK_BOOTSTRAP_TOKEN": lambda: secrets.token_urlsafe(48),
 }
 
 

@@ -22,6 +22,7 @@ import {
   SwatchIcon,
   TrophyIcon,
   UserCircleIcon,
+  IdentificationIcon,
   UsersIcon,
 } from "@heroicons/react/24/outline";
 import Link from "next/link";
@@ -48,6 +49,7 @@ const NAV = [
 ];
 // Служебные страницы (превью, лаборатории) — только админу, отдельным блоком меню
 export const ADMIN_NAV = [
+  { href: "/accounts", label: "Пользователи", icon: IdentificationIcon },
   { href: "/cards-preview", label: "Варианты карточек", icon: BeakerIcon },
   { href: "/upscale-lab", label: "ИИ-апскейл", icon: SparklesIcon },
   { href: "/achievements-preview", label: "Награды (прототип)", icon: TrophyIcon },
@@ -137,8 +139,8 @@ export function AppShell({ userName, sidebar = "auto", children }: { userName: s
   const { data: me } = useMe();
   const bar = useSidebar(sidebar);
   const logout = async () => {
-    await api("/api/auth/logout", { method: "POST" });
-    window.location.href = "/login";
+    const res = await api<{ redirect: string | null }>("/api/auth/logout", { method: "POST" });
+    window.location.href = res.redirect ?? "/login";
   };
 
   return (

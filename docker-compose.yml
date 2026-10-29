@@ -83,6 +83,13 @@ services:
       SHIKIMORI_APP_NAME: ${SHIKIMORI_APP_NAME:-}
       SHIKIMORI_REDIRECT_URI: ${SHIKIMORI_REDIRECT_URI:-}
       SESSION_SECRET: ${ANIME_CALENDAR_SECRET}
+      # Единый вход (Authentik, профиль public): без ключей — вход паролем Jellyfin, как раньше
+      AUTH_URL: http://authentik:9000
+      AUTH_PUBLIC_URL: ${AUTH_PUBLIC_URL:-}
+      AUTH_CLIENT_ID: ${AUTH_CLIENT_ID:-}
+      AUTH_CLIENT_SECRET: ${AUTH_CLIENT_SECRET:-}
+      AUTH_API_TOKEN: ${AUTH_API_TOKEN:-}
+      PUBLIC_URL: ${PUBLIC_URL:-}
       # RU-индексатор: Sonarr ищет русские раздачи через календарь, календарь — через Prowlarr
       TORZNAB_API_KEY: ${ANIME_CALENDAR_TORZNAB_KEY}
       SONARR_URL: http://sonarr:8989
@@ -145,9 +152,9 @@ services:
 
   # Стриминг серий прямо из торрента («Смотреть сейчас» в календаре):
   # календарь кладёт .strm-ссылки на TorrServer в библиотеку Jellyfin «Стрим»
-  # ---------- Доступ из интернета (профиль public) ----------
-  # Календарь по HTTPS на ${DUCKDNS_DOMAIN}.duckdns.org: на роутере — проброс TCP 443 на этот компьютер.
-  # Наружу только календарь; Jellyfin, *arr и прочее остаются в домашней сети.
+  # ---------- Доступ из интернета и единый вход (профиль public) ----------
+  # Календарь по HTTPS на ${DUCKDNS_DOMAIN}.duckdns.org, сервисы — на поддоменах (apps/caddy/Caddyfile):
+  # на роутере — проброс TCP 443 на этот компьютер. Вход — Authentik (auth.<домен>), служебные — только админам.
   caddy:
     <<: *common
     image: caddy:2.10-alpine
@@ -161,8 +168,80 @@ services:
       - ${CONFIG_ROOT}/caddy/config:/config
     ports:
       - "443:443"
+    networks:
+      default:
+        # Jellyfin (SSO-плагин) ходит к Authentik по публичному адресу — внутри docker-сети он ведёт прямо сюда,
+        # а не наружу через прокси/VPN и обратно
+        aliases:
+          - auth.${DUCKDNS_DOMAIN:-none}.duckdns.org
     depends_on:
       - anime-calendar
+      - authentik
+
+  # Единый вход (Authentik): учётные записи, приглашения, OIDC для календаря и Jellyfin, forward-auth для остального.
+  # Настройка — `python scripts/bootstrap.py --only authentik`; пользователями управляет календарь через API.
+  authentik-db:
+    image: postgres:16-alpine
+    container_name: authentik-db
+    restart: unless-stopped
+    profiles: ["public"]
+    environment:
+      POSTGRES_DB: authentik
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: ${AUTHENTIK_DB_PASSWORD:-}
+    volumes:
+      # Именованный том: Postgres на смонтированной папке Windows не стартует (права)
+      - authentik-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d authentik -U authentik"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  authentik:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2026.8.5}
+    container_name: authentik
+    restart: unless-stopped
+    profiles: ["public"]
+    command: server
+    shm_size: 512mb
+    environment: &authentik-env
+      TZ: ${TZ}
+      AUTHENTIK_POSTGRESQL__HOST: authentik-db
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_DB_PASSWORD:-}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:-}
+      # Только при первом запуске: пароль akadmin и токен API для bootstrap.py
+      AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_BOOTSTRAP_PASSWORD:-}
+      AUTHENTIK_BOOTSTRAP_TOKEN: ${AUTHENTIK_BOOTSTRAP_TOKEN:-}
+      AUTHENTIK_BOOTSTRAP_EMAIL: ${AUTHENTIK_BOOTSTRAP_EMAIL:-akadmin@kino.local}
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+    volumes:
+      - ${CONFIG_ROOT}/authentik/data:/data
+      - ${CONFIG_ROOT}/authentik/templates:/templates
+    ports:
+      - "9000:9000"
+    depends_on:
+      authentik-db:
+        condition: service_healthy
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2026.8.5}
+    container_name: authentik-worker
+    restart: unless-stopped
+    profiles: ["public"]
+    command: worker
+    shm_size: 512mb
+    environment: *authentik-env
+    volumes:
+      - ${CONFIG_ROOT}/authentik/data:/data
+      - ${CONFIG_ROOT}/authentik/templates:/templates
+    depends_on:
+      authentik-db:
+        condition: service_healthy
 
   # Домашний IP → DuckDNS (адрес узнаётся по STUN мимо VPN, раз в 5 минут)
   ddns:
@@ -238,6 +317,8 @@ services:
       - "11434:11434"
 
   # ---------- Управление библиотекой ----------
+  # Вход в *arr — External: из интернета их пускает Caddy после входа в Authentik (только kino-admins),
+  # порты на хосте — только для домашней сети (роутер пробрасывает лишь 443)
   sonarr:
     <<: *common
     image: lscr.io/linuxserver/sonarr:latest
@@ -245,7 +326,7 @@ services:
     environment:
       <<: *common-env
       SONARR__AUTH__APIKEY: ${SONARR_API_KEY}
-      SONARR__AUTH__METHOD: Forms
+      SONARR__AUTH__METHOD: External
       SONARR__AUTH__REQUIRED: DisabledForLocalAddresses
     volumes:
       - ${CONFIG_ROOT}/sonarr:/config
@@ -267,7 +348,7 @@ services:
     environment:
       <<: *common-env
       RADARR__AUTH__APIKEY: ${RADARR_API_KEY}
-      RADARR__AUTH__METHOD: Forms
+      RADARR__AUTH__METHOD: External
       RADARR__AUTH__REQUIRED: DisabledForLocalAddresses
     volumes:
       - ${CONFIG_ROOT}/radarr:/config
@@ -322,7 +403,7 @@ services:
     environment:
       <<: *common-env
       PROWLARR__AUTH__APIKEY: ${PROWLARR_API_KEY}
-      PROWLARR__AUTH__METHOD: Forms
+      PROWLARR__AUTH__METHOD: External
       PROWLARR__AUTH__REQUIRED: DisabledForLocalAddresses
     volumes:
       - ${CONFIG_ROOT}/prowlarr:/config
@@ -371,6 +452,9 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+
+volumes:
+  authentik-db:
 
 networks:
   default:

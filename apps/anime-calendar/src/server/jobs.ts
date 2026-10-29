@@ -20,6 +20,7 @@ import { syncJellyfinPlays } from "./jellyfin-sync";
 import { translateTags } from "./tags-ru";
 import { checkNewEpisodes } from "./episode-notices";
 import { groupTick } from "./groups";
+import { syncSignups } from "./accounts";
 import { archiveInitial, archiveLists, archiveRecheck, archiveTick } from "./archive";
 
 const MINUTE = 60_000;
@@ -70,6 +71,8 @@ export function startJobs() {
   setInterval(() => void safe("play-sweep", async () => sweepPlayback()), MINUTE);
   // Группы просмотра: сеансы по расписанию (подготовка, напоминание, комната) и голосования по сроку
   setInterval(() => void safe("groups", groupTick), MINUTE);
+  // Единый вход: регистрации по приглашениям → заявки админу
+  setInterval(() => void safe("signups", syncSignups), MINUTE);
   setInterval(async () => {
     await safe("lists-media", () => refreshListMedia());
     await safe("shikimori-sync", syncAll);

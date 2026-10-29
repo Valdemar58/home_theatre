@@ -178,6 +178,9 @@ def step_qbittorrent() -> None:
         "incomplete_files_ext": True,
         "listen_port": int(ENV.get("TORRENT_PORT", 6881)),
         "upnp": False,
+        # Из docker-сети (Caddy за входом Authentik, только админы) — без второго пароля
+        "bypass_auth_subnet_whitelist_enabled": True,
+        "bypass_auth_subnet_whitelist": f"{ENV.get('DOCKER_NET', '172.25')}.0.0/16",
     }
     api.request("POST", "/api/v2/app/setPreferences", raw=True, form={"json": json.dumps(prefs)})
     existing = api.get("/api/v2/torrents/categories") or {}
@@ -849,6 +852,247 @@ def step_anime_calendar() -> None:
     log("= календарь: http://localhost:5056 (вход логином Jellyfin)")
 
 
+# ---------------------------------------------------------------- Единый вход (Authentik)
+
+# Поддомен → (адрес в docker-сети, кто допущен) для forward-auth (apps/caddy/Caddyfile)
+GUARDED = {
+    "seerr": "kino-friends",
+    "sonarr": "kino-admins", "radarr": "kino-admins", "prowlarr": "kino-admins", "bazarr": "kino-admins",
+    "qbit": "kino-admins", "torrserver": "kino-admins",
+}
+INVITE_FLOW = "kino-invite"
+RECOVERY_FLOW = "kino-recovery"
+
+
+class Authentik:
+    """Тонкая обёртка над API v3: поиск по полю и создание/обновление (идемпотентно)."""
+
+    def __init__(self, token: str):
+        self.api = Api(9000, {"Authorization": f"Bearer {token}"})
+
+    def find(self, path: str, **params) -> dict | None:
+        # Фильтры API работают не везде (у провайдеров ?name= игнорируется) — сверяем сами;
+        # приложения без superuser_full_list видны только те, куда пускают самого владельца токена
+        query = {**params, "page_size": 500, "superuser_full_list": "true"}
+        res = self.api.get(f"/api/v3/{path}/", params=query)["results"]
+        return next((x for x in res if all(str(x.get(k)).lower() == str(v).lower() for k, v in params.items())), None)
+
+    def upsert(self, path: str, key: str, body: dict) -> dict:
+        cur = self.find(path, **{key: body[key]})
+        if cur:
+            # Потоки и приложения адресуются по slug, остальное — по pk
+            ref = cur["slug"] if path in ("flows/instances", "core/applications") else cur["pk"]
+            return self.api.request("PATCH", f"/api/v3/{path}/{ref}/", json_body=body)
+        return self.api.post(f"/api/v3/{path}/", body)
+
+    def bind(self, flow: dict, stage: dict, order: int) -> None:
+        have = self.api.get("/api/v3/flows/bindings/", params={"target": flow["pk"], "stage": stage["pk"]})["results"]
+        if not have:
+            self.api.post("/api/v3/flows/bindings/", {"target": flow["pk"], "stage": stage["pk"], "order": order})
+
+    def allow(self, app: dict, groups: list[dict]) -> None:
+        """Кого пускать в приложение: привязки групп (фильтр group= API игнорирует — сверяем сами)."""
+        have = {b.get("group") for b in self.api.get("/api/v3/policies/bindings/", params={"target": app["pk"], "page_size": 100})["results"]}
+        for i, g in enumerate(groups):
+            if g["pk"] not in have:
+                self.api.post("/api/v3/policies/bindings/", {"target": app["pk"], "group": g["pk"], "order": i})
+
+    def prompt(self, key: str, kind: str, label: str, order: int, placeholder: str = "", required: bool = True) -> str:
+        name = f"kino-{key}"
+        return self.upsert("stages/prompt/prompts", "name", {
+            "name": name, "field_key": key, "label": label, "type": kind, "required": required,
+            # Текст статического поля новые версии берут из initial_value
+            "placeholder": "" if kind == "static" else placeholder, "initial_value": placeholder if kind == "static" else "",
+            "order": order,
+        })["pk"]
+
+
+SSO_REPO = ("SSO (K0lin)", "https://raw.githubusercontent.com/k0lin/jellyfin-plugin-sso/manifest-release/manifest.json")
+# Кнопка — формой: у ссылки Jellyfin вычищает текст
+SSO_LOGIN_BUTTON = ('<form action="/sso/OID/start/authentik" method="get">'
+                    '<button class="raised block emby-button button-submit" type="submit">Войти через единый вход</button></form>')
+
+
+def jellyfin_sso(host: str, client_id: str, secret: str) -> None:
+    """SSO-плагин Jellyfin (форк K0lin для Jellyfin 12): установка, провайдер authentik, кнопка входа, Quick Connect."""
+    api, _ = jellyfin_login()
+    plugins = api.get("/Plugins")
+    if not any("SSO" in p["Name"] for p in plugins):
+        repos = api.get("/Repositories")
+        if not any(r["Url"] == SSO_REPO[1] for r in repos):
+            api.post("/Repositories", repos + [{"Name": SSO_REPO[0], "Url": SSO_REPO[1], "Enabled": True}])
+        # Адрес репозитория — у версии, не у пакета
+        pkg = next((p for p in api.get("/Packages") if p["name"] == "SSO Authentication"), None)
+        ver = next((v for v in (pkg or {}).get("versions", []) if v.get("repositoryUrl") in (None, SSO_REPO[1])), None)
+        if not pkg or not ver:
+            raise ApiError("в каталоге Jellyfin нет SSO-плагина из репозитория K0lin")
+        api.post(f"/Packages/Installed/{urllib.parse.quote(pkg['name'])}",
+                 params={"assemblyGuid": pkg["guid"], "version": ver["version"], "repositoryUrl": SSO_REPO[1]})
+        log(f"+ Jellyfin: SSO-плагин {ver['version']}, перезапуск")
+        time.sleep(5)
+        api.post("/System/Restart")
+        time.sleep(15)
+        wait_for("jellyfin", 8096, "/health", timeout=300)
+        api, _ = jellyfin_login()
+    api.post("/sso/OID/Add/authentik", {
+        "OidEndpoint": f"https://auth.{host}/application/o/kino-jellyfin/", "OidClientId": client_id, "OidSecret": secret,
+        # Кого пускать — решает Authentik (группы приложения); библиотеки и права админа в Jellyfin ведёт календарь
+        # («Пользователи»), плагин их не переписывает при каждом входе
+        "Enabled": True, "EnableAuthorization": False, "EnableAllFolders": True, "EnabledFolders": [],
+        "Roles": ["kino-admins", "kino-friends"], "AdminRoles": ["kino-admins"], "RoleClaim": "groups",
+        "EnableFolderRoles": False, "DisablePushedAuthorization": True, "SchemeOverride": "https",
+    })
+    branding = api.get("/System/Configuration/branding")
+    if branding.get("LoginDisclaimer") != SSO_LOGIN_BUTTON:
+        branding["LoginDisclaimer"] = SSO_LOGIN_BUTTON
+        api.post("/System/Configuration/branding", branding)
+    sys_cfg = api.get("/System/Configuration")
+    if not sys_cfg.get("QuickConnectAvailable"):
+        sys_cfg["QuickConnectAvailable"] = True
+        api.post("/System/Configuration", sys_cfg)
+    log("= Jellyfin: вход через Authentik, кнопка на странице входа, Quick Connect")
+
+
+def step_authentik() -> None:
+    domain = ENV.get("DUCKDNS_DOMAIN")
+    if not domain or not ENV.get("AUTHENTIK_BOOTSTRAP_TOKEN"):
+        raise ApiError("нужны DUCKDNS_DOMAIN и ключи Authentik (python scripts/init.py), профиль public запущен")
+    host = f"{domain}.duckdns.org"
+    wait_for("authentik", 9000, "/-/health/ready/", timeout=600)
+    ak = Authentik(ENV["AUTHENTIK_BOOTSTRAP_TOKEN"])
+    flow = lambda slug: ak.find("flows/instances", slug=slug)
+
+    # Группы: админы — суперпользователи Authentik (могут и в его админку)
+    admins = ak.upsert("core/groups", "name", {"name": "kino-admins", "is_superuser": True})
+    friends = ak.upsert("core/groups", "name", {"name": "kino-friends", "is_superuser": False})
+    log("= группы kino-admins, kino-friends")
+
+    # Поток регистрации по приглашению: приглашение → имя, почта, пароль → аккаунт выключен до одобрения в календаре
+    invitation = ak.upsert("stages/invitation/stages", "name", {"name": "kino-invitation", "continue_flow_without_invitation": False})
+    fields = [ak.prompt("username", "username", "Имя пользователя", 0, "Латиницей, видно друзьям"),
+              ak.prompt("email", "email", "Почта", 1),
+              ak.prompt("password", "password", "Пароль", 2),
+              ak.prompt("password_repeat", "password", "Пароль ещё раз", 3)]
+    signup = ak.upsert("stages/prompt/stages", "name", {"name": "kino-signup", "fields": fields})
+    write = ak.upsert("stages/user_write", "name", {
+        "name": "kino-signup-write", "user_creation_mode": "always_create", "create_users_as_inactive": True,
+        "user_type": "internal", "user_path_template": "kino",
+    })
+    done = ak.upsert("stages/prompt/stages", "name", {"name": "kino-signup-done", "fields": [
+        ak.prompt("pending_note", "static", "Заявка отправлена", 0, "Аккаунт создан. Войти можно будет, когда админ одобрит заявку — придёт уведомление пригласившему.", required=False)]})
+    invite = ak.upsert("flows/instances", "slug", {
+        "slug": INVITE_FLOW, "name": "Регистрация по приглашению", "title": "Домашний кинотеатр — регистрация",
+        "designation": "enrollment", "authentication": "require_unauthenticated",
+    })
+    for i, st in enumerate((invitation, signup, write, done)):
+        ak.bind(invite, st, i * 10)
+    log(f"= поток регистрации «{INVITE_FLOW}»")
+
+    # Сброс пароля по ссылке из календаря (без почты): новый пароль → вход
+    pw = ak.upsert("stages/prompt/stages", "name", {"name": "kino-new-password", "fields": [
+        ak.prompt("password", "password", "Пароль", 2), ak.prompt("password_repeat", "password", "Пароль ещё раз", 3)]})
+    pw_write = ak.upsert("stages/user_write", "name", {"name": "kino-password-write", "user_creation_mode": "never_create"})
+    login = ak.upsert("stages/user_login", "name", {"name": "kino-login"})
+    recovery = ak.upsert("flows/instances", "slug", {
+        "slug": RECOVERY_FLOW, "name": "Сброс пароля", "title": "Новый пароль",
+        "designation": "recovery", "authentication": "require_unauthenticated",
+    })
+    for i, st in enumerate((pw, pw_write, login)):
+        ak.bind(recovery, st, i * 10)
+
+    brand = ak.find("core/brands", default="true")
+    ak.api.request("PATCH", f"/api/v3/core/brands/{brand['brand_uuid']}/", json_body={
+        "branding_title": "Домашний кинотеатр", "flow_recovery": recovery["pk"],
+        "attributes": {**(brand.get("attributes") or {}), "settings": {"locale": "ru"}},
+    })
+    ak.api.request("PATCH", "/api/v3/flows/instances/default-authentication-flow/", json_body={"title": "Домашний кинотеатр"})
+    log("= бренд: название, русский язык, сброс пароля")
+
+    authz = flow("default-provider-authorization-implicit-consent")["pk"]
+    inval = flow("default-provider-invalidation-flow")["pk"]
+    cert = ak.find("crypto/certificatekeypairs", name="authentik Self-signed Certificate")
+    scopes = [ak.find("propertymappings/provider/scope", managed=f"goauthentik.io/providers/oauth2/scope-{s}")["pk"]
+              for s in ("openid", "email", "profile")]
+
+    # Выход из приложения = выход из Authentik (иначе «Войти» сразу пускает того же человека обратно)
+    logout_all = flow("default-invalidation-flow")["pk"]
+
+    def oidc_app(slug: str, name: str, redirects: list[dict], launch: str, client_id: str, groups: list[dict]) -> dict:
+        prov = ak.upsert("providers/oauth2", "name", {
+            "name": name, "authorization_flow": authz, "invalidation_flow": logout_all, "client_type": "confidential",
+            "client_id": client_id, "redirect_uris": redirects, "property_mappings": scopes, "sub_mode": "user_uuid",
+            "signing_key": cert["pk"] if cert else None, "include_claims_in_id_token": True,
+            # Без явного списка новые версии отказывают в обмене кода («Invalid grant_type for provider»)
+            "grant_types": ["authorization_code", "refresh_token"],
+        })
+        if not prov.get("client_secret"):
+            prov = ak.api.get(f"/api/v3/providers/oauth2/{prov['pk']}/")
+        app = ak.upsert("core/applications", "slug", {"slug": slug, "name": name, "provider": prov["pk"], "meta_launch_url": launch})
+        ak.allow(app, groups)
+        return prov
+
+    # Календарь: из интернета и из дома (localhost и адрес в домашней сети)
+    cal = oidc_app("kino-calendar", "Календарь", [
+        {"matching_mode": "strict", "url": f"https://{host}/api/auth/oidc/callback"},
+        {"matching_mode": "regex", "url": r"^http://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+):5056/api/auth/oidc/callback$"},
+    ], f"https://{host}", "kino-calendar", [admins, friends])
+    # После входа или смены пароля прямо в Authentik — в календарь, а не в библиотеку приложений Authentik
+    cal_app = ak.find("core/applications", slug="kino-calendar")
+    ak.api.request("PATCH", f"/api/v3/core/brands/{brand['brand_uuid']}/", json_body={"default_application": cal_app["pk"]})
+    set_env_value("AUTH_PUBLIC_URL", f"https://auth.{host}")
+    set_env_value("PUBLIC_URL", f"https://{host}")
+    set_env_value("AUTH_CLIENT_ID", cal["client_id"])
+    set_env_value("AUTH_CLIENT_SECRET", cal["client_secret"])
+    log("= календарь: OIDC (ключи в .env)")
+
+    # Jellyfin: SSO-плагин (вход из браузера по кнопке, ТВ — Quick Connect); дома — и по порту 8096
+    jf = oidc_app("kino-jellyfin", "Jellyfin", [
+        {"matching_mode": "strict", "url": f"https://jellyfin.{host}/sso/OID/redirect/authentik"},
+        {"matching_mode": "regex", "url": r"^http://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+):8096/sso/OID/redirect/authentik$"},
+    ], f"https://jellyfin.{host}", "kino-jellyfin", [admins, friends])
+    jellyfin_sso(host, jf["client_id"], jf["client_secret"])
+
+    # Forward-auth: по приложению на поддомен, все — во встроенный аутпост
+    proxies = []
+    for sub, group in GUARDED.items():
+        prov = ak.upsert("providers/proxy", "name", {
+            "name": f"kino-{sub}", "authorization_flow": authz, "invalidation_flow": inval,
+            "mode": "forward_single", "external_host": f"https://{sub}.{host}",
+        })
+        app = ak.upsert("core/applications", "slug", {"slug": f"kino-{sub}", "name": sub.capitalize(), "provider": prov["pk"],
+                                                     "meta_launch_url": f"https://{sub}.{host}"})
+        ak.allow(app, [admins] if group == "kino-admins" else [admins, friends])
+        proxies.append(prov["pk"])
+    outpost = ak.find("outposts/instances", managed="goauthentik.io/outposts/embedded")
+    ak.api.request("PATCH", f"/api/v3/outposts/instances/{outpost['pk']}/", json_body={
+        "providers": sorted(set(outpost["providers"]) | set(proxies)),
+        "config": {**outpost["config"], "authentik_host": f"https://auth.{host}"},
+    })
+    log(f"= forward-auth: {', '.join(GUARDED)}")
+
+    # Служебная учётка календаря: управляет пользователями и приглашениями через API
+    svc = ak.upsert("core/users", "username", {"username": "kino-calendar", "name": "Календарь", "type": "service_account",
+                                               "groups": [admins["pk"]], "path": "kino"})
+    if not ak.find("core/tokens", identifier="kino-calendar-api"):
+        ak.api.post("/api/v3/core/tokens/", {"identifier": "kino-calendar-api", "intent": "api", "user": svc["pk"], "expiring": False,
+                                             "description": "Календарь: пользователи и приглашения"})
+    key = ak.api.get("/api/v3/core/tokens/kino-calendar-api/view_key/")["key"]
+    set_env_value("AUTH_API_TOKEN", key)
+    log("= токен API календаря записан в .env")
+
+    # Нынешние пользователи календаря: те же имена и пароли, что в Jellyfin
+    accounts = [(ENV["JELLYFIN_ADMIN_USER"], ENV["JELLYFIN_ADMIN_PASSWORD"], admins)]
+    if ENV.get("TEST_FRIEND_PASSWORD"):
+        accounts.append(("test-friend", ENV["TEST_FRIEND_PASSWORD"], friends))
+    for username, password, group in accounts:
+        if ak.find("core/users", username=username):
+            continue
+        u = ak.api.post("/api/v3/core/users/", {"username": username, "name": username, "is_active": True,
+                                                "groups": [group["pk"]], "path": "kino"})
+        ak.api.post(f"/api/v3/core/users/{u['pk']}/set_password/", {"password": password})
+        log(f"+ пользователь {username} ({group['name']})")
+
+
 # ---------------------------------------------------------------- main
 
 STEPS = {
@@ -864,6 +1108,7 @@ STEPS = {
     "torrserver": step_torrserver,
     "ollama": step_ollama,
     "anime-calendar": step_anime_calendar,
+    "authentik": step_authentik,
 }
 
 

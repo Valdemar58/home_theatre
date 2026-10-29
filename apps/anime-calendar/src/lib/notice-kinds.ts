@@ -23,6 +23,7 @@ export const NOTICE_KINDS: Record<string, KindInfo> = {
   "together-suggest": { label: "Смотрели вместе?", group: "friends", icon: "users", tone: "positive" },
   comment: { label: "Ответ на комментарий", group: "friends", icon: "chat", tone: "info" },
   achievement: { label: "Награда", group: "achievements", icon: "trophy", tone: "warning" },
+  signup: { label: "Приглашение", group: "important", icon: "user", tone: "positive" },
 };
 
 const OTHER: KindInfo = { label: "Система", group: "important", icon: "info", tone: "neutral" };

@@ -152,6 +152,12 @@ function migrate(db: Db) {
   addCol("shared_list_items", "voice", "TEXT");
   addCol("watch_rooms", "group_id", "INTEGER");
   addCol("watch_rooms", "session_id", "INTEGER");
+  // Единый вход (TASKS 7.9): учётка Authentik (uuid), почта, блокировка, кто пригласил
+  addCol("users", "auth_sub", "TEXT");
+  addCol("users", "email", "TEXT");
+  addCol("users", "blocked", "INTEGER NOT NULL DEFAULT 0");
+  addCol("users", "invited_by", "INTEGER");
+  if (columns("users").has("auth_sub")) db.exec("CREATE UNIQUE INDEX IF NOT EXISTS users_auth_sub ON users(auth_sub)");
   if (!userCols.has("lib_nickname")) db.exec("ALTER TABLE users ADD COLUMN lib_nickname TEXT");
   if (!userCols.has("lib_synced_at")) db.exec("ALTER TABLE users ADD COLUMN lib_synced_at INTEGER");
   if (!userCols.has("lib_error")) db.exec("ALTER TABLE users ADD COLUMN lib_error TEXT");
@@ -254,6 +260,31 @@ function migrate(db: Db) {
       PRIMARY KEY (from_id, to_id)
     );
     CREATE INDEX IF NOT EXISTS friendships_to ON friendships (to_id);
+    -- Приглашения в Authentik (TASKS 7.9в): id — pk приглашения Authentik; group_id — группа просмотра, куда позвать
+    CREATE TABLE IF NOT EXISTS invites (
+      id TEXT PRIMARY KEY,
+      inviter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      group_id INTEGER,
+      note TEXT,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      used_by INTEGER,
+      revoked INTEGER NOT NULL DEFAULT 0
+    );
+    -- Заявки: аккаунт создан по приглашению и выключен, пока админ не решит
+    CREATE TABLE IF NOT EXISTS signup_requests (
+      auth_pk INTEGER PRIMARY KEY,
+      auth_sub TEXT NOT NULL,
+      username TEXT NOT NULL,
+      email TEXT,
+      inviter_id INTEGER,
+      invite_id TEXT,
+      created_at INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      decided_by INTEGER,
+      decided_at INTEGER,
+      user_id INTEGER
+    );
     -- Общие списки: участники (invited → member) и тайтлы; статусы участников — живые, из их личных списков
     CREATE TABLE IF NOT EXISTS shared_lists (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
