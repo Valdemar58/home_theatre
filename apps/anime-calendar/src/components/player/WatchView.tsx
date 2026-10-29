@@ -21,7 +21,7 @@ import { PlotHub } from "../PlotHub";
 import { Scores } from "../Scores";
 import { Badge, Button, cx } from "../ui";
 import { usePrepare } from "../WatchButton";
-import { clock, Player, type PlayerControls, type RoomSync, type SubSettings } from "./Player";
+import { clock, Player, type PlayerControls, type RoomSync, type SignsState, type SubSettings } from "./Player";
 import { actionText, RoomPanel } from "./RoomPanel";
 import { useRoom } from "./useRoom";
 import { WatchSidebar } from "./WatchSidebar";
@@ -105,7 +105,8 @@ export function WatchView({ id, ep }: { id: number; ep: number }) {
     if (r.marked) void qc.invalidateQueries({ queryKey: ["list"] });
   }, [qc]);
   const controls = useRef<PlayerControls | null>(null);
-  const [player, setPlayer] = useState<{ info: PlayInfo | null; sub: number | null; subs: SubSettings }>({ info: null, sub: null, subs: { delay: 0, size: 100 } });
+  const [player, setPlayer] = useState<{ info: PlayInfo | null; sub: number | null; subs: SubSettings; signs: number | null; signsState: SignsState }>(
+    { info: null, sub: null, subs: { delay: 0, size: 100 }, signs: null, signsState: null });
   const spoiler = ep > watched + 1;
 
   return (
@@ -147,7 +148,7 @@ export function WatchView({ id, ep }: { id: number; ep: number }) {
           )}
         </Player>
         <div className="space-y-4">
-          {a && <WatchSidebar media={a} info={player.info} sub={player.sub} subs={player.subs} controls={controls} />}
+          {a && <WatchSidebar media={a} info={player.info} sub={player.sub} subs={player.subs} signs={player.signs} signsState={player.signsState} controls={controls} />}
           <RoomPanel handle={rm} friends={rooms?.friends ?? []} groups={rooms?.groups ?? []}
             invited={!inRoom && rooms?.room && rooms.room.members.find((m) => m.id === rooms.room!.me)?.status === "invited" ? rooms.room : null}
             onJoin={(r) => router.replace(`/anime/${id}/watch/${rooms?.room?.state.ep ?? ep}?room=${r}`)}

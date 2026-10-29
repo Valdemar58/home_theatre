@@ -1,7 +1,7 @@
 import "server-only";
 import { randomBytes } from "node:crypto";
 import {
-  chapterLabel, deviceProfile, isSignsTitle, JIMAKU_SUB, STREAM_SUB, pickAudio, pickSub, trackLabel, WATCHED_SHARE,
+  chapterLabel, deviceProfile, isSignsTitle, JIMAKU_SUB, SIGNS_SUB, STREAM_SUB, pickAudio, pickSub, trackLabel, WATCHED_SHARE,
   type PlayCaps, type PlayInfo, type PlayStatus, type PlaySub, type PlayTrack,
 } from "@/lib/player";
 import { ApiError } from "./route";
@@ -50,6 +50,9 @@ export type PlaySession = {
   duration: number;
   /** Дорожки звука сессии — при перезапуске выбранная ищется заново (внешний файл озвучки сдвигает номера) */
   audio: PlayTrack[];
+  /** Субтитры сессии (надписи из полной дорожки берут исходник отсюда) и файл серии (ключ сохранённого перевода) */
+  subs: PlaySub[];
+  itemKey: string;
   marked: boolean;
   /** Когда последний раз сообщили позицию в Jellyfin */
   jfAt: number;
@@ -135,7 +138,7 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
   sessions.set(sid, {
     sid, userId: user.id, anilistId, ep, itemId: item.itemId, jfOwn: jf === user.jellyfin_id, mediaSourceId: ms.Id, playSessionId, deviceId, hlsPath,
     stream: item.hash && item.index ? { hash: item.hash, index: item.index } : null,
-    duration, audio, marked: false, jfAt: 0, seenAt: Date.now(),
+    duration, audio, subs: [], itemKey: itemKey(item), marked: false, jfAt: 0, seenAt: Date.now(),
   });
 
   const base = `/api/play/${sid}`;
@@ -181,6 +184,18 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
       url: `/api/anime/${anilistId}/subs/${ep}`, ass, forced: false, signs: false, external: true, jimaku: true,
     });
   }
+  // Надписи из полных ASS-дорожек: из русской — как есть, из остальных — с переводом (слой «Надписи поверх»)
+  for (const s of [...subs]) {
+    if (!s.ass || s.signs || s.jimaku) continue;
+    const translate = s.lang !== "rus";
+    subs.push({
+      index: SIGNS_SUB + s.index, lang: "rus", codec: "ass", title: s.title, ass: true, forced: false, signs: true, external: true,
+      label: translate ? `По-русски · из «${s.label}»` : `Из «${s.label}»`, url: `${base}/signs/${s.index}.ass`,
+      fromSub: { index: s.index, translate },
+    });
+  }
+  const live = sessions.get(sid);
+  if (live) live.subs = subs;
   const meta = await chaptersOf(item.itemId, ms.Id);
   const chapters = meta.chapters.filter((c) => c.start < duration);
   const trickplay = meta.trickplay && { ...meta.trickplay, url: `${base}/trickplay/${meta.trickplay.width}` };

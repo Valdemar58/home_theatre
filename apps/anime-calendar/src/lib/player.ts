@@ -2,12 +2,18 @@
 // Поток — Jellyfin (HLS через прокси календаря, ключ Jellyfin в браузер не попадает).
 
 export type PlayTrack = { index: number; label: string; lang: string | null; codec: string; title: string | null; external?: boolean };
-export type PlaySub = PlayTrack & { url: string; ass: boolean; forced: boolean; signs: boolean; external: boolean; jimaku?: boolean; torrent?: boolean };
+export type PlaySub = PlayTrack & {
+  url: string; ass: boolean; forced: boolean; signs: boolean; external: boolean; jimaku?: boolean; torrent?: boolean;
+  /** Надписи, вынутые из полной ASS-дорожки (TASKS 9.5): из какой и нужен ли перевод на русский */
+  fromSub?: { index: number; translate: boolean };
+};
 
 /** Индекс дорожки японских субтитров с Jimaku (не из файла — номера Jellyfin до неё не доходят). */
 export const JIMAKU_SUB = 100_000;
 /** Индексы русских субтитров из раздачи «Стрима» (отдельные файлы раздачи) — с этого номера. */
 export const STREAM_SUB = 200_000;
+/** Надписи из полной дорожки: SIGNS_SUB + номер исходной дорожки. */
+export const SIGNS_SUB = 1_000_000;
 export type PlayChapter = { name: string; start: number };
 
 export type PlayInfo = {

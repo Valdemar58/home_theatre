@@ -23,6 +23,8 @@ const AUTOSKIP_KEY = "player-autoskip";
 const SEG_LABEL = { op: "опенинг", ed: "эндинг" } as const;
 const VOLUME_KEY = "player-volume";
 const SUB_KEY = "player-sub-lang";
+// Слой «Надписи поверх»: off / ru (русские надписи) / translate (по-русски из полной дорожки)
+const SIGNS_KEY = "player-signs";
 // «Авто» — решает сервер: дома исходное, из интернета 6 Мбит/с
 const QUALITIES = [
   { label: "Авто", value: 0 },
@@ -61,6 +63,9 @@ export const clock = (sec: number) => {
 };
 
 /** Управление плеером снаружи (боковая панель страницы): озвучка и субтитры. */
+/** Слой надписей: перевод готовится, показан, в дорожке нет надписей, ошибка. */
+export type SignsState = "loading" | "ready" | "empty" | "error" | null;
+
 export type PlayerControls = {
   setAudio: (index: number) => void;
   /** Озвучка из раздачи «Стрима» отдельным файлом: сервер скачает звук серии и включит его */
@@ -68,6 +73,8 @@ export type PlayerControls = {
   setSub: (index: number | null) => void;
   /** Сдвиг субтитров, с: плюс — позже (тайминг другого релиза) */
   setSubDelay: (sec: number) => void;
+  /** Надписи поверх субтитров (отдельный слой) */
+  setSigns: (index: number | null) => void;
   /** Размер текстовых субтитров, % (ASS рисуется стилями файла) */
   setSubSize: (pct: number) => void;
   reload: () => void;
@@ -93,7 +100,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   autoPlay?: boolean;
   preview?: { still: string | null; heading: string; text: string | null };
   /** Сессия и выбранные субтитры — для боковой панели */
-  onState?: (s: { info: PlayInfo | null; sub: number | null; subs: SubSettings }) => void;
+  onState?: (s: { info: PlayInfo | null; sub: number | null; subs: SubSettings; signs: number | null; signsState: SignsState }) => void;
   controls?: React.MutableRefObject<PlayerControls | null>;
   /** Смотрим в комнате */
   room?: RoomSync | null;
@@ -120,6 +127,10 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   const [idle, setIdle] = useState(false);
   const [menu, setMenu] = useState<"audio" | "sub" | "quality" | null>(null);
   const [sub, setSub] = useState<number | null>(null);
+  // Надписи поверх субтитров — свой JASSUB; из полной дорожки с переводом — сначала ждём сервер
+  const [signs, setSigns] = useState<number | null>(null);
+  const [signsState, setSignsState] = useState<SignsState>(null);
+  const assSigns = useRef<JASSUB | null>(null);
   // Сдвиг — свой у тайтла (релизы разные), размер — общий
   const delayKey = `sub-delay:${anilistId}`;
   const [subDelay, setSubDelay] = useState(() => Number(store.get(delayKey)) || 0);
@@ -342,9 +353,9 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   }, [info, started]);
 
   // Боковая панель страницы: что открыто и чем управлять
-  useEffect(() => { onState?.({ info, sub, subs: { delay: subDelay, size: subSize } }); }, [info, sub, subDelay, subSize, onState]);
+  useEffect(() => { onState?.({ info, sub, subs: { delay: subDelay, size: subSize }, signs, signsState }); }, [info, sub, subDelay, subSize, signs, signsState, onState]);
 
-  useEffect(() => () => { hls.current?.destroy(); ass.current?.destroy(); }, []);
+  useEffect(() => () => { hls.current?.destroy(); ass.current?.destroy(); assSigns.current?.destroy(); }, []);
 
   // Загрузка — по состоянию видео, а не по событиям (Chrome шлёт «playing», пока hls.js ещё не подключил поток):
   // не пауза и нечего показывать — грузится. Сторож: так дольше 20 с — показать состояние и предложить выход
@@ -397,6 +408,54 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sub, info]);
 
+  // Слой надписей — по прошлому выбору, если такая дорожка есть (смена озвучки сохраняет выбранную)
+  useEffect(() => {
+    if (!info) return;
+    setSigns((prev) => {
+      if (prev !== null && info.subs.some((s) => s.index === prev)) return prev;
+      const pref = store.get(SIGNS_KEY);
+      if (pref === "translate") return info.subs.find((s) => s.fromSub?.translate)?.index ?? null;
+      if (pref === "ru") return info.subs.find((s) => s.signs && s.lang === "rus" && !s.fromSub?.translate)?.index ?? null;
+      return null;
+    });
+  }, [info]);
+  useEffect(() => {
+    const v = video.current;
+    assSigns.current?.destroy();
+    assSigns.current = null;
+    setSignsState(null);
+    const s = info?.subs.find((x) => x.index === signs);
+    // Тот же файл, что и основные субтитры, — второй раз не рисуем
+    if (!v || !info || !s?.ass || s.index === sub) return;
+    let alive = true;
+    void (async () => {
+      let content: string | undefined;
+      if (s.fromSub) {
+        // Надписи из полной дорожки собирает сервер (перевод — первый раз до минуты)
+        setSignsState("loading");
+        try {
+          const r = await fetch(s.url);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          content = await r.text();
+          if (r.headers.get("X-Signs-Count") === "0") { if (alive) setSignsState("empty"); return; }
+        } catch {
+          if (alive) setSignsState("error");
+          return;
+        }
+      }
+      const { default: J } = await import("jassub");
+      if (!alive) return;
+      assSigns.current = new J({
+        video: v, ...(content ? { subContent: content } : { subUrl: s.url }), fonts: info.fonts, timeOffset: -subDelay,
+        workerUrl: "/jassub/jassub-worker.js", wasmUrl: "/jassub/jassub-worker.wasm", modernWasmUrl: "/jassub/jassub-worker-modern.wasm",
+        availableFonts: { "liberation sans": "/jassub/default.woff2" }, fallbackFont: "liberation sans",
+      });
+      setSignsState("ready");
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signs, info, sub]);
+
   // Сдвиг субтитров: ASS — timeOffset JASSUB, текстовые — сами реплики (исходное время — в WeakMap)
   const original = useRef(new WeakMap<TextTrackCue, [number, number]>());
   const shiftCues = useCallback(() => {
@@ -410,7 +469,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
     }
   }, [subDelay]);
   useEffect(() => {
-    if (ass.current) (ass.current as unknown as { timeOffset: number }).timeOffset = -subDelay;
+    for (const a of [ass.current, assSigns.current]) if (a) (a as unknown as { timeOffset: number }).timeOffset = -subDelay;
     shiftCues();
   }, [subDelay, shiftCues]);
   const vttSub = info?.subs.find((x) => x.index === sub && !x.ass);
@@ -420,11 +479,17 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
     setSub(s ? s.index : null);
     if (!s || !s.signs) store.set(SUB_KEY, s?.lang ?? "off");
   };
+  const chooseSigns = (index: number | null) => {
+    const s = info?.subs.find((x) => x.index === index);
+    setSigns(s ? s.index : null);
+    store.set(SIGNS_KEY, !s ? "off" : s.fromSub?.translate ? "translate" : "ru");
+  };
   if (controls) {
     controls.current = {
       setAudio: (i) => { if (i !== info?.audioIndex) void open({ audio: i, start: video.current?.currentTime || info?.start || 0 }); },
       setVoice: (group) => void open({ voice: group, start: video.current?.currentTime || info?.start || 0 }),
       setSub: chooseSub,
+      setSigns: chooseSigns,
       setSubDelay: (sec) => { const d = Math.round(sec * 10) / 10; setSubDelay(d); store.set(delayKey, String(d)); },
       setSubSize: (pct) => { setSubSize(pct); store.set("player-sub-size", String(pct)); },
       // Появились новые дорожки (скачали с Jimaku) — та же серия с той же секунды
@@ -670,7 +735,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
           )}
           {info && info.subs.length > 0 && (
             <Menu open={menu === "sub"} onOpen={() => setMenu(menu === "sub" ? null : "sub")} label="Субтитры" icon={<ChatBubbleBottomCenterTextIcon className="h-5 w-5" />}
-              items={[{ key: -1, label: "Выключены", active: sub === null }, ...info.subs.map((s) => ({ key: s.index, label: `${s.label}${s.signs ? " (надписи)" : ""}`, active: s.index === sub }))]}
+              items={[{ key: -1, label: "Выключены", active: sub === null }, ...info.subs.filter((s) => !s.fromSub).map((s) => ({ key: s.index, label: `${s.label}${s.signs ? " (надписи)" : ""}`, active: s.index === sub }))]}
               onPick={(i) => { setMenu(null); chooseSub(i === -1 ? null : Number(i)); }} />
           )}
           <Menu open={menu === "quality"} onOpen={() => setMenu(menu === "quality" ? null : "quality")} label="Качество" icon={<Cog6ToothIcon className="h-5 w-5" />}

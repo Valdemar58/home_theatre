@@ -6,14 +6,14 @@ import type { PlayInfo } from "@/lib/player";
 import type { AnimeDetails } from "@/lib/types";
 import { Button, cx, Spinner } from "../ui";
 import { VoicesButton } from "../VoicesButton";
-import type { PlayerControls, SubSettings } from "./Player";
+import type { PlayerControls, SignsState, SubSettings } from "./Player";
 
 // Боковая панель плеера (как у AniLib): вкладки «Озвучка / Субтитры». Озвучка — дорожки файла, озвучки раздачи
 // «Стрима» отдельными файлами (звук серии качается по выбору) и другие раздачи (окно «Озвучки»: «Смотреть»). Субтитры — дорожки файла, японские с Jimaku
 // (найти, если их нет), сдвиг по времени и размер текста.
 
-export function WatchSidebar({ media, info, sub, subs: settings, controls }: {
-  media: AnimeDetails; info: PlayInfo | null; sub: number | null; subs: SubSettings;
+export function WatchSidebar({ media, info, sub, subs: settings, signs, signsState, controls }: {
+  media: AnimeDetails; info: PlayInfo | null; sub: number | null; subs: SubSettings; signs: number | null; signsState: SignsState;
   controls: React.MutableRefObject<PlayerControls | null>;
 }) {
   const [tab, setTab] = useState<"audio" | "sub">("audio");
@@ -24,7 +24,9 @@ export function WatchSidebar({ media, info, sub, subs: settings, controls }: {
   const missing = info?.extVoices.filter((v) => !v.have) ?? [];
   // Звук скачан, а дорожки нет: Jellyfin помнит старый список файлов папки (до 5 мин без запусков)
   const waiting = info?.extVoices.filter((v) => v.have && !audio.some((a) => a.external && a.title === v.group)) ?? [];
-  const subs = info?.subs ?? [];
+  // Надписи из полных дорожек — только для слоя «Надписи поверх»
+  const subs = (info?.subs ?? []).filter((s) => !s.fromSub);
+  const layers = (info?.subs ?? []).filter((s) => s.ass && (s.signs || s.fromSub));
   return (
     <aside className="flex max-h-[min(36rem,70vh)] flex-col overflow-hidden rounded-xl bg-gray-800/40 ring-1 ring-gray-700">
       <div className="flex border-b border-gray-700">
@@ -89,6 +91,23 @@ export function WatchSidebar({ media, info, sub, subs: settings, controls }: {
               ))}
               {!subs.length && <p className="px-2 pt-1 text-xs text-gray-500">В файле нет субтитров.</p>}
             </div>
+            {layers.length > 0 && (
+              <div className="border-t border-gray-700 pt-3">
+                <p className="px-2 pb-1 text-xs text-gray-500">Надписи поверх субтитров — вывески, записки, титры</p>
+                <Row active={signs === null} onClick={() => controls.current?.setSigns(null)}>Выключены</Row>
+                {layers.map((s) => (
+                  <Row key={s.index} active={s.index === signs} onClick={() => controls.current?.setSigns(s.index)}>
+                    <span className="flex items-center gap-2">
+                      {s.index === signs && signsState === "loading" && <Spinner className="h-3.5 w-3.5" />}
+                      <span className="flex-1">{s.fromSub ? s.label : `${s.label}${s.label.includes("надписи") ? "" : " · надписи"}`}</span>
+                    </span>
+                  </Row>
+                ))}
+                {signsState === "loading" && <p className="px-2 pt-1 text-xs text-gray-400">Собираю надписи{info?.subs.find((s) => s.index === signs)?.fromSub?.translate ? " и перевожу (первый раз — пара минут, дальше сразу)" : ""}…</p>}
+                {signsState === "empty" && <p className="px-2 pt-1 text-xs text-gray-400">В этой дорожке надписей не нашлось.</p>}
+                {signsState === "error" && <p className="px-2 pt-1 text-xs text-negative-300">Не получилось собрать надписи — попробуйте ещё раз.</p>}
+              </div>
+            )}
             {!subs.some((s) => s.jimaku) && <JimakuFind anilistId={media.id} onFound={() => controls.current?.reload()} />}
             <div className="space-y-1.5 border-t border-gray-700 px-2 pt-3">
               <p className="text-xs text-gray-500">Русские субтитры из другой раздачи: в «Озвучках» у раздачи с субтитрами — «Субтитры» (видео не качается).</p>
