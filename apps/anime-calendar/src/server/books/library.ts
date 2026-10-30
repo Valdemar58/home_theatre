@@ -8,6 +8,8 @@ import { mangadex, mdMeta } from "./providers/mangadex";
 import { narouNovel, syosetu } from "./providers/syosetu";
 import type { Content, Hit, Provider } from "./providers/types";
 import { ordered, providerConfig } from "./provider-config";
+import { aiChapter, aiRows } from "./ai-chapters";
+import { parseAiCref } from "@/lib/book-translate";
 import { muFind, muSeries } from "./trackers";
 
 // Книга целиком: сопоставление с провайдерами (book_links), оглавления (book_chapters), сводка глав, выход в
@@ -90,10 +92,11 @@ type ChRow = { provider: string; ref: string; cref: string; edition: Edition; la
 export function chapterRows(bookId: number): ChapterRow[] {
   const off = providerConfig().disabled;
   const links = linksOf(bookId).filter((l) => l.ref && l.how !== "hidden" && !off.includes(l.provider));
-  if (!links.length) return [];
+  if (!links.length) return aiRows(bookId);
   const rows = db.prepare<string[], ChRow>(
     `SELECT * FROM book_chapters WHERE ${links.map(() => "(provider = ? AND ref = ?)").join(" OR ")}`).all(...links.flatMap((l) => [l.provider, l.ref]));
-  return rows.map((r) => ({ provider: r.provider, ref: r.ref, cref: r.cref, edition: r.edition, lang: r.lang, team: r.team, vol: r.vol, num: r.num, numText: r.num_text, title: r.title, date: r.date }));
+  return [...rows.map((r) => ({ provider: r.provider, ref: r.ref, cref: r.cref, edition: r.edition, lang: r.lang, team: r.team, vol: r.vol, num: r.num, numText: r.num_text, title: r.title, date: r.date })),
+    ...aiRows(bookId)];
 }
 
 // Обновления книги в фоне: одна на книгу за раз
@@ -180,6 +183,12 @@ export async function providerSearch(bookId: number, provider: string, query?: s
 
 /** Глава для ридера: сохранённая или с провайдера (только из привязанных книг). Текст и страницы — без срока. */
 export async function chapterContent(bookId: number, provider: string, cref: string): Promise<Content> {
+  if (provider === "ai") {
+    const { edition, key } = parseAiCref(cref);
+    const k = aiChapter(bookId, edition as Edition, key);
+    if (!k) throw new Error("Перевода ИИ этой главы нет");
+    return { kind: "text", blocks: k.value.blocks };
+  }
   const ch = db.prepare<[string, string], { ref: string }>("SELECT ref FROM book_chapters WHERE provider = ? AND cref = ?").get(provider, cref);
   const link = ch && linksOf(bookId).find((l) => l.provider === provider && l.ref === ch.ref && l.how !== "hidden");
   if (!ch || !link) throw new Error("Этой главы нет у книги");

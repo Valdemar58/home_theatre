@@ -14,7 +14,7 @@ import { Badge, Button, cx, ErrorBox, Modal, Skel, Spinner } from "../ui";
 // Страница книги (манга, манхва, ранобэ): что вышло в оригинале и в переводах, каких глав нет на русском, оглавление
 // с выбором перевода, провайдеры (что нашлось и где; не та книга — привязать вручную), связи с аниме.
 
-const PROVIDER_NAMES: Record<string, string> = { ranobelib: "RanobeLib", mangalib: "MangaLib", mangadex: "MangaDex", syosetu: "Syosetu" };
+const PROVIDER_NAMES: Record<string, string> = { ranobelib: "RanobeLib", mangalib: "MangaLib", mangadex: "MangaDex", syosetu: "Syosetu", ai: "" };
 export const providerName = (id: string) => PROVIDER_NAMES[id] ?? id;
 
 /** Ссылка на ридер главы. */

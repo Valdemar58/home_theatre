@@ -1008,6 +1008,19 @@ function migrateBooks(db: Db) {
     title TEXT,
     collected_at INTEGER
   )`);
+  // Главы, переведённые ИИ (TASKS 5.7): сам перевод — в llm_output (book_translate), здесь — для оглавления
+  db.exec(`CREATE TABLE IF NOT EXISTS book_ai (
+    book_id INTEGER NOT NULL,
+    edition TEXT NOT NULL,
+    chapter_key TEXT NOT NULL,
+    vol INTEGER,
+    num REAL,
+    num_text TEXT NOT NULL,
+    title TEXT,
+    model TEXT,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (book_id, edition, chapter_key)
+  )`);
   // Уведомления о главах: сколько глав было на каждом языке при прошлой проверке
   db.exec(`CREATE TABLE IF NOT EXISTS chapter_marks (
     user_id INTEGER NOT NULL,

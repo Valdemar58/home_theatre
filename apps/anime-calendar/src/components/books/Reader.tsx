@@ -1,10 +1,11 @@
 "use client";
 import { AdjustmentsHorizontalIcon, ArrowLeftIcon, ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
-import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { chapterName, pickTranslation, translationLabel, translationsOf, type ChapterContentView, type Edition } from "@/lib/books";
+import { aiCref } from "@/lib/book-translate";
+import { chapterName, pickTranslation, translationLabel, translationsOf, type ChapterContentView, type ChapterSummary, type Edition } from "@/lib/books";
 import { api, useBook, useBookChapter, useBookProgress } from "@/lib/client";
 import { Button, cx, ErrorBox, Skel, Spinner } from "../ui";
 import { providerName, readHref } from "./BookView";
@@ -146,12 +147,65 @@ export function Reader({ id }: { id: number }) {
       {!pages && <article className="mx-auto px-4 pb-10 pt-6" style={{ maxWidth: `${settings.width}rem`, fontSize: settings.size, lineHeight: settings.leading,
         fontFamily: settings.serif ? "Georgia, 'PT Serif', 'Times New Roman', serif" : "inherit" }}>
         <h1 className="mb-6 text-center font-bold" style={{ fontSize: "1.25em" }}>{title}</h1>
+        {chapter && (!chapter.langs.ru || provider === "ai") && (chapter.langs.orig || chapter.langs.en) && page?.book.kind === "novel" && (
+          <AiBar bookId={id} edition={edition} chapter={chapter} current={provider} ahead={progress?.pref.aiAhead ?? 0} dim={theme.dim}
+            onReady={() => { void qc.invalidateQueries({ queryKey: ["book", id] }).then(() => router.replace(readHref(id, edition, chapter, { provider: "ai", cref: aiCref(edition, chapter.key) }))); }} />
+        )}
         {isLoading && <div className="space-y-3"><Skel className="h-4 w-full" /><Skel className="h-4 w-11/12" /><Skel className="h-4 w-10/12" /></div>}
         {error ? <ErrorBox error={error} /> : null}
         {content && <Body content={content} restore={saved && !saved.done ? saved.pos : 0} onPos={(i) => { pos.current = i; }}
           onEnd={finish} dim={theme.dim} />}
         <ChapterNav prev={prev} next={next} id={id} />
       </article>}
+    </div>
+  );
+}
+
+/**
+ * Перевод ИИ (TASKS 5.7): у главы без русского — «Перевести ИИ» (и вперёд на N глав, запоминается у книги);
+ * пока переводится — состояние раз в 3 с, готово — открыть перевод. Читаешь перевод ИИ — пометка об этом.
+ */
+function AiBar({ bookId, edition, chapter, current, ahead, dim, onReady }: {
+  bookId: number; edition: Edition; chapter: ChapterSummary; current: string | null; ahead: number; dim: string; onReady: () => void;
+}) {
+  const qc = useQueryClient();
+  const [n, setN] = useState(ahead);
+  useEffect(() => setN(ahead), [ahead]);
+  const key = ["book-ai", bookId, edition, chapter.key];
+  const { data } = useQuery({
+    queryKey: key, queryFn: () => api<{ done: boolean; task: { status: string; error: string | null } | null }>(`/api/books/${bookId}/translate?edition=${edition}&key=${encodeURIComponent(chapter.key)}`),
+    refetchInterval: (q) => (q.state.data?.task && ["queued", "running"].includes(q.state.data.task.status) ? 3000 : false),
+  });
+  const busy = data?.task && ["queued", "running"].includes(data.task.status);
+  const was = useRef(false);
+  useEffect(() => {
+    if (was.current && !busy && data?.done && current !== "ai") onReady();
+    was.current = Boolean(busy);
+  }, [busy, data?.done, current, onReady]);
+  const start = async () => {
+    await api(`/api/books/${bookId}/translate`, { method: "POST", json: { edition, key: chapter.key, ahead: n } });
+    await qc.invalidateQueries({ queryKey: key });
+    await qc.invalidateQueries({ queryKey: ["book-progress", bookId] });
+  };
+  const box = "mb-6 flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-sm";
+  const style = { borderColor: `${dim}50`, color: dim, fontFamily: "system-ui, sans-serif" };
+  if (current === "ai") return <div className={box} style={style}>Перевод ИИ по глоссарию франшизы — имена и термины можно поправить в глоссарии книги.</div>;
+  return (
+    <div className={box} style={style}>
+      <span className="mr-auto">{data?.done ? "Есть перевод ИИ этой главы." : "Русского перевода этой главы нет."}</span>
+      {data?.done ? <Button size="sm" variant="primary" onClick={onReady}>Читать перевод ИИ</Button> : busy ? (
+        <span className="flex items-center gap-2"><Spinner className="h-4 w-4" />{data!.task!.status === "queued" ? "В очереди на перевод…" : "Перевожу…"}</span>
+      ) : (
+        <>
+          <label className="flex items-center gap-1.5">и вперёд на
+            <select value={n} onChange={(e) => setN(Number(e.target.value))} className="rounded border bg-transparent px-1 py-0.5" style={{ borderColor: `${dim}60` }}>
+              {[0, 3, 5, 10].map((x) => <option key={x} value={x} style={{ color: "#111" }}>{x}</option>)}
+            </select> гл.
+          </label>
+          <Button size="sm" variant="primary" onClick={() => void start()}>Перевести ИИ</Button>
+        </>
+      )}
+      {data?.task?.status === "error" && <span className="w-full text-xs text-negative-300">Не вышло: {data.task.error}</span>}
     </div>
   );
 }

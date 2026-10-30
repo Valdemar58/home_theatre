@@ -10,6 +10,7 @@ import { cleanupStreams } from "./stream";
 import { syncAll } from "./sync";
 import { syncAllLib } from "./anilib";
 import { cleanupImages } from "./img-cache";
+import "./books/book-translate"; // обработчик задачи «перевод главы»
 import { checkNewChapters } from "./books/chapter-notices";
 import { cleanupPages } from "./books/pages-cache";
 import { maybeRebuildAtlas } from "./reco/atlas";

@@ -237,7 +237,7 @@ export type BookHit = { provider: string; ref: string; title: string; titles: st
 export type ReadPosView = { chapter: string; edition: Edition; provider: string; cref: string; pos: number; done: boolean; updatedAt: number };
 export type BookProgress = {
   positions: ReadPosView[];
-  pref: { provider?: string; team?: string | null; lang?: string; edition?: Edition };
+  pref: { provider?: string; team?: string | null; lang?: string; edition?: Edition; aiAhead?: number };
   entry: { status: string; chapters: number; score: number } | null;
 };
 
@@ -341,13 +341,13 @@ export function translationsOf(c: ChapterSummary): ChapterTranslation[] {
 
 /**
  * Перевод главы для чтения: выбранный у книги (тот же провайдер и команда), иначе тот же провайдер, иначе русский,
- * английский, оригинал.
+ * перевод ИИ, английский, оригинал.
  */
 export function pickTranslation(c: ChapterSummary, pref: { provider?: string; team?: string | null } = {}): ChapterTranslation | null {
   const all = translationsOf(c);
   return all.find((t) => t.provider === pref.provider && t.team === pref.team)
     ?? all.find((t) => t.provider === pref.provider)
-    ?? c.langs.ru?.[0] ?? c.langs.en?.[0] ?? c.langs.orig?.[0] ?? all[0] ?? null;
+    ?? c.langs.ru?.[0] ?? c.langs.ai?.[0] ?? c.langs.en?.[0] ?? c.langs.orig?.[0] ?? all[0] ?? null;
 }
 
 /** Подпись перевода в переключателе: «Русский · RanobeLib · Команда». */

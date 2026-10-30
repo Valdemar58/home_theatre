@@ -25,15 +25,10 @@ const toNovel = (n: RawNovel): NarouNovel => ({
 
 const API = "https://api.syosetu.com/novelapi/api/?out=json&of=n-t-w-ga-e-nu-s";
 
-/** Поиск по названию (только в заголовках), самые читаемые первыми. */
+/** Поиск по названию (только в заголовках): по общим очкам (order=hyper) — старые знаменитые романы тоже первыми. */
 function narouSearch(word: string): Promise<NarouNovel[]> {
-  return cached(`narou-search:${word}`, { fresh: 86400, source: "syosetu" }, async () => {
-    const res = await get(`${API}&lim=10&title=1&order=hyperhyperhyperhyperhyper&word=${encodeURIComponent(word)}`, "Syosetu");
-    const [, ...rows] = (await res.json()) as [{ allcount: number }, ...RawNovel[]];
-    return rows.map(toNovel);
-  }).catch(async () => {
-    // Порядок «hyper…» API иногда не принимает — без сортировки
-    const res = await get(`${API}&lim=10&title=1&word=${encodeURIComponent(word)}`, "Syosetu");
+  return cached(`narou-search:v2:${word}`, { fresh: 86400, source: "syosetu" }, async () => {
+    const res = await get(`${API}&lim=20&title=1&order=hyper&word=${encodeURIComponent(word)}`, "Syosetu");
     const [, ...rows] = (await res.json()) as [{ allcount: number }, ...RawNovel[]];
     return rows.map(toNovel);
   });
@@ -78,6 +73,14 @@ export const syosetu: Provider = {
   ping: async () => { await get(`${API}&lim=1`, "Syosetu"); },
 
   async search(book, query) {
+    // Код или адрес Syosetu (n9669bk, ncode.syosetu.com/n9669bk/) — напрямую: автор может исключить роман из поиска
+    const code = query?.match(/(n\d{4}[a-z]{1,3})/i)?.[1]?.toLowerCase();
+    if (code) {
+      const n = await narouNovel(code);
+      if (!n) return [];
+      return [{ provider: "syosetu", ref: n.ncode, title: n.title, titles: [n.title], year: null, cover: null,
+        url: `https://ncode.syosetu.com/${n.ncode}/`, edition: "web", note: `${n.writer} · ${n.chapters} гл. · ${n.ended ? "закончена" : "выходит"}` }];
+    }
     // Веб-новеллы — японские: ищем по родному названию (без подзаголовка в скобках — у Syosetu он часто другой)
     const words = query ? [query] : [book.title.native, ...book.synonyms.filter((s) => /[぀-ヿ一-鿿]/.test(s))]
       .filter((x): x is string => Boolean(x)).map((t) => t.replace(/[～〜~(（【-].*$/, "").trim()).filter((t) => t.length >= 2);

@@ -1,7 +1,7 @@
 // Задачи LLM и настройки маршрутизации — общие для сервера и карточки «ИИ» в настройках.
 import type { Price } from "./llm-pricing";
 
-export const LLM_TASKS = ["analysis", "synopsis", "recap", "portrait", "rerank", "tags", "cluster", "plot_deep", "translate", "sdh", "plot_graph", "look", "signs", "frame"] as const;
+export const LLM_TASKS = ["analysis", "synopsis", "recap", "portrait", "rerank", "tags", "cluster", "plot_deep", "translate", "sdh", "plot_graph", "look", "signs", "frame", "book_translate"] as const;
 export type LlmTask = (typeof LLM_TASKS)[number];
 
 /** Куда идёт задача: локальная модель, дешёвая или умная внешняя. */
@@ -23,6 +23,7 @@ export const TASK_LABELS: Record<LlmTask, { title: string; hint: string }> = {
   look: { title: "Облик на портрете", hint: "только локально (нужно зрение): какой облик персонажа на картинке — чтобы не показать его раньше серии" },
   translate: { title: "Перевод пересказов серий", hint: "по кнопке у серии, один раз на текст; Fandom — до 17 тыс. символов на серию" },
   frame: { title: "Перевести кадр", hint: "только локально (нужно зрение): в плеере на паузе — надписи в кадре, перевод и где они" },
+  book_translate: { title: "Перевод глав ранобэ", hint: "по кнопке в ридере или вперёд по мере чтения: глава без русского перевода — с японского оригинала или английского, по глоссарию франшизы" },
   signs: { title: "Перевод надписей", hint: "в плеере по выбору «Надписи по-русски»: вывески и титры из английской или японской дорожки, один раз на дорожку" },
 };
 

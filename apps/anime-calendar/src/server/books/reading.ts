@@ -7,7 +7,9 @@ import { scheduleReadPush } from "../sync";
 
 export type ReadPos = { chapter: string; edition: Edition; provider: string; cref: string; pos: number; done: boolean; updatedAt: number };
 /** Выбранный перевод книги: провайдер и команда (переключатель в ридере), шрифт и тема — у браузера */
-export type BookPref = { provider?: string; team?: string | null; lang?: string; edition?: Edition };
+export type BookPref = { provider?: string; team?: string | null; lang?: string; edition?: Edition;
+  /** Переводить ИИ вперёд: столько следующих глав без русского перевода (TASKS 5.7) */
+  aiAhead?: number };
 
 export function readPositions(userId: number, bookId: number): ReadPos[] {
   return db.prepare<[number, number], { chapter: string; edition: Edition; provider: string; cref: string; pos: number; done: number; updated_at: number }>(
