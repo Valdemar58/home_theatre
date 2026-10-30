@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { franchiseItems, franchiseProgress, franchiseRoot, nextUp, type EntryLite, type FranchiseNode } from "./franchise";
+import { bookSeeds, franchiseBooks, franchiseBranches, franchiseItems, franchiseProgress, franchiseRoot, nextUp, type EntryLite, type FranchiseNode } from "./franchise";
 import type { MediaLite } from "./types";
 
 const media = (id: number, format: string, year: number, month = 1, extra: Partial<MediaLite> = {}): MediaLite => ({
@@ -81,5 +81,36 @@ describe("nextUp и прогресс", () => {
     const e = new Map<number, EntryLite>([[1, { status: "completed", episodes: 0 }], [2, { status: "watching", episodes: 5 }]]);
     // 1, 2, 3, 4, 5, 9 — по 12 серий; спин-оффы и пересказ не считаются
     expect(franchiseProgress(items, e)).toEqual({ watched: 17, total: 72 });
+  });
+});
+
+describe("книги франшизы", () => {
+  // Ранобэ 101 — первоисточник S1; манга 102 — адаптация ранобэ; 103 — спин-офф манги «Дневники», по нему — аниме 6;
+  // 104 — сайд-стори ранобэ; 105 — книга не загружена (связей нет); 106 — связь «персонаж там же»
+  function books(): Map<number, FranchiseNode> {
+    const n = new Map<number, FranchiseNode>();
+    const add = (m: MediaLite, rel: [string, number][] | null) => n.set(m.id, { media: m, rel: rel && rel.map(([type, id]) => ({ type, id })) });
+    add(media(101, "NOVEL", 2014), [["ADAPTATION", 102], ["SIDE_STORY", 104], ["ADAPTATION", 1], ["CHARACTER", 106]]);
+    add(media(102, "MANGA", 2015), [["SOURCE", 101], ["SPIN_OFF", 103], ["SEQUEL", 105]]);
+    add(media(103, "MANGA", 2016), [["PARENT", 102], ["ADAPTATION", 6]]);
+    add(media(104, "NOVEL", 2017), [["PARENT", 101]]);
+    add(media(105, "MANGA", 2020), null);
+    add(media(106, "MANGA", 2019), []);
+    return n;
+  }
+  const anime = franchiseItems(1, slime());
+  const links = new Map([[1, [{ type: "SOURCE", id: 101 }, { type: "CHARACTER", id: 106 }]], [6, [{ type: "SOURCE", id: 103 }]]]);
+
+  it("первоисточник основной истории — основная, спин-офф аниме — спин-офф", () => {
+    expect([...bookSeeds(anime, links)]).toEqual([[101, "main"], [103, "spinoff"]]);
+  });
+  it("адаптации и продолжения — та же история, ответвления — по связи", () => {
+    const b = franchiseBooks(bookSeeds(anime, links), books());
+    expect(b.map((i) => [i.media.id, i.kind])).toEqual([[101, "main"], [102, "main"], [103, "spinoff"], [104, "side"], [105, "main"]]);
+  });
+  it("ответвления группами: аниме и манга одного спин-оффа вместе", () => {
+    const b = franchiseBooks(bookSeeds(anime, links), books());
+    const g = franchiseBranches([...anime, ...b], [[103, 6], [6, 10], [1, 7]]);
+    expect(g).toEqual([{ kind: "spinoff", ids: [103, 6, 10] }, { kind: "recap", ids: [7] }]);
   });
 });

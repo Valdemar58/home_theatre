@@ -34,6 +34,7 @@ import { api, useMe } from "@/lib/client";
 import { SIDEBAR_COOKIE, type SidebarMode } from "@/lib/sidebar";
 import { Avatar } from "./Avatar";
 import { HoverCardHost } from "./HoverCard";
+import { ModeProvider, ModeSwitch } from "./Mode";
 import { Notifications } from "./Notifications";
 import { SearchBox } from "./SearchBox";
 import { useGroupInvites } from "./SharedListsView";
@@ -152,6 +153,7 @@ export function AppShell({ userName, sidebar = "auto", children }: { userName: s
   };
 
   return (
+    <ModeProvider>
     <div className="min-h-screen">
       {/* Боковая панель (десктоп) */}
       <aside onMouseEnter={bar.enter} onMouseLeave={bar.leave}
@@ -245,6 +247,7 @@ export function AppShell({ userName, sidebar = "auto", children }: { userName: s
           <div className="md:hidden">
             <Logo compact />
           </div>
+          <ModeSwitch className="hidden md:flex" />
           <SearchBox />
           <div className="shrink-0 md:ml-auto"><Notifications /></div>
           <Link href="/manga" className="rounded-md p-2 text-gray-400 hover:bg-gray-800 hover:text-white md:hidden" aria-label="Читать">
@@ -263,7 +266,9 @@ export function AppShell({ userName, sidebar = "auto", children }: { userName: s
           </Link>
         </header>
 
-        <main className="px-4 pb-24 pt-6 md:pb-10 lg:px-8"><StaleBanner /><HoverCardHost>{children}</HoverCardHost></main>
+        {/* На телефоне режимы — отдельной строкой под шапкой */}
+        <div className="px-4 pt-3 md:hidden"><ModeSwitch wide /></div>
+        <main className="px-4 pb-24 pt-4 md:pb-10 md:pt-6 lg:px-8"><StaleBanner /><HoverCardHost>{children}</HoverCardHost></main>
       </div>
 
       {/* Нижняя навигация (мобильные) */}
@@ -277,5 +282,6 @@ export function AppShell({ userName, sidebar = "auto", children }: { userName: s
         ))}
       </nav>
     </div>
+    </ModeProvider>
   );
 }

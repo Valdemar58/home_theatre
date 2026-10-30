@@ -9,6 +9,7 @@ import {
 } from "@/lib/books";
 import { api, useBook, useBookProgress } from "@/lib/client";
 import { Img } from "../Img";
+import { useDeclareMode } from "../Mode";
 import { Badge, Button, cx, ErrorBox, Modal, Skel, Spinner } from "../ui";
 
 // Страница книги (манга, манхва, ранобэ): что вышло в оригинале и в переводах, каких глав нет на русском, оглавление
@@ -26,6 +27,7 @@ const stripHtml = (s: string) => s.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+
 export function BookView({ id }: { id: number }) {
   const { data, error, isLoading } = useBook(id);
   const { data: progress } = useBookProgress(id);
+  useDeclareMode(data ? (data.book.kind === "novel" ? "novel" : "manga") : null);
   if (isLoading) return <div className="mx-auto max-w-6xl space-y-4"><Skel className="h-56 w-full" /><Skel className="h-40 w-full" /></div>;
   if (error || !data) return <ErrorBox error={error ?? "Книга не найдена"} />;
   return <Loaded page={data} progress={progress ?? null} />;

@@ -2,23 +2,29 @@
 import { MagnifyingGlassIcon } from "@heroicons/react/24/outline";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { KIND_LABELS, READ_LABELS, type BookLite } from "@/lib/books";
 import { api, useReadList, type ReadListItem } from "@/lib/client";
 import { Img } from "../Img";
-import { Button, Chip, EmptyState, ErrorBox, Skel, Spinner } from "../ui";
+import { bookMode, useDeclareMode } from "../Mode";
+import { Button, EmptyState, ErrorBox, Skel, Spinner } from "../ui";
 
-// Раздел «Читать»: поиск книг (по-русски — через Shikimori), свой список чтения по статусам, импорт закладок Lib.
+// Раздел книг: поиск (по-русски — через Shikimori), свой список чтения по статусам, импорт закладок Lib. Манга или
+// ранобэ — по режиму в шапке (?kind=).
 
-type Kind = "all" | "manga" | "novel";
-const KINDS: { id: Kind; label: string }[] = [{ id: "all", label: "Всё" }, { id: "novel", label: "Ранобэ" }, { id: "manga", label: "Манга и манхва" }];
+type Kind = "manga" | "novel";
 
 const bookName = (b: BookLite) => b.title.ru || b.title.romaji || b.title.english || String(b.id);
 
 export function BooksHome() {
   const [q, setQ] = useState("");
   const [query, setQuery] = useState("");
-  const [kind, setKind] = useState<Kind>("all");
+  const param = useSearchParams().get("kind");
+  const [stored, setStored] = useState<Kind>("manga");
+  useEffect(() => setStored(bookMode() === "novel" ? "novel" : "manga"), []);
+  const kind: Kind = param === "novel" || param === "manga" ? param : stored;
+  useDeclareMode(kind);
   useEffect(() => {
     const t = setTimeout(() => setQuery(q.trim()), 400);
     return () => clearTimeout(t);
@@ -28,18 +34,18 @@ export function BooksHome() {
     queryFn: () => api<{ books: BookLite[] }>(`/api/books/search?q=${encodeURIComponent(query)}&kind=${kind}`),
   });
   const { data: list, isLoading } = useReadList();
+  const mine = (list?.items ?? []).filter((i) => (i.book.kind === "novel") === (kind === "novel"));
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <div className="space-y-3">
-        <h1 className="text-2xl font-bold">Читать</h1>
+        <h1 className="text-2xl font-bold">{kind === "novel" ? "Ранобэ" : "Манга"}</h1>
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex min-w-64 flex-1 items-center gap-2 rounded-lg bg-gray-800/70 px-3 ring-1 ring-gray-700 focus-within:ring-accent-500">
             <MagnifyingGlassIcon className="h-5 w-5 text-gray-500" />
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Манга, манхва, ранобэ — по-русски или в оригинале"
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={kind === "novel" ? "Ранобэ — по-русски или в оригинале" : "Манга, манхва, маньхуа — по-русски или в оригинале"}
               className="h-10 w-full bg-transparent text-sm outline-none placeholder:text-gray-500" />
           </label>
-          {KINDS.map((k) => <Chip key={k.id} active={kind === k.id} onClick={() => setKind(k.id)}>{k.label}</Chip>)}
         </div>
       </div>
 
@@ -57,10 +63,10 @@ export function BooksHome() {
           <h2 className="text-lg font-bold">Мой список</h2>
           <LibImport />
         </div>
-        {isLoading ? <Skel className="h-40 w-full" /> : !list?.items.length ? (
+        {isLoading ? <Skel className="h-40 w-full" /> : !mine.length ? (
           <EmptyState title="Список чтения пуст">Найдите книгу выше и добавьте её — или просто начните читать: прочитанная глава сама добавит книгу в «Читаю».</EmptyState>
         ) : Object.keys(READ_LABELS).map((status) => {
-          const items = list.items.filter((i) => i.status === status);
+          const items = mine.filter((i) => i.status === status);
           return items.length ? <ListGroup key={status} label={READ_LABELS[status]} items={items} /> : null;
         })}
       </section>

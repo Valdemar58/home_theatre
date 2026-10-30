@@ -619,11 +619,18 @@ export type PlotEditor = {
   edits: { id: number; kind: import("./plot-edits").EditKind; anilistId: number; fromEp: number; author: string; at: number; undone: boolean; text: string }[];
 };
 
-/** Страница франшизы (IDEAS #80): тайтлы в порядке выхода, мой прогресс, арки сюжета на мой прогресс. */
+/** Страница франшизы (IDEAS #80, TASKS 5.10): все формы в порядке выхода, мой прогресс, арки сюжета на мой прогресс. */
 export type FranchiseView = {
   root: number;
-  /** Сезон основной истории, состав которого показываем (где я сейчас) */
-  castTitle: number;
+  /** Название франшизы — по корню (первый сезон или корневая книга) */
+  title: MediaLite["title"];
+  /** Что это и о чём: составлено ИИ, иначе описание первоисточника или первого сезона */
+  about: { text: string; by: "ai" | "book" | "anime" } | null;
+  /** Первоисточник среди книг франшизы */
+  sourceBook: number | null;
+  banner: string | null;
+  /** Сезон основной истории, состав которого показываем (где я сейчас); null — у франшизы нет аниме */
+  castTitle: number | null;
   /** Что смотреть дальше */
   next: number | null;
   /** Часть страниц тайтлов ещё догружается архивом */
@@ -636,6 +643,18 @@ export type FranchiseView = {
     /** Разбор серий: арки на мой прогресс; null — разбора нет */
     plot: { ep: number; events: number; ahead: number; arcs: { name: string; fromEp: number | null; events: number }[] } | null;
   }[];
+  /** Манга и ранобэ франшизы: вид, мой прогресс, сколько глав на русском и всего известно */
+  books: {
+    book: import("./books").BookLite;
+    kind: import("./franchise").FranchiseKind;
+    entry: { status: string; chapters: number } | null;
+    ru: { count: number; last: string | null } | null;
+    known: number | null;
+  }[];
+  /** Спин-оффы, альтернативы, пересказы — группами по всем формам (id аниме и книг по выходу) */
+  branches: { kind: import("./franchise").FranchiseKind; ids: number[] }[];
+  /** Кроссоверы и другие франшизы в них */
+  crossovers: { media: MediaLite; others: { id: number; title: MediaLite["title"] }[] }[];
 };
 
 export type TitleCast = {

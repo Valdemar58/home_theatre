@@ -74,9 +74,83 @@ export function franchiseItems(root: number, nodes: Map<number, FranchiseNode>):
   kind.set(root, "main");
   walk([root], CHAIN);
   walk([...kind.keys()], null);
-  const order: Record<FranchiseKind, number> = { main: 0, side: 1, recap: 2, spinoff: 3, alt: 4 };
-  return [...kind].map(([id, k]) => ({ media: nodes.get(id)!.media, kind: k }))
-    .sort((a, b) => startKey(a.media.startDate) - startKey(b.media.startDate) || order[a.kind] - order[b.kind] || a.media.id - b.media.id);
+  return byRelease([...kind].map(([id, k]) => ({ media: nodes.get(id)!.media, kind: k })));
+}
+
+const ORDER: Record<FranchiseKind, number> = { main: 0, side: 1, recap: 2, spinoff: 3, alt: 4 };
+const byRelease = (items: FranchiseItem[]) =>
+  items.sort((a, b) => startKey(a.media.startDate) - startKey(b.media.startDate) || ORDER[a.kind] - ORDER[b.kind] || a.media.id - b.media.id);
+
+// ---------------------------------------------------------------- формы: аниме, манга, ранобэ (TASKS 5.10)
+
+export type FranchiseForm = "anime" | "manga" | "novel";
+export const FORM_LABELS: Record<FranchiseForm, string> = { anime: "Аниме", manga: "Манга", novel: "Ранобэ" };
+
+// Насколько вид «главнее»: книга, связанная и с сезоном, и со спин-оффом, — основная история
+const RANK: Record<FranchiseKind, number> = { main: 0, side: 1, spinoff: 2, alt: 3, recap: 4 };
+
+/** Вид книги по связи с тайтлом известного вида: первоисточник и адаптация — та же история (null — не сюжетная связь). */
+function bookKindOf(from: FranchiseKind, type: string): FranchiseKind | null {
+  if (type === "ADAPTATION" || type === "SOURCE") return from;
+  return STORY.has(type) ? kindOf(from, type) : null;
+}
+
+/** Книги, связанные с аниме франшизы, и их вид: первоисточник сезона основной истории — основная история. */
+export function bookSeeds(anime: FranchiseItem[], links: Map<number, { type: string; id: number }[]>): Map<number, FranchiseKind> {
+  const out = new Map<number, FranchiseKind>();
+  for (const a of anime) {
+    for (const l of links.get(a.media.id) ?? []) {
+      const k = bookKindOf(a.kind, l.type);
+      const cur = out.get(l.id);
+      if (k && (!cur || RANK[k] < RANK[cur])) out.set(l.id, k);
+    }
+  }
+  return out;
+}
+
+/**
+ * Книги франшизы с видом, в порядке выхода: от известных (связанных с аниме или корня) — по связям книг между
+ * собой; манга по ранобэ — та же история. Книга, страница которой не загружена (rel: null), дальше не ведёт.
+ */
+export function franchiseBooks(seeds: Map<number, FranchiseKind>, nodes: Map<number, FranchiseNode>, limit = 40): FranchiseItem[] {
+  const kind = new Map<number, FranchiseKind>();
+  const queue = [...seeds].filter(([id]) => nodes.has(id)).sort((a, b) => RANK[a[1]] - RANK[b[1]]).map(([id, k]) => (kind.set(id, k), id));
+  while (queue.length && kind.size < limit) {
+    const id = queue.shift()!;
+    for (const r of nodes.get(id)?.rel ?? []) {
+      if (kind.has(r.id) || !nodes.has(r.id)) continue;
+      const k = bookKindOf(kind.get(id)!, r.type);
+      if (!k) continue;
+      kind.set(r.id, k);
+      queue.push(r.id);
+    }
+  }
+  return byRelease([...kind].map(([id, k]) => ({ media: nodes.get(id)!.media, kind: k })));
+}
+
+/**
+ * Ответвления франшизы (спин-оффы, альтернативы, пересказы) — группами: аниме и книга одного спин-оффа, его
+ * продолжения — одна группа. links — пары связанных тайтлов (любые сюжетные связи и адаптации). Группы — по выходу.
+ */
+export function franchiseBranches(items: FranchiseItem[], links: [number, number][]): { kind: FranchiseKind; ids: number[] }[] {
+  const branch = items.filter((i) => i.kind !== "main" && i.kind !== "side");
+  const parent = new Map(branch.map((i) => [i.media.id, i.media.id]));
+  const find = (x: number): number => {
+    let r = x;
+    while (parent.get(r) !== r) r = parent.get(r)!;
+    parent.set(x, r);
+    return r;
+  };
+  for (const [a, b] of links) if (parent.has(a) && parent.has(b)) parent.set(find(a), find(b));
+  const groups = new Map<number, FranchiseItem[]>();
+  for (const i of byRelease([...branch])) {
+    const r = find(i.media.id);
+    groups.set(r, [...(groups.get(r) ?? []), i]);
+  }
+  return [...groups.values()].map((g) => ({
+    kind: g.reduce((k, i) => (RANK[i.kind] < RANK[k] ? i.kind : k), g[0].kind),
+    ids: g.map((i) => i.media.id),
+  }));
 }
 
 export type EntryLite = { status: ListStatus; episodes: number };
