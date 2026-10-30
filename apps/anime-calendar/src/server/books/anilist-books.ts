@@ -141,3 +141,43 @@ export function booksForAnime(animeId: number): Promise<AnimeBook[]> {
     }));
   });
 }
+
+// ---------------------------------------------------------------- каталог (TASKS 5.10)
+
+export type BookBrowse = {
+  kind: "manga" | "novel";
+  /** Вид манги: манга (Япония), манхва, маньхуа, ваншот */
+  sub?: "manga" | "manhwa" | "manhua" | "oneshot";
+  sort: "popular" | "score" | "trending" | "new";
+  status?: "RELEASING" | "FINISHED";
+  genres: string[];
+  page: number;
+};
+
+const BROWSE_QUERY = `
+query ($page: Int, $format: [MediaFormat], $country: CountryCode, $status: MediaStatus, $genres: [String], $sort: [MediaSort]) {
+  Page(page: $page, perPage: 30) {
+    pageInfo { hasNextPage }
+    media(type: MANGA, format_in: $format, countryOfOrigin: $country, status: $status, genre_in: $genres, sort: $sort, isAdult: false) { ${LITE_FIELDS} }
+  }
+}`;
+const SORTS: Record<BookBrowse["sort"], string[]> = {
+  popular: ["POPULARITY_DESC"], score: ["SCORE_DESC", "POPULARITY_DESC"], trending: ["TRENDING_DESC", "POPULARITY_DESC"], new: ["START_DATE_DESC"],
+};
+const SUB: Record<NonNullable<BookBrowse["sub"]>, { format: string[]; country?: string }> = {
+  manga: { format: ["MANGA"], country: "JP" }, manhwa: { format: ["MANGA"], country: "KR" }, manhua: { format: ["MANGA"], country: "CN" }, oneshot: { format: ["ONE_SHOT"] },
+};
+
+/** Каталог книг AniList: вид, сортировка, статус, жанры; русские названия — Shikimori. */
+export function browseBooks(f: BookBrowse): Promise<{ books: BookLite[]; more: boolean }> {
+  const key = `book-browse:${JSON.stringify([f.kind, f.sub ?? "", f.sort, f.status ?? "", [...f.genres].sort(), f.page])}`;
+  return cached(key, { fresh: 6 * 3600, source: "anilist" }, async () => {
+    const sub = f.kind === "manga" && f.sub ? SUB[f.sub] : null;
+    const d = await gql<{ Page: { pageInfo: { hasNextPage: boolean }; media: RawLite[] } }>(BROWSE_QUERY, {
+      page: f.page, format: f.kind === "novel" ? ["NOVEL"] : sub?.format ?? ["MANGA", "ONE_SHOT"], country: sub?.country,
+      status: f.status, genres: f.genres.length ? f.genres : undefined, sort: SORTS[f.sort],
+    });
+    const ru = await shikiBooksRu(d.Page.media.map((m) => m.idMal).filter((x): x is number => Boolean(x))).catch(() => ({} as Record<number, string | null>));
+    return { books: d.Page.media.map((m) => toLite(m, m.idMal ? ru[m.idMal] ?? null : null)), more: d.Page.pageInfo.hasNextPage };
+  });
+}

@@ -1,5 +1,5 @@
 "use client";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { FORM_LABELS, type FranchiseForm as Mode } from "@/lib/franchise";
 import { cx } from "./ui";
@@ -56,19 +56,56 @@ export function useModeTakeover(value: Mode | null, pick: (m: Mode) => void) {
 
 const isBookPath = (p: string) => p.startsWith("/manga");
 
+// Разделы меню, у которых своё содержимое в каждом режиме
+export type Section = "calendar" | "catalog" | "lists";
+const ANIME_HREF: Record<Section, string> = { calendar: "/calendar", catalog: "/browse", lists: "/lists" };
+const BOOK_PATH: Record<Section, string> = { calendar: "/manga/releases", catalog: "/manga", lists: "/manga/list" };
+
+/** Адрес раздела в режиме: аниме — свои страницы, книги — раздел /manga с видом. */
+export const sectionHref = (s: Section, m: Mode) => (m === "anime" ? ANIME_HREF[s] : `${BOOK_PATH[s]}?kind=${m}`);
+
+/** Раздел по адресу (страница книги и прочие — без раздела). */
+export function sectionOf(pathname: string): Section | null {
+  for (const s of ["calendar", "lists", "catalog"] as Section[]) {
+    if (pathname === BOOK_PATH[s] || pathname.startsWith(ANIME_HREF[s])) return s;
+  }
+  return null;
+}
+
+/**
+ * Текущий режим. Для переключателя франшиза, забравшая его, отдаёт свой фильтр (null — все формы); для меню
+ * (nav) — режим страницы.
+ */
+export function useMode(nav = false): Mode | null {
+  const ctx = useContext(ModeCtx);
+  const pathname = usePathname();
+  const [stored, setStored] = useState<Mode>("manga");
+  useEffect(() => setStored(bookMode()), [pathname]);
+  if (ctx?.takeover && !nav) return ctx.takeover.value;
+  return ctx?.page ?? (isBookPath(pathname) ? stored : "anime");
+}
+
+/** Вид книг раздела из адреса (?kind=манга или ранобэ), без него — последний выбранный; страница объявляет режим. */
+export function useBookKind(): "manga" | "novel" {
+  const param = useSearchParams().get("kind");
+  const [stored, setStored] = useState<"manga" | "novel">("manga");
+  useEffect(() => setStored(bookMode() === "novel" ? "novel" : "manga"), []);
+  const kind = param === "novel" || param === "manga" ? param : stored;
+  useDeclareMode(kind);
+  return kind;
+}
+
 export function ModeSwitch({ className, wide }: { className?: string; wide?: boolean }) {
   const ctx = useContext(ModeCtx);
   const pathname = usePathname();
   const router = useRouter();
-  const [stored, setStored] = useState<Mode>("manga");
-  useEffect(() => setStored(bookMode()), [pathname]);
-  const current: Mode | null = ctx?.takeover ? ctx.takeover.value : ctx?.page ?? (isBookPath(pathname) ? stored : "anime");
+  const current = useMode();
   const pick = (m: Mode) => {
     rememberBookMode(m);
     if (ctx?.takeover) return ctx.takeover.pick(m);
     if (m === current) return;
-    if (m === "anime") router.push("/browse");
-    else router.push(`/manga?kind=${m}`);
+    // Тот же раздел в другом режиме; со страницы тайтла — в каталог
+    router.push(sectionHref(sectionOf(pathname) ?? "catalog", m));
   };
   return (
     <nav aria-label="Режим" className={cx("flex shrink-0 gap-1 rounded-full bg-gray-800/70 p-1 ring-1 ring-gray-700", wide && "grid grid-cols-3 rounded-xl", className)}>

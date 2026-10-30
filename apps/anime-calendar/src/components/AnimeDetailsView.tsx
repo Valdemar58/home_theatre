@@ -12,6 +12,7 @@ import { displayTitle, finaleOf, secondaryTitle } from "@/lib/schedule";
 import { imgSrc } from "@/lib/img";
 import { formatAiring, fuzzyDate, pluralEpisodes, relative } from "@/lib/time";
 import { useRememberTitle } from "./Breadcrumbs";
+import { FranchiseChip } from "./FranchiseChip";
 import { Gallery } from "./Gallery";
 import { MatchBadge } from "./MatchBadge";
 import { Discussion } from "./Discussion";
@@ -153,6 +154,7 @@ export function AnimeDetailsView({ id, openVoices, together, undo, comment }: {
             </div>
             <h1 className="text-3xl font-bold leading-tight sm:text-4xl">{displayTitle(a.title)}</h1>
             {alt && <p className="text-gray-400">{alt}{a.title.native ? ` · ${a.title.native}` : ""}</p>}
+            <FranchiseChip id={a.id} />
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-300">
               {season && <span>{season}</span>}
               {a.episodes && <span>{pluralEpisodes(a.episodes)}</span>}
@@ -229,7 +231,7 @@ export function AnimeDetailsView({ id, openVoices, together, undo, comment }: {
               <section>
                 <div className="mb-3 flex flex-wrap items-baseline gap-3">
                   <h2 className="mr-auto text-xl font-bold">Связанное</h2>
-                  <Link href={`/franchise/${a.id}`} className="text-sm text-accent-300 hover:text-accent-200">Вся франшиза по порядку</Link>
+                  <Link href={`/franchise/${a.id}`} className="text-sm text-accent-300 hover:text-accent-200">Вся франшиза</Link>
                 </div>
                 <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">
                   {a.relations.map((r) => (

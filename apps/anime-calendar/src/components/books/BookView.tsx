@@ -8,6 +8,7 @@ import {
   type BookHit, type BookPage, type ChapterSummary, type Edition, type EditionSummary,
 } from "@/lib/books";
 import { api, useBook, useBookProgress } from "@/lib/client";
+import { FranchiseChip } from "../FranchiseChip";
 import { Img } from "../Img";
 import { useDeclareMode } from "../Mode";
 import { Badge, Button, cx, ErrorBox, Modal, Skel, Spinner } from "../ui";
@@ -62,6 +63,7 @@ function Loaded({ page, progress }: { page: BookPage; progress: ReturnType<typeo
             <h1 className="text-2xl font-bold sm:text-3xl">{name}</h1>
             <p className="text-sm text-gray-400">{[book.title.romaji, book.title.native].filter((t) => t && t !== name).join(" · ")}</p>
           </div>
+          <FranchiseChip id={book.id} />
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <Badge tone="accent">{KIND_LABELS[book.kind]}</Badge>
             {book.year && <span className="text-gray-400">{book.year}</span>}

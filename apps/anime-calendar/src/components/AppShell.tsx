@@ -1,7 +1,6 @@
 "use client";
 import {
   ArrowDownTrayIcon,
-  BookOpenIcon,
   ArrowTopRightOnSquareIcon,
   BoltIcon,
   InboxArrowDownIcon,
@@ -34,18 +33,18 @@ import { api, useMe } from "@/lib/client";
 import { SIDEBAR_COOKIE, type SidebarMode } from "@/lib/sidebar";
 import { Avatar } from "./Avatar";
 import { HoverCardHost } from "./HoverCard";
-import { ModeProvider, ModeSwitch } from "./Mode";
+import { ModeProvider, ModeSwitch, sectionHref, sectionOf, useMode, type Section } from "./Mode";
 import { Notifications } from "./Notifications";
 import { SearchBox } from "./SearchBox";
 import { useGroupInvites } from "./SharedListsView";
 import { StaleBanner } from "./StaleBanner";
 import { cx } from "./ui";
 
-const NAV = [
-  { href: "/calendar", label: "Календарь", icon: CalendarDaysIcon },
-  { href: "/browse", label: "Каталог", icon: Squares2X2Icon },
-  { href: "/lists", label: "Мои списки", icon: QueueListIcon },
-  { href: "/manga", label: "Читать", icon: BookOpenIcon },
+// section — пункт с содержимым по режиму (аниме или книги, TASKS 5.10)
+const NAV: { href: string; label: string; icon: typeof CalendarDaysIcon; section?: Section; bookLabel?: string }[] = [
+  { href: "/calendar", label: "Календарь", icon: CalendarDaysIcon, section: "calendar", bookLabel: "Выход глав" },
+  { href: "/browse", label: "Каталог", icon: Squares2X2Icon, section: "catalog" },
+  { href: "/lists", label: "Мои списки", icon: QueueListIcon, section: "lists" },
   { href: "/friends", label: "Друзья", icon: UsersIcon },
   { href: "/groups", label: "Группы", icon: UserGroupIcon },
   { href: "/recommendations", label: "Для тебя", icon: SparklesIcon },
@@ -74,7 +73,19 @@ const browserUrl = (url: string) =>
   typeof window !== "undefined" && window.location.hostname !== "localhost" ? url.replace("//localhost", `//${window.location.hostname}`) : url;
 
 // На телефоне внизу помещается пять пунктов; друзья, настройки и загрузки — значками в шапке
-const MOBILE_NAV = NAV.filter((n) => !["/settings", "/downloads", "/friends", "/manga"].includes(n.href));
+const MOBILE_NAV = NAV.filter((n) => !["/settings", "/downloads", "/friends"].includes(n.href));
+
+/** Пункты меню в режиме: разделы книг — свои адреса и подписи; active — пункт текущей страницы. */
+function useNav(pathname: string) {
+  const mode = useMode(true) ?? "anime";
+  const section = sectionOf(pathname);
+  return (items: typeof NAV) => items.map((n) => {
+    const href = n.section ? sectionHref(n.section, mode) : n.href;
+    const label = n.section && mode !== "anime" ? n.bookLabel ?? n.label : n.label;
+    const active = n.section ? section === n.section : pathname.startsWith(n.href);
+    return { ...n, href, label, active };
+  });
+}
 
 function Logo({ compact, textClass }: { compact?: boolean; textClass?: string }) {
   return (
@@ -141,8 +152,15 @@ function Section({ bar, children }: { bar: { label: string; rule: string }; chil
   );
 }
 
-export function AppShell({ userName, sidebar = "auto", children }: { userName: string; sidebar?: SidebarMode; children: React.ReactNode }) {
+type ShellProps = { userName: string; sidebar?: SidebarMode; children: React.ReactNode };
+
+export function AppShell(props: ShellProps) {
+  return <ModeProvider><Shell {...props} /></ModeProvider>;
+}
+
+function Shell({ userName, sidebar = "auto", children }: ShellProps) {
   const pathname = usePathname();
+  const nav = useNav(pathname);
   const { data: me } = useMe();
   const bar = useSidebar(sidebar);
   // Приглашения в группы — значком у пункта меню
@@ -153,7 +171,6 @@ export function AppShell({ userName, sidebar = "auto", children }: { userName: s
   };
 
   return (
-    <ModeProvider>
     <div className="min-h-screen">
       {/* Боковая панель (десктоп) */}
       <aside onMouseEnter={bar.enter} onMouseLeave={bar.leave}
@@ -163,8 +180,7 @@ export function AppShell({ userName, sidebar = "auto", children }: { userName: s
           <Logo textClass={bar.label} />
         </div>
         <nav className="mt-4 flex-1 space-y-1 overflow-y-auto overflow-x-hidden px-3">
-          {NAV.filter((n) => me?.isAdmin || n.href !== "/downloads").map(({ href, label, icon: Icon }) => {
-            const active = pathname.startsWith(href);
+          {nav(NAV.filter((n) => me?.isAdmin || n.href !== "/downloads")).map(({ href, label, icon: Icon, active }) => {
             return (
               <Link
                 key={href}
@@ -250,9 +266,6 @@ export function AppShell({ userName, sidebar = "auto", children }: { userName: s
           <ModeSwitch className="hidden md:flex" />
           <SearchBox />
           <div className="shrink-0 md:ml-auto"><Notifications /></div>
-          <Link href="/manga" className="rounded-md p-2 text-gray-400 hover:bg-gray-800 hover:text-white md:hidden" aria-label="Читать">
-            <BookOpenIcon className="h-6 w-6" />
-          </Link>
           <Link href="/friends" className="rounded-md p-2 text-gray-400 hover:bg-gray-800 hover:text-white md:hidden" aria-label="Друзья">
             <UsersIcon className="h-6 w-6" />
           </Link>
@@ -273,15 +286,14 @@ export function AppShell({ userName, sidebar = "auto", children }: { userName: s
 
       {/* Нижняя навигация (мобильные) */}
       <nav className="fixed inset-x-0 bottom-0 z-30 flex border-t border-gray-800 bg-gray-900/95 backdrop-blur md:hidden">
-        {MOBILE_NAV.map(({ href, label, icon: Icon }) => (
+        {nav(MOBILE_NAV).map(({ href, label, icon: Icon, active }) => (
           <Link key={href} href={href}
-            className={cx("flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px]", pathname.startsWith(href) ? "text-indigo-400" : "text-gray-400")}>
+            className={cx("flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px]", active ? "text-indigo-400" : "text-gray-400")}>
             <Icon className="h-6 w-6" />
             {label}
           </Link>
         ))}
       </nav>
     </div>
-    </ModeProvider>
   );
 }
