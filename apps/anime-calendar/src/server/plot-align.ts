@@ -2,7 +2,7 @@ import "server-only";
 import { chapterName, summarize, translationsOf, type ChapterSummary, type EditionSummary } from "@/lib/books";
 import type { JsonSchema } from "@/lib/json-lite";
 import { alignPlot, needsMore, simMatrix } from "@/lib/plot-align";
-import { alignRows } from "./adapt";
+import { alignRows, fandomChapters } from "./adapt";
 import { getDetails } from "./anilist";
 import { bookDetails } from "./books/anilist-books";
 import { chapterContent, chapterRows } from "./books/library";
@@ -30,6 +30,36 @@ const EP_MAX = 3_000;
 /** Издание для сопоставления — то, где больше глав с текстом (ранобэ: веб-версия часто полнее книжной). */
 function pickEdition(eds: EditionSummary[]): EditionSummary | null {
   return [...eds].sort((a, b) => b.chapters.length - a.chapters.length)[0] ?? null;
+}
+
+/**
+ * Главы манги для сопоставления — и те, что есть у провайдеров, и описанные на вики (лицензионную мангу
+ * провайдеры часто не отдают, а вики знает все главы). Глава только с вики — без переводов (читать — на странице книги).
+ */
+function withWiki(ed: EditionSummary | null, wiki: Record<number, string>): EditionSummary | null {
+  const nums = Object.keys(wiki).map(Number);
+  if (!nums.length) return ed;
+  const base: EditionSummary = ed?.edition === "main" ? ed : { edition: "main", chapters: [], langs: [], missingRu: [] };
+  const known = new Set(base.chapters.map((c) => c.num));
+  const extra: ChapterSummary[] = nums.filter((n) => !known.has(n)).map((n) => ({ key: String(n), vol: null, num: n, numText: String(n), title: null, langs: {} }));
+  return { ...base, chapters: [...base.chapters, ...extra].sort((a, b) => (a.num ?? Infinity) - (b.num ?? Infinity)) };
+}
+
+const GAP = 5;
+
+/**
+ * Сколько глав окна идут без большой дыры в пересказах: между соседними главами с пересказом — не больше GAP
+ * номеров (у вики бывают пересказаны главы 1–17 и 94–128, а между ними — ничего).
+ */
+function coveredUntil(chs: ChapterSummary[], digests: (string | null)[]): number {
+  let last: number | null = null;
+  let lastIdx = -1;
+  for (let j = 0; j < digests.length; j++) {
+    const num: number = chs[j].num ?? (last ?? 0) + (j - lastIdx);
+    if ((last !== null && num - last > GAP) || (last === null && j >= GAP)) return Math.max(0, lastIdx + 1);
+    if (digests[j]) { last = num; lastIdx = j; }
+  }
+  return digests.length;
 }
 
 /** Пересказ главы (ИИ, один раз); null — текста нет (картинки, внешняя ссылка). */
@@ -79,7 +109,13 @@ export async function alignSeason(animeId: number, bookId: number, signal: Abort
   if (!texts.size) throw new Error("У сезона нет пересказов серий — сначала «Собрать сюжет» на странице тайтла");
   const count = Math.max(media.episodes ?? 0, ...texts.keys());
   const eps = Array.from({ length: count }, (_, i) => texts.get(i + 1)?.text.slice(0, EP_MAX) ?? "");
-  const ed = pickEdition(summarize(chapterRows(bookId)));
+
+  // Манга: пересказы глав с вики франшизы (вместо пересказа ИИ по картинкам)
+  const book = await bookDetails(bookId);
+  const wiki = book.kind !== "novel" ? await fandomChapters(animeId).catch(() => ({} as Record<number, string>)) : {};
+  const fromWiki = (c: ChapterSummary) => (c.num !== null && wiki[c.num] ? wiki[c.num].slice(0, EP_MAX) : null);
+  if (book.kind !== "novel" && !Object.keys(wiki).length) throw new Error("Пересказов глав манги на вики франшизы нет (распознавание страниц — следующий шаг)");
+  const ed = withWiki(pickEdition(summarize(chapterRows(bookId))), wiki);
   if (!ed?.chapters.length) throw new Error("У книги нет глав у провайдеров");
 
   const epVec = await embed(eps.map((t) => t || "—"));
@@ -93,14 +129,19 @@ export async function alignSeason(animeId: number, bookId: number, signal: Abort
     const want = ed.chapters.slice(start, start + size);
     for (let j = digests.length; j < want.length; j++) {
       signal.throwIfAborted();
+      const w = fromWiki(want[j]);
+      if (w || book.kind !== "novel") { digests.push(w); continue; }
       digests.push(await digest(bookId, ed.edition, want[j], bad).catch((e) => { console.warn(`[align] ${bookId} гл. ${want[j].key}: ${String(e).slice(0, 200)}`); return null; }));
     }
     const fresh = digests.slice(vecs.length);
     if (fresh.length) vecs.push(...(await embed(fresh.map((d) => d ?? "—"))));
     // Главы без текста — нулевой вектор (ни на что не похожи)
-    const chVec = vecs.map((v, j) => (digests[j] ? v : v.map(() => 0)));
+    // Дыра в данных (подряд больше GAP глав без пересказа) — дальше не сопоставляем: иначе поздние серии
+    // перескочат через дыру на далёкие главы
+    const usable = coveredUntil(want, digests);
+    const chVec = vecs.slice(0, usable).map((v, j) => (digests[j] ? v : v.map(() => 0)));
     alignment = alignPlot(simMatrix(chVec, epVec.map((v, i) => (eps[i] ? v : v.map(() => 0)))));
-    if (!needsMore(alignment, want.length) || start + size >= ed.chapters.length) break;
+    if (usable < want.length || !needsMore(alignment, usable) || start + size >= ed.chapters.length) break;
     size += Math.max(20, count * 2);
   }
 

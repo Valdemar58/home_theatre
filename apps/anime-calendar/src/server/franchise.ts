@@ -225,21 +225,23 @@ function alignView(story: FranchiseItem[], entries: Map<number, EntryLite>) {
   for (const it of story) {
     const rows = alignRows(it.media.id);
     if (!rows.length) continue;
-    const ed = edOf(rows[0].book_id, rows[0].edition);
-    if (!ed) continue;
-    const name = (key: string) => { const c = ed.chapters.find((x) => x.key === key); return c ? chapterName(c, ed.edition) : key; };
+    // Главы манги бывают только на вики (у провайдеров их нет) — тогда подпись по номеру
+    const ed = edOf(rows[0].book_id, rows[0].edition) ?? { edition: rows[0].edition as EditionSummary["edition"], chapters: [], langs: [], missingRu: [] };
+    const name = (key: string) => { const c = ed.chapters.find((x) => x.key === key); return c ? chapterName(c, ed.edition) : `Глава ${key}`; };
     perSeason.set(it.media.id, rows.map((r) => ({ ep: r.ep, label: r.from_key === r.to_key ? name(r.from_key) : `${name(r.from_key)} — ${name(r.to_key).toLowerCase()}` })));
     const e = entries.get(it.media.id);
     const upTo = e?.status === "completed" ? Infinity : e?.episodes ?? 0;
     const last = rows.filter((r) => r.ep <= upTo).at(-1);
     if (!last) continue;
-    const next = ed.chapters[ed.chapters.findIndex((c) => c.key === last.to_key) + 1];
-    if (!next) continue;
-    const t = pickTranslation(next);
+    const at = ed.chapters.findIndex((c) => c.key === last.to_key);
+    const next = at >= 0 ? ed.chapters[at + 1] : ed.chapters.find((c) => c.num !== null && last.to_num !== null && c.num > last.to_num);
+    const t = next ? pickTranslation(next) : null;
     const book = getCached<BookLite>(`book:lite:${last.book_id}`, true);
+    const label = next ? chapterName(next, ed.edition) : last.to_num !== null ? `Глава ${Math.floor(last.to_num) + 1}` : null;
+    if (!label) continue;
     readAfter = {
-      bookId: last.book_id, form: book?.kind === "novel" ? "novel" : "manga", anime: it.media.id, ep: last.ep, label: chapterName(next, ed.edition),
-      href: t ? `/manga/${last.book_id}/read?e=${ed.edition}&c=${encodeURIComponent(next.key)}&p=${t.provider}&r=${encodeURIComponent(t.cref)}` : `/manga/${last.book_id}`,
+      bookId: last.book_id, form: book?.kind === "novel" ? "novel" : "manga", anime: it.media.id, ep: last.ep, label,
+      href: next && t ? `/manga/${last.book_id}/read?e=${ed.edition}&c=${encodeURIComponent(next.key)}&p=${t.provider}&r=${encodeURIComponent(t.cref)}` : `/manga/${last.book_id}`,
     };
   }
   return { perSeason, readAfter };

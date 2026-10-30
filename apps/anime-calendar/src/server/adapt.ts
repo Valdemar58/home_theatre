@@ -1,4 +1,5 @@
 import "server-only";
+import { fandomChapter } from "@/lib/fandom-chapters";
 import { parseAdaptation, seasonRange, sourceForm, type AdaptForm, type AdaptRange, type AdaptUnit } from "@/lib/adapt";
 import type { BookLite } from "@/lib/books";
 import type { MediaLite } from "@/lib/types";
@@ -51,6 +52,49 @@ function fandomRange(anime: Pick<MediaLite, "id" | "source">): Promise<Omit<Adap
       for (const p of j.query?.pages ?? []) eps.push(parseAdaptation(p.revisions?.[0]?.slots.main.content ?? ""));
     }
     return seasonRange(eps, sourceForm(anime.source));
+  }));
+}
+
+type FandomApi = { query?: { pages?: { title: string; revisions?: { slots: { main: { content: string } } }[] }[]; allcategories?: { category: string }[];
+  categorymembers?: { title: string }[] }; continue?: Record<string, string> };
+
+async function fandomGet(wiki: string, params: string): Promise<FandomApi> {
+  const res = await fetchWithRetry(`https://${wiki}.fandom.com/api.php?format=json&formatversion=2&${params}`, { headers: { "User-Agent": UA, Accept: "application/json" } }, limiter, { timeoutMs: 30_000 });
+  if (!res.ok) throw new HttpError(res.status, `Fandom: ${res.status}`);
+  return (await res.json()) as FandomApi;
+}
+
+/**
+ * Пересказы глав манги с вики франшизы (TASKS 5.11б): номер главы → пересказ. Вики — та, где корпус нашёл серии
+ * сезона; главы — из категории «Manga Chapters» (нет её — любые «… Chapters»). Пусто — у вики нет пересказов глав.
+ */
+export async function fandomChapters(animeId: number): Promise<Record<number, string>> {
+  const pages = fandomPages(animeId);
+  if (!pages) return {};
+  return cached(`fandom-chapters:${pages.wiki}`, { fresh: 30 * 86400, source: "fandom" }, () => guarded("fandom", async () => {
+    const cats = (await fandomGet(pages.wiki, "action=query&list=allcategories&aclimit=500&acmin=3")).query?.allcategories?.map((c) => c.category) ?? [];
+    const main = cats.filter((c) => /^manga chapters$/i.test(c));
+    const pick = main.length ? main : cats.filter((c) => /chapters$/i.test(c));
+    const titles = new Set<string>();
+    for (const cat of pick) {
+      let cont = "";
+      for (let i = 0; i < 10; i++) {
+        const r = await fandomGet(pages.wiki, `action=query&list=categorymembers&cmnamespace=0&cmlimit=500&cmtitle=${encodeURIComponent(`Category:${cat}`)}${cont}`);
+        for (const m of r.query?.categorymembers ?? []) titles.add(m.title);
+        if (!r.continue?.cmcontinue) break;
+        cont = `&cmcontinue=${encodeURIComponent(r.continue.cmcontinue)}`;
+      }
+    }
+    const out: Record<number, string> = {};
+    const list = [...titles];
+    for (let i = 0; i < list.length; i += 50) {
+      const r = await fandomGet(pages.wiki, `action=query&prop=revisions&rvprop=content&rvslots=main&redirects=1&titles=${encodeURIComponent(list.slice(i, i + 50).join("|"))}`);
+      for (const p of r.query?.pages ?? []) {
+        const c = fandomChapter(p.revisions?.[0]?.slots.main.content ?? "");
+        if (c && !out[c.num]) out[c.num] = c.text;
+      }
+    }
+    return out;
   }));
 }
 
