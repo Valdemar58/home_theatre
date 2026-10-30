@@ -8,10 +8,11 @@ import { chapterName, pickTranslation, translationLabel, translationsOf, type Ch
 import { api, useBook, useBookChapter, useBookProgress } from "@/lib/client";
 import { Button, cx, ErrorBox, Skel, Spinner } from "../ui";
 import { providerName, readHref } from "./BookView";
+import { MangaReader, MangaSettingsPanel, useMangaSettings } from "./MangaReader";
 
 // Ридер главы. Ранобэ — текст абзацами (шрифт, размер, ширина, интервал, тема — у браузера), позиция — по абзацу,
 // дочитал до конца — глава отмечена в списке. Перевод главы — переключателем (команда, провайдер, оригинал),
-// выбор запоминается у книги. Манга пока — лентой страниц (полноценный ридер — TASKS 5.4).
+// выбор запоминается у книги. Манга — `MangaReader` (страницы или лента).
 
 type Theme = "dark" | "sepia" | "light";
 type Settings = { size: number; width: number; leading: number; serif: boolean; theme: Theme };
@@ -49,8 +50,10 @@ export function Reader({ id }: { id: number }) {
   const { data: progress } = useBookProgress(id);
   const { data: content, error, isLoading } = useBookChapter(id, provider, cref);
   const [settings, set] = useSettings();
+  const [manga, setManga] = useMangaSettings(id, page?.book.kind);
   const [panel, setPanel] = useState(false);
   const theme = THEMES[settings.theme];
+  const pages = content?.kind === "pages" ? content.pages : null;
 
   const ed = page?.editions.find((e) => e.edition === edition);
   const idx = ed ? ed.chapters.findIndex((c) => c.key === key) : -1;
@@ -100,8 +103,9 @@ export function Reader({ id }: { id: number }) {
     }
   }, [current, progress?.pref, id, edition]);
 
-  // Клавиши ← → — главы
+  // Клавиши ← → — главы (у манги — свои, в MangaReader)
   useEffect(() => {
+    if (pages) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).closest("input, select, textarea")) return;
       if (e.key === "ArrowLeft" && prev) prev();
@@ -109,8 +113,9 @@ export function Reader({ id }: { id: number }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [prev, next]);
+  }, [prev, next, pages]);
 
+  const finish = () => { if (!done.current) { done.current = true; save(); void qc.invalidateQueries({ queryKey: ["book-progress", id] }); } };
   const title = chapter ? `${chapterName(chapter, edition)}${chapter.title ? ` · ${chapter.title}` : ""}` : "Глава";
   const bookName = page ? page.book.title.ru || page.book.title.romaji || "" : "";
 
@@ -130,29 +135,39 @@ export function Reader({ id }: { id: number }) {
             {translations.map((t) => <option key={`${t.provider}|${t.cref}`} value={`${t.provider}|${t.cref}`} style={{ color: "#111" }}>{translationLabel(t, providerName)}</option>)}
           </select>
         )}
-        <button onClick={() => setPanel(!panel)} className="rounded p-1.5" style={{ color: theme.dim }} title="Вид текста"><AdjustmentsHorizontalIcon className="h-5 w-5" /></button>
+        <button onClick={() => setPanel(!panel)} className="rounded p-1.5" style={{ color: theme.dim }} title={pages ? "Вид страниц" : "Вид текста"}><AdjustmentsHorizontalIcon className="h-5 w-5" /></button>
       </div>
-      {panel && <SettingsPanel s={settings} set={set} />}
+      {panel && (pages ? <MangaSettingsPanel s={manga} set={setManga} /> : <SettingsPanel s={settings} set={set} />)}
 
-      <article className="mx-auto px-4 pb-10 pt-6" style={{ maxWidth: `${settings.width}rem`, fontSize: settings.size, lineHeight: settings.leading,
+      {pages && <MangaReader key={cref} pages={pages} s={manga} restore={saved && !saved.done ? saved.pos : 0} prev={prev} next={next} dim={theme.dim}
+        onPos={(i) => { pos.current = i; }} onEnd={finish} />}
+      {pages && manga.mode === "strip" && <ChapterNav prev={prev} next={next} id={id} />}
+
+      {!pages && <article className="mx-auto px-4 pb-10 pt-6" style={{ maxWidth: `${settings.width}rem`, fontSize: settings.size, lineHeight: settings.leading,
         fontFamily: settings.serif ? "Georgia, 'PT Serif', 'Times New Roman', serif" : "inherit" }}>
         <h1 className="mb-6 text-center font-bold" style={{ fontSize: "1.25em" }}>{title}</h1>
         {isLoading && <div className="space-y-3"><Skel className="h-4 w-full" /><Skel className="h-4 w-11/12" /><Skel className="h-4 w-10/12" /></div>}
         {error ? <ErrorBox error={error} /> : null}
         {content && <Body content={content} restore={saved && !saved.done ? saved.pos : 0} onPos={(i) => { pos.current = i; }}
-          onEnd={() => { if (!done.current) { done.current = true; save(); void qc.invalidateQueries({ queryKey: ["book-progress", id] }); } }} dim={theme.dim} />}
-        {/* Навигация в конце главы */}
-        <div className="mt-10 flex items-center justify-between gap-3 text-base" style={{ fontFamily: "inherit" }}>
-          {prev ? <Button onClick={prev}><ChevronLeftIcon className="h-4 w-4" />Предыдущая</Button> : <span />}
-          {next ? <Button variant="primary" onClick={next}>Следующая<ChevronRightIcon className="h-4 w-4" /></Button>
-            : <Link href={`/manga/${id}`}><Button>К книге</Button></Link>}
-        </div>
-      </article>
+          onEnd={finish} dim={theme.dim} />}
+        <ChapterNav prev={prev} next={next} id={id} />
+      </article>}
     </div>
   );
 }
 
-/** Текст или страницы главы; позиция — индекс первого видимого блока. */
+/** Навигация в конце главы. */
+function ChapterNav({ prev, next, id }: { prev: (() => void) | null; next: (() => void) | null; id: number }) {
+  return (
+    <div className="mx-auto mt-10 flex max-w-3xl items-center justify-between gap-3 px-4 pb-10 text-base" style={{ fontFamily: "inherit" }}>
+      {prev ? <Button onClick={prev}><ChevronLeftIcon className="h-4 w-4" />Предыдущая</Button> : <span />}
+      {next ? <Button variant="primary" onClick={next}>Следующая<ChevronRightIcon className="h-4 w-4" /></Button>
+        : <Link href={`/manga/${id}`}><Button>К книге</Button></Link>}
+    </div>
+  );
+}
+
+/** Текст главы; позиция — индекс первого видимого блока. */
 function Body({ content, restore, onPos, onEnd, dim }: { content: ChapterContentView; restore: number; onPos: (i: number) => void; onEnd: () => void; dim: string }) {
   const root = useRef<HTMLDivElement>(null);
   const end = useRef<HTMLDivElement>(null);
@@ -185,11 +200,7 @@ function Body({ content, restore, onPos, onEnd, dim }: { content: ChapterContent
         b.t === "p" ? <p key={i} data-i={i} className="mb-[0.9em] indent-[1.5em]">{b.text}</p>
           : b.t === "img" ? <img key={i} data-i={i} src={b.url} alt="" loading="lazy" className="mx-auto my-6 max-h-[80vh] rounded" />
           : <hr key={i} data-i={i} className="my-8 opacity-30" />,
-      ) : content.pages.map((p, i) => (
-        // Манга — лентой (ширина и высота заранее: страница не прыгает при загрузке)
-        <img key={i} data-i={i} src={p.url} alt="" loading={i < 3 ? "eager" : "lazy"} className="mx-auto block w-full"
-          style={p.w && p.h ? { aspectRatio: `${p.w} / ${p.h}` } : undefined} />
-      ))}
+      ) : null}
       {content.kind === "text" && !content.blocks.length && <p style={{ color: dim }}>В главе нет текста.</p>}
       <div ref={end} className="h-1" />
     </div>

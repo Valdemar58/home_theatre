@@ -19,6 +19,18 @@ export function bookKind(format: string | null, country: string | null): BookKin
 /** Ридер ленты (манхва и маньхуа рисуются вертикальной полосой). */
 export const isStrip = (kind: BookKind) => kind === "manhwa" || kind === "manhua";
 
+/** Развороты: первая страница — обложка (одна), широкие — по одной, остальные — парами. */
+export function spreadsOf(pages: { w?: number | null; h?: number | null }[], double: boolean): number[][] {
+  if (!double) return pages.map((_, i) => [i]);
+  const wide = (p: { w?: number | null; h?: number | null }) => Boolean(p.w && p.h && p.w > p.h);
+  const out: number[][] = [];
+  for (let i = 0; i < pages.length; i++) {
+    if (i === 0 || wide(pages[i]) || i + 1 >= pages.length || wide(pages[i + 1])) out.push([i]);
+    else { out.push([i, i + 1]); i++; }
+  }
+  return out;
+}
+
 export type BookTitle = { romaji: string | null; english: string | null; native: string | null; ru: string | null };
 
 export type BookLite = {

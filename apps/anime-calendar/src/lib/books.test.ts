@@ -106,3 +106,18 @@ describe("pickTranslation", () => {
     expect(pick(s.chapters[0])?.lang).toBe("ru");
   });
 });
+
+import { spreadsOf } from "./books";
+describe("spreadsOf", () => {
+  const tall = { w: 800, h: 1200 };
+  const wide = { w: 1600, h: 1200 };
+  it("обложка одна, дальше парами", () => {
+    expect(spreadsOf([tall, tall, tall, tall, tall], true)).toEqual([[0], [1, 2], [3, 4]]);
+  });
+  it("широкая страница — одна, непарная в конце — одна", () => {
+    expect(spreadsOf([tall, tall, wide, tall, tall, tall], true)).toEqual([[0], [1], [2], [3, 4], [5]]);
+  });
+  it("без разворота — по одной", () => {
+    expect(spreadsOf([tall, tall, tall], false)).toEqual([[0], [1], [2]]);
+  });
+});
