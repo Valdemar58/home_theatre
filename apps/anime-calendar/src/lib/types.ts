@@ -642,6 +642,8 @@ export type FranchiseView = {
     entry: { status: ListStatus; episodes: number } | null;
     /** Разбор серий: арки на мой прогресс; null — разбора нет */
     plot: { ep: number; events: number; ahead: number; arcs: { name: string; fromEp: number | null; events: number }[] } | null;
+    /** Что из книги адаптирует (Fandom или ручная правка) */
+    adapt: import("./adapt").AdaptRange | null;
   }[];
   /** Манга и ранобэ франшизы: вид, мой прогресс, сколько глав на русском и всего известно */
   books: {

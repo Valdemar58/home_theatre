@@ -106,6 +106,7 @@ function Paged({ pages, ai, s, restore, onPos, onEnd, prev, next, dim }: Props) 
   const forward = () => (at < spreads.length - 1 ? setAt(at + 1) : next?.());
   const back = () => (at > 0 ? setAt(at - 1) : prev?.());
   const rtl = s.dir === "rtl";
+  const fitH = s.fit === "height";
   const toLeft = rtl ? forward : back;
   const toRight = rtl ? back : forward;
 
@@ -123,21 +124,35 @@ function Paged({ pages, ai, s, restore, onPos, onEnd, prev, next, dim }: Props) 
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  // Нажатие: левая и правая трети — листать; свайп по горизонтали — тоже
+  // Нажатие: левый и правый края — листать в их сторону, середина — дальше; свайп по горизонтали — тоже
   const touch = useRef<{ x: number; y: number } | null>(null);
   const onClick = (e: React.MouseEvent) => {
     const r = e.currentTarget.getBoundingClientRect();
     const x = (e.clientX - r.left) / r.width;
-    if (x < 0.35) toLeft();
-    else if (x > 0.65) toRight();
+    if (x < 0.3) toLeft();
+    else if (x > 0.7) toRight();
+    else forward();
+  };
+  // Колесо: по высоте — листает сразу; по ширине — когда страница прокручена до края. Один жест — одна страница
+  const wheelAt = useRef(0);
+  const onWheel = (e: React.WheelEvent) => {
+    if (Math.abs(e.deltaY) < 4 || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    const el = box.current;
+    if (!fitH && el) {
+      const atEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 2;
+      if ((e.deltaY > 0 && !atEnd) || (e.deltaY < 0 && el.scrollTop > 0)) return;
+    }
+    const now = Date.now();
+    if (now - wheelAt.current < 450) { wheelAt.current = now; return; }
+    wheelAt.current = now;
+    (e.deltaY > 0 ? forward : back)();
   };
   // Страницы разворота справа налево — первая справа
   const shown = rtl ? [...cur].reverse() : cur;
-  const fitH = s.fit === "height";
 
   return (
     <div className="flex h-[calc(100dvh-6.75rem)] flex-col">
-      <div ref={box} onClick={onClick}
+      <div ref={box} onClick={onClick} onWheel={onWheel}
         onTouchStart={(e) => { touch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
         onTouchEnd={(e) => {
           const t = touch.current;
@@ -283,7 +298,7 @@ export function MangaSettingsPanel({ s, set }: { s: MangaSettings; set: (x: Part
           <span className="w-10 text-center tabular-nums">{Math.round((s.stripWidth / 48) * 100)}%</span>
           <button className={btn(false)} onClick={() => set({ stripWidth: Math.min(96, s.stripWidth + 6) })}>+</button></span></div>
       )}
-      <p className="text-xs text-gray-400">{s.mode === "paged" ? "Листать — стрелки, края страницы или свайп." : "Главы — стрелки ← →."}</p>
+      <p className="text-xs text-gray-400">{s.mode === "paged" ? "Листать — стрелки, колесо мыши, нажатие на страницу (края — в свою сторону) или свайп." : "Главы — стрелки ← →."}</p>
     </div>
   );
 }

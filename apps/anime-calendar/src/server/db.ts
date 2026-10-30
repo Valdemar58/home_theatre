@@ -1009,6 +1009,16 @@ function migrateBooks(db: Db) {
     updated_at INTEGER NOT NULL
   )`);
   db.exec("CREATE INDEX IF NOT EXISTS glossary_term_root ON glossary_term (root_id)");
+  // Что из книги адаптирует сезон (TASKS 5.10) — ручная правка; данные Fandom — в хранилище (fandom-adapt:)
+  db.exec(`CREATE TABLE IF NOT EXISTS adapt_manual (
+    anime_id INTEGER PRIMARY KEY,
+    form TEXT NOT NULL,
+    unit TEXT NOT NULL,
+    from_n REAL NOT NULL,
+    to_n REAL NOT NULL,
+    user_id INTEGER,
+    updated_at INTEGER NOT NULL
+  )`);
   db.exec(`CREATE TABLE IF NOT EXISTS glossary_root (
     media_id INTEGER NOT NULL,
     type TEXT NOT NULL,

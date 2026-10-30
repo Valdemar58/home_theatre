@@ -7,6 +7,7 @@ import {
 import type { JsonSchema } from "@/lib/json-lite";
 import { displayTitle } from "@/lib/schedule";
 import type { FranchiseView, MediaLite } from "@/lib/types";
+import { adaptRanges } from "./adapt";
 import { getDetails, type AnilistDetails } from "./anilist";
 import { enqueue } from "./archive";
 import { booksForAnime, bookDetails, type AnimeBook } from "./books/anilist-books";
@@ -283,13 +284,14 @@ export async function franchiseOf(userId: number, id: number): Promise<Franchise
       count((b) => b.kind === "novel") ? `ранобэ — ${count((b) => b.kind === "novel")}` : null].filter(Boolean).join(", "),
   });
 
+  const adapt = adaptRanges(anime.filter((i) => i.kind === "main" || i.kind === "side").map((i) => i.media));
   return {
     root, castTitle, next, partial, progress: franchiseProgress(anime, entries),
     title, about, sourceBook: source?.id ?? null,
     banner: rootAnime?.bannerImage ?? sourceDetails?.bannerImage ?? null,
     items: anime.map((i) => {
       const e = entries.get(i.media.id);
-      return { media: lite(i.media), kind: i.kind, entry: e ? { status: e.status, episodes: e.episodes } : null, plot: seasonArcs(userId, i.media.id) };
+      return { media: lite(i.media), kind: i.kind, entry: e ? { status: e.status, episodes: e.episodes } : null, plot: seasonArcs(userId, i.media.id), adapt: adapt.get(i.media.id) ?? null };
     }),
     books: books.items.map((i) => {
       const b = books.cards.get(i.media.id)!;

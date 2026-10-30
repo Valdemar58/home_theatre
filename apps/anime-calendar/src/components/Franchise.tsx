@@ -2,9 +2,11 @@
 import { ChevronDownIcon, SparklesIcon } from "@heroicons/react/24/outline";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
 import { KIND_LABELS as BOOK_KIND_LABELS, type BookLite } from "@/lib/books";
-import { useFranchise, useTitleCast } from "@/lib/client";
+import { api, useFranchise, useTitleCast } from "@/lib/client";
+import { adaptLabel, continueAfter, type AdaptForm, type AdaptUnit } from "@/lib/adapt";
 import { FORM_LABELS, KIND_LABELS, type FranchiseForm as Form, type FranchiseKind } from "@/lib/franchise";
 import { FORMAT_LABELS, label, LIST_LABELS, SOURCE_LABELS } from "@/lib/labels";
 import { displayTitle } from "@/lib/schedule";
@@ -13,7 +15,7 @@ import { Breadcrumbs, useRememberTitle } from "./Breadcrumbs";
 import { CharacterCard } from "./Characters";
 import { Img } from "./Img";
 import { MODE_TONE, useModeTakeover } from "./Mode";
-import { cx, ErrorBox, Skel, Spinner } from "./ui";
+import { Button, cx, ErrorBox, Modal, Skel, Spinner } from "./ui";
 
 // Страница франшизы (IDEAS #80, TASKS 5.10) — центр всех форм: шапка с описанием и «где я» по аниме, манге и ранобэ;
 // основная история дорожками по формам (дополнения — на своих местах), ответвления группами по всем формам,
@@ -104,7 +106,8 @@ function Loaded({ data, form, setForm, branches, setBranches }: {
       <section className="space-y-5">
         <h2 className="text-xl font-bold">Основная история <span className="text-base font-normal text-gray-500">по выходу</span></h2>
         {forms.filter(show).filter((f) => lane(f) > 0).map((f) => (
-          <Lane key={f} form={f} note={f === sourceForm ? "первоисточник" : f === "anime" ? "экранизация" : sourceForm ? "адаптация" : null}>
+          <Lane key={f} form={f} note={f === sourceForm ? "первоисточник" : f === "anime" ? "экранизация" : sourceForm ? "адаптация" : null}
+            action={f === "anime" && data.books.length > 0 ? <AdaptEditor data={data} parts={parts} /> : null}>
             {f === "anime"
               ? data.items.filter((i) => i.kind === "main" || i.kind === "side").map((i) => <AnimeCard key={i.media.id} it={i} part={parts.get(i.media.id)!} next={i.media.id === data.next} />)
               : data.books.filter((b) => formOf(b.book) === f && (b.kind === "main" || b.kind === "side")).map((b) => <BookCard key={b.book.id} it={b} />)}
@@ -238,6 +241,12 @@ function whereOf(data: View, parts: Map<number, string>, f: Form): Spot | null {
     return { form: f, state: bookTitle(cur.book), detail: `глава ${c}${cur.known ? ` из ${cur.known}` : ""}`, pct: cur.known ? Math.min(1, c / cur.known) : 0, action: `Читать гл. ${c + 1}`, href: `/manga/${cur.book.id}` };
   }
   const left = main.find((b) => b.entry?.status !== "completed") ?? null;
+  // Досмотренные сезоны уже прошли часть книги — читать дальше аниме
+  const after = continueAfter(data.items.filter((i) => i.adapt && i.entry?.status === "completed").map((i) => i.adapt!), f);
+  if (left && !left.entry && after) {
+    const where = after.unit === "vol" ? `тома ${after.from}` : `главы ${after.from}`;
+    return { form: f, state: `Дальше аниме — с ${where}`, detail: bookTitle(left.book), pct: 0, action: `Читать с ${where}`, href: `/manga/${left.book.id}` };
+  }
   if (!left) return { form: f, state: "Всё прочитано", detail: null, pct: 1, action: "К книге", href: `/manga/${main[0]?.book.id ?? story[0].book.id}` };
   const ru = left.ru ? `на русском ${plural(left.ru.count, "глава", "главы", "глав")}` : null;
   return { form: f, state: "Не начато", detail: [bookTitle(left.book), ru].filter(Boolean).join(" · "), pct: 0, action: "Начать читать", href: `/manga/${left.book.id}` };
@@ -265,12 +274,13 @@ function Where({ data, parts, forms }: { data: View; parts: Map<number, string>;
 
 // ---------------------------------------------------------------- дорожки
 
-function Lane({ form, note, children }: { form: Form; note: string | null; children: React.ReactNode }) {
+function Lane({ form, note, action, children }: { form: Form; note: string | null; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className={cx("space-y-2", MODE_TONE[form])}>
       <div className="flex items-baseline gap-2">
         <span className="font-semibold tone-text">{FORM_LABELS[form]}</span>
         {note && <span className="text-sm text-gray-500">{note}</span>}
+        {action && <span className="ml-auto">{action}</span>}
       </div>
       <div className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-2">{children}</div>
     </div>
@@ -301,6 +311,7 @@ function AnimeCard({ it, part, next }: { it: Item; part: string; next: boolean }
         <span className="text-xs text-gray-400">{[label(FORMAT_LABELS, m.format), m.startDate.year].filter(Boolean).join(" · ")}{side ? " · доп." : ""}</span>
         <span title={displayTitle(m.title)} className="line-clamp-2 text-sm font-semibold leading-snug text-gray-100">{part}</span>
         <span className="text-xs text-gray-500">{[t ? `${t} сер.` : null, m.status === "RELEASING" ? "выходит" : m.status === "NOT_YET_RELEASED" ? "анонс" : null, entryNote(it)].filter(Boolean).join(" · ")}</span>
+        {it.adapt && <span className={cx("text-xs", it.adapt.form === "novel" ? "text-positive-300" : "text-warning-300")} title={it.adapt.source === "fandom" ? "по вики Fandom" : "поправлено вручную"}>{adaptLabel(it.adapt)}</span>}
         <Progress pct={done} form="anime" />
       </div>
     </Link>
@@ -434,6 +445,59 @@ function FranchiseSkeleton() {
     <div className="mx-auto max-w-6xl space-y-6" aria-busy>
       <div className="flex gap-6"><Skel className="h-56 w-40 rounded-xl" /><div className="flex-1 space-y-3"><Skel className="h-4 w-48" /><Skel className="h-10 w-96 max-w-full" /><Skel className="h-20 w-full" /></div></div>
       <div className="flex gap-3">{Array.from({ length: 4 }, (_, i) => <Skel key={i} className="h-28 w-60 shrink-0 rounded-xl" />)}</div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- что адаптирует сезон
+
+/** Правка «сезон ↔ тома или главы книги»: вручную важнее вики Fandom; пусто — убрать свою правку. */
+function AdaptEditor({ data, parts }: { data: View; parts: Map<number, string> }) {
+  const [open, setOpen] = useState(false);
+  const qc = useQueryClient();
+  const seasons = data.items.filter((i) => i.kind === "main" || i.kind === "side");
+  const defForm: AdaptForm = data.sourceBook && data.books.find((b) => b.book.id === data.sourceBook)?.book.kind !== "novel" ? "manga" : "novel";
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)} className="text-xs text-gray-400 hover:text-gray-200">Что из книги в каждом сезоне</button>
+      {open && (
+        <Modal open onClose={() => { setOpen(false); void qc.invalidateQueries({ queryKey: ["franchise"] }); }} title="Сезоны и книга" wide>
+          <p className="mb-3 text-sm text-gray-400">Какие тома или главы книги адаптирует сезон. Данные с вики Fandom подставляются сами, ваша правка важнее. По ним плитка «где я» подскажет, с какого места читать после аниме.</p>
+          <div className="space-y-2">
+            {seasons.map((i) => <AdaptRow key={i.media.id} it={i} part={parts.get(i.media.id)!} defForm={defForm} />)}
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+function AdaptRow({ it, part, defForm }: { it: View["items"][number]; part: string; defForm: AdaptForm }) {
+  const a = it.adapt;
+  const [form, setForm] = useState<AdaptForm>(a?.form ?? defForm);
+  const [unit, setUnit] = useState<AdaptUnit>(a?.unit ?? "vol");
+  const [from, setFrom] = useState(a ? String(a.from) : "");
+  const [to, setTo] = useState(a ? String(a.to) : "");
+  const [state, setState] = useState<"idle" | "busy" | "saved" | Error>("idle");
+  const save = async (clear = false) => {
+    setState("busy");
+    try {
+      await api("/api/franchise/adapt", { method: "PUT", json: clear ? { anime: it.media.id, clear: true } : { anime: it.media.id, form, unit, from: Number(from), to: Number(to) } });
+      if (clear) { setFrom(""); setTo(""); }
+      setState("saved");
+    } catch (e) { setState(e as Error); }
+  };
+  const field = "h-8 rounded-md border border-gray-600 bg-gray-800 px-2 text-sm focus:border-accent-500 focus:outline-none";
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg bg-gray-800/40 p-2 ring-1 ring-gray-700">
+      <span className="min-w-40 flex-1 text-sm">{part} <span className="text-xs text-gray-500">{it.media.startDate.year}{a ? ` · ${a.source === "fandom" ? "Fandom" : "вручную"}` : ""}</span></span>
+      <select value={form} onChange={(e) => setForm(e.target.value as AdaptForm)} className={field}><option value="novel">ранобэ</option><option value="manga">манга</option></select>
+      <select value={unit} onChange={(e) => setUnit(e.target.value as AdaptUnit)} className={field}><option value="vol">тома</option><option value="ch">главы</option></select>
+      <input value={from} onChange={(e) => setFrom(e.target.value)} inputMode="numeric" placeholder="с" className={cx(field, "w-16")} />
+      <input value={to} onChange={(e) => setTo(e.target.value)} inputMode="numeric" placeholder="по" className={cx(field, "w-16")} />
+      <Button size="sm" disabled={!from || !to || state === "busy"} onClick={() => void save()}>{state === "saved" ? "Сохранено" : "Сохранить"}</Button>
+      {a?.source === "manual" && <Button size="sm" variant="ghost" onClick={() => void save(true)}>Убрать</Button>}
+      {state instanceof Error && <span className="w-full text-xs text-negative-300">{state.message}</span>}
     </div>
   );
 }
