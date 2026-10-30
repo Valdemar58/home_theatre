@@ -15,9 +15,13 @@ const LIMIT = () => (Number(process.env.PAGES_CACHE_GB) > 0 ? Number(process.env
 /** Откуда можно брать картинки (адрес приходит из браузера — не прокси для чего угодно). */
 const ALLOWED = /(^|\.)(imglib\.info|cdnlibs\.org|mangalib\.me|ranobelib\.me|mangadex\.org|mangadex\.network|syosetu\.com)$/;
 
-export function allowedImage(url: string): boolean {
+export function allowedImage(url: string, provider?: string): boolean {
   try {
     const u = new URL(url);
+    if (provider) {
+      const p = providerById(provider);
+      if (p?.imageHost) return p.imageHost(u.hostname, u.protocol);
+    }
     return u.protocol === "https:" && ALLOWED.test(u.hostname);
   } catch {
     return false;

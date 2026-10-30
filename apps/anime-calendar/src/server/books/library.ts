@@ -5,7 +5,9 @@ import { db, now } from "../db";
 import { bookDetails } from "./anilist-books";
 import { mangalib, ranobelib } from "./providers/lib";
 import { mangadex, mdMeta } from "./providers/mangadex";
+import { lnreader } from "./providers/lnreader";
 import { narouNovel, syosetu } from "./providers/syosetu";
+import { suwayomi } from "./providers/suwayomi";
 import type { Content, Hit, Provider } from "./providers/types";
 import { ordered, providerConfig } from "./provider-config";
 import { aiChapter, aiRows } from "./ai-chapters";
@@ -15,7 +17,7 @@ import { muFind, muSeries } from "./trackers";
 // Книга целиком: сопоставление с провайдерами (book_links), оглавления (book_chapters), сводка глав, выход в
 // оригинале, глава для ридера (chapter_content). Сеть — в фоне: страница сразу отдаёт сохранённое и «обновляется».
 
-export const PROVIDERS: Provider[] = [ranobelib, syosetu, mangalib, mangadex];
+export const PROVIDERS: Provider[] = [ranobelib, syosetu, mangalib, mangadex, lnreader, suwayomi];
 export const providerById = (id: string) => PROVIDERS.find((p) => p.id === id);
 /** Включённые провайдеры по порядку из настроек */
 export const activeProviders = () => {

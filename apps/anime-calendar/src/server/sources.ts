@@ -8,11 +8,12 @@ import { HttpError } from "./http";
 // (проверка деградации без отключения сети). Тут же — что из сохранённого отдали в текущем запросе (для плашки).
 
 export type Source = "anilist" | "shikimori" | "tmdb" | "kitsu" | "jellyfin" | "seerr" | "fandom" | "wikipedia" | "mal"
-  | "lib" | "mangadex" | "mangaupdates" | "syosetu";
+  | "lib" | "mangadex" | "mangaupdates" | "syosetu" | "lnreader" | "suwayomi";
 export const SOURCE_NAMES: Record<Source, string> = {
   anilist: "AniList", shikimori: "Shikimori", tmdb: "TMDB", kitsu: "Kitsu", jellyfin: "Jellyfin", seerr: "Seerr",
   fandom: "Fandom", wikipedia: "Википедия", mal: "MyAnimeList",
   lib: "MangaLib / RanobeLib", mangadex: "MangaDex", mangaupdates: "MangaUpdates", syosetu: "Syosetu",
+  lnreader: "Плагины LNReader", suwayomi: "Suwayomi",
 };
 
 type State = { failures: number; downUntil: number; lastError: string | null; lastOk: number | null; calls: number; errors: number; served: number };

@@ -19,7 +19,7 @@ import sys
 from common import ENV_EXAMPLE, ENV_FILE, ROOT, parse_env, resolve
 
 CONFIG_DIRS = ["jellyfin", "jellyfin-cache", "seerr", "anime-calendar", "torrserver", "ollama", "sonarr", "radarr",
-               "prowlarr", "bazarr", "qbittorrent", "gluetun", "mapvec", "authentik/data", "authentik/templates"]
+               "prowlarr", "bazarr", "qbittorrent", "gluetun", "mapvec", "suwayomi", "authentik/data", "authentik/templates"]
 MEDIA_KINDS = ["movies", "tv", "anime"]
 # Папка .strm-ссылок для «Смотреть сейчас» (только в media)
 STREAM_DIR = "stream"

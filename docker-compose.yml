@@ -129,6 +129,7 @@ services:
       IMG_UPSCALE_TTL_MULT: ${IMG_UPSCALE_TTL_MULT:-4}
       # Векторизация карт мира (контейнер mapvec; нет — карта картинкой, подписи читает Ollama)
       MAPVEC_URL: http://mapvec:8000
+      SUWAYOMI_URL: http://suwayomi:4567
       # Проверка работы без внешних сервисов: перечисленные считаются недоступными (anilist,shikimori,seerr,kitsu)
       SOURCES_OFFLINE: ${SOURCES_OFFLINE:-}
       LLM_MODEL: ${LLM_MODEL:-qwen3.5:9b}
@@ -328,6 +329,20 @@ services:
       TZ: ${TZ}
     volumes:
       - ${CONFIG_ROOT}/mapvec:/models
+
+  # Мост к расширениям Tachiyomi/Mihon (TASKS 5.9): источники манги, которых нет среди встроенных провайдеров.
+  # Календарь ходит в его GraphQL; репозиторий расширений задаётся в Настройках → «Провайдеры глав». Профиль suwayomi
+  suwayomi:
+    image: ghcr.io/suwayomi/suwayomi-server:stable
+    container_name: suwayomi
+    restart: unless-stopped
+    profiles: ["suwayomi"]
+    environment:
+      TZ: ${TZ}
+      WEB_UI_ENABLED: "false"
+      JAVA_TOOL_OPTIONS: -Xmx512m
+    volumes:
+      - ${CONFIG_ROOT}/suwayomi:/home/suwayomi/.local/share/Tachidesk
 
   # Локальная LLM для рекомендаций: анализ тайтлов, портрет вкуса, объяснения.
   # GPU подключается через compose.nvidia.yml; без GPU работает на CPU (медленнее)

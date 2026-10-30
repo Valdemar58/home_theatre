@@ -5,13 +5,22 @@ import { db, now } from "../db";
 // Порядок — как провайдеры стоят на странице книги. Выключенный не ищет и не обновляет
 // оглавления, его главы не показываются (привязки остаются — включили обратно, и всё на месте).
 
-export type ProviderConfig = { order: string[]; disabled: string[]; libToken: string | null };
+/** Мосты (TASKS 5.9): LNReader — адрес индекса плагинов и включённые плагины; Suwayomi — адрес сервера, репозиторий
+ * расширений Mihon (задаёт пользователь) и источники, в которых искать книги. */
+export type LnreaderConfig = { index: string; plugins: string[] };
+export type SuwayomiConfig = { url: string; repo: string; sources: string[] };
+export type ProviderConfig = { order: string[]; disabled: string[]; libToken: string | null; lnreader: LnreaderConfig; suwayomi: SuwayomiConfig };
+export const LNREADER_INDEX = "https://raw.githubusercontent.com/LNReader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json";
 const KEY = "book-providers";
 
 export function providerConfig(): ProviderConfig {
   const r = db.prepare<[string], { value: string }>("SELECT value FROM app_settings WHERE key = ?").get(KEY);
   const v = r ? (JSON.parse(r.value) as Partial<ProviderConfig>) : {};
-  return { order: v.order ?? [], disabled: v.disabled ?? [], libToken: v.libToken ?? null };
+  return {
+    order: v.order ?? [], disabled: v.disabled ?? [], libToken: v.libToken ?? null,
+    lnreader: { index: v.lnreader?.index || LNREADER_INDEX, plugins: v.lnreader?.plugins ?? [] },
+    suwayomi: { url: v.suwayomi?.url || process.env.SUWAYOMI_URL || "http://suwayomi:4567", repo: v.suwayomi?.repo ?? "", sources: v.suwayomi?.sources ?? [] },
+  };
 }
 
 export function saveProviderConfig(patch: Partial<ProviderConfig>) {
