@@ -1,7 +1,7 @@
 "use client";
 import {
-  ArrowsPointingInIcon, ArrowsPointingOutIcon, BackwardIcon, ChatBubbleBottomCenterTextIcon, Cog6ToothIcon, ForwardIcon,
-  InformationCircleIcon, LanguageIcon, PauseIcon, PlayIcon, SpeakerWaveIcon, SpeakerXMarkIcon, ViewfinderCircleIcon,
+  ArrowsPointingInIcon, ArrowsPointingOutIcon, BackwardIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, Cog6ToothIcon, ForwardIcon,
+  InformationCircleIcon, PauseIcon, PlayIcon, SpeakerWaveIcon, SpeakerXMarkIcon, ViewfinderCircleIcon,
 } from "@heroicons/react/24/solid";
 import type Hls from "hls.js";
 import type JASSUB from "jassub";
@@ -20,6 +20,9 @@ import { StreamStatus, type Stage } from "./StreamStatus";
 
 const QUALITY_KEY = "player-bitrate";
 const AUTOSKIP_KEY = "player-autoskip";
+const SPEED_KEY = "player-speed";
+const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+const speedLabel = (s: number) => `${String(s).replace(".", ",")}×`;
 const SEG_LABEL = { op: "опенинг", ed: "эндинг" } as const;
 const VOLUME_KEY = "player-volume";
 const SUB_KEY = "player-sub-lang";
@@ -146,7 +149,9 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   const [muted, setMuted] = useState(false);
   const [full, setFull] = useState(false);
   const [idle, setIdle] = useState(false);
-  const [menu, setMenu] = useState<"audio" | "sub" | "quality" | null>(null);
+  const [menu, setMenu] = useState(false);
+  // Скорость — общая для всех серий; в комнате всегда 1× (скоростью комната подтягивает отстающих)
+  const [speed, setSpeed] = useState(() => (SPEEDS.includes(Number(store.get(SPEED_KEY))) ? Number(store.get(SPEED_KEY)) : 1));
   const [sub, setSub] = useState<number | null>(null);
   // Надписи поверх субтитров — свой JASSUB; из полной дорожки с переводом — сначала ждём сервер
   const [signs, setSigns] = useState<number | null>(null);
@@ -596,6 +601,8 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
     if (rm && !rm.canControl) { flash("Управляет организатор комнаты"); return; }
     const t = Math.max(0, Math.min(to, (info?.duration || v.duration || to) - 0.5));
     v.currentTime = t;
+    // Время на панели — сразу, не дожидаясь загрузки (timeupdate придёт только после неё)
+    setTime(t);
     rm?.command("seek", t);
   }, [info, flash]);
 
@@ -648,6 +655,21 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
     const slow = setInterval(() => tick(true), 5000);
     return () => { clearInterval(fast); clearInterval(slow); };
   }, [inRoom, started]);
+  // Скорость: новый источник (смена озвучки, перезапуск) сбрасывает её к defaultPlaybackRate — ставим оба
+  const applySpeed = useCallback(() => {
+    const v = video.current;
+    if (!v || roomRef.current) return;
+    v.defaultPlaybackRate = speed;
+    v.playbackRate = speed;
+  }, [speed]);
+  useEffect(() => applySpeed(), [applySpeed, inRoom, info, started]);
+  const changeSpeed = useCallback((s: number) => {
+    if (roomRef.current) { flash("В комнате скорость всегда 1× — иначе разойдётесь"); return; }
+    setSpeed(s);
+    store.set(SPEED_KEY, String(s));
+    flash(`Скорость ${speedLabel(s)}`);
+  }, [flash]);
+
   const fullscreen = useCallback(() => {
     if (document.fullscreenElement) void document.exitFullscreen();
     else void box.current?.requestFullscreen();
@@ -714,6 +736,12 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
       else if (k === "t" || k === "е") void translateFrame();
       else if (k === "z" || k === "я") changeDelayRef.current(delayRef.current - (e.shiftKey ? 1 : 0.1));
       else if (k === "x" || k === "ч") changeDelayRef.current(delayRef.current + (e.shiftKey ? 1 : 0.1));
+      // Shift + < / > — скорость (как на YouTube; в русской раскладке — Б / Ю)
+      else if (e.shiftKey && (k === "<" || k === ">" || k === "б" || k === "ю")) {
+        const i = SPEEDS.indexOf(speed) + (k === "<" || k === "б" ? -1 : 1);
+        if (i >= 0 && i < SPEEDS.length) changeSpeed(SPEEDS[i]);
+      }
+      else if (k === "escape" && menu) setMenu(false);
       else return;
       e.preventDefault();
     };
@@ -721,7 +749,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
     return () => window.removeEventListener("keydown", onKey);
     // setVol меняется каждый рендер, но читает только video.current
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toggle, seek, fullscreen, next, translateFrame]);
+  }, [toggle, seek, fullscreen, next, translateFrame, speed, changeSpeed, menu]);
 
   // Панель прячется через 3 с без движения мыши (во время просмотра)
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -756,7 +784,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
       <video ref={video} className="ac-video h-full w-full" playsInline
         onClick={toggle} onDoubleClick={fullscreen}
         onPlay={() => { setPlaying(true); setFrame(null); }} onPause={() => { setPlaying(false); send(); }}
-        onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
+        onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)} onSeeking={(e) => setTime(e.currentTarget.currentTime)} onLoadedMetadata={applySpeed}
         onProgress={(e) => { const b = e.currentTarget.buffered; setBuffered(b.length ? b.end(b.length - 1) : 0); }}
         onEnded={() => { onEnded?.(); if (next) setCountdown(10); }}>
         {vttSub && <track ref={track} key={vttSub.url} kind="subtitles" src={vttSub.url} srcLang={vttSub.lang ?? "und"} label={vttSub.label} default onLoad={shiftCues} />}
@@ -803,7 +831,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
       {/* Панель управления */}
       <div className={cx("absolute inset-x-0 bottom-0 z-10 bg-linear-to-t from-black/85 to-transparent px-3 pb-2 pt-10 transition-opacity", hidden && "pointer-events-none opacity-0")}>
         <SeekBar duration={duration} time={time} buffered={buffered} chapters={info?.chapters ?? []} onSeek={seek} pct={pct}
-          cached={status?.stream?.cached ?? []} trick={info?.trickplay ?? null} segments={info?.segments ?? []} />
+          cached={status?.stream?.cached ?? []} trick={info?.trickplay ?? null} segments={info?.segments ?? []} video={video} />
         <div className="mt-1 flex items-center gap-1 text-white">
           <Ctl onClick={toggle} label={playing ? "Пауза (пробел)" : "Смотреть (пробел)"}>
             {playing ? <PauseIcon className="h-6 w-6" /> : <PlayIcon className="h-6 w-6" />}
@@ -822,43 +850,21 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
               {next.label} ›
             </button>
           )}
-          {info && info.audio.length > 1 && (
-            <Menu open={menu === "audio"} onOpen={() => setMenu(menu === "audio" ? null : "audio")} label="Озвучка" icon={<LanguageIcon className="h-5 w-5" />}
-              items={info.audio.map((a) => ({ key: a.index, label: a.label, active: a.index === info.audioIndex }))}
-              onPick={(i) => { setMenu(null); if (i !== info.audioIndex) void open({ audio: Number(i), start: video.current?.currentTime ?? 0 }); }} />
-          )}
-          {info && info.subs.length > 0 && (
-            <Menu open={menu === "sub"} onOpen={() => setMenu(menu === "sub" ? null : "sub")} label="Субтитры" icon={<ChatBubbleBottomCenterTextIcon className="h-5 w-5" />}
-              items={[{ key: -1, label: "Выключены", active: sub === null }, ...info.subs.filter((s) => !s.fromSub).map((s) => ({ key: s.index, label: `${s.label}${s.signs ? " (надписи)" : ""}`, active: s.index === sub }))]}
-              onPick={(i) => { setMenu(null); chooseSub(i === -1 ? null : Number(i)); }} />
-          )}
-          <Menu open={menu === "quality"} onOpen={() => setMenu(menu === "quality" ? null : "quality")} label="Качество" icon={<Cog6ToothIcon className="h-5 w-5" />}
-            items={[
-              ...QUALITIES.map((q) => ({ key: q.value, label: q.label, active: q.value === (Number(store.get(QUALITY_KEY)) || 0) })),
-              { key: -1, label: "Совместимый режим (H.264)", active: compat },
-              { key: -2, label: "Пропускать опенинг и эндинг сам", active: autoSkip },
-            ]}
-            onPick={(v) => {
-              setMenu(null);
-              // Совместимый режим — переключатель: видео всегда в H.264 (если HEVC в браузере показывает чёрный экран)
-              if (v === -2) {
-                store.set(AUTOSKIP_KEY, autoSkip ? "0" : "1");
-                setAutoSkip(!autoSkip);
-                return;
-              }
-              if (v === -1) store.set(COMPAT_KEY, compat ? "0" : "1");
-              else store.set(QUALITY_KEY, String(v));
-              void open({ audio: info?.audioIndex ?? null, start: video.current?.currentTime ?? 0 });
-            }} />
+          <Settings open={menu} onToggle={() => setMenu(!menu)} onClose={() => setMenu(false)} info={info} sub={sub}
+            speed={inRoom ? 1 : speed} speedLocked={inRoom} onSpeed={changeSpeed}
+            quality={Number(store.get(QUALITY_KEY)) || 0} compat={compat} autoSkip={autoSkip} delay={subDelay}
+            onQuality={(v) => { store.set(QUALITY_KEY, String(v)); void open({ audio: info?.audioIndex ?? null, start: video.current?.currentTime ?? 0 }); }}
+            // Совместимый режим — видео всегда в H.264 (если HEVC в браузере показывает чёрный экран)
+            onCompat={() => { store.set(COMPAT_KEY, compat ? "0" : "1"); void open({ audio: info?.audioIndex ?? null, start: video.current?.currentTime ?? 0 }); }}
+            onAutoSkip={() => { store.set(AUTOSKIP_KEY, autoSkip ? "0" : "1"); setAutoSkip(!autoSkip); }}
+            onAudio={(i) => { if (info && i !== info.audioIndex) void open({ audio: i, start: video.current?.currentTime ?? 0 }); }}
+            onSub={chooseSub} onDelay={changeDelay} />
           {started && <Ctl onClick={() => void translateFrame()} label="Перевести надписи в кадре (T)"><ViewfinderCircleIcon className="h-5 w-5" /></Ctl>}
           <Ctl onClick={() => setShowStatus((x) => !x)} label="Состояние потока"><InformationCircleIcon className="h-5 w-5" /></Ctl>
           <Ctl onClick={fullscreen} label="Во весь экран (F)">
             {full ? <ArrowsPointingInIcon className="h-5 w-5" /> : <ArrowsPointingOutIcon className="h-5 w-5" />}
           </Ctl>
         </div>
-        {info && info.transcode.length > 0 && menu === "quality" && (
-          <p className="mt-1 text-right text-[11px] text-white/50">Jellyfin перекодирует: {info.transcode.join(", ")}</p>
-        )}
       </div>
     </div>
   );
@@ -896,59 +902,209 @@ function Ctl({ onClick, label, children }: { onClick: () => void; label: string;
   );
 }
 
-function Menu({ open, onOpen, label, icon, items, onPick }: {
-  open: boolean; onOpen: () => void; label: string; icon: React.ReactNode;
-  items: { key: number; label: string; active: boolean }[]; onPick: (key: number) => void;
+type SettingsPage = "main" | "speed" | "quality" | "audio" | "sub";
+
+/**
+ * Настройки плеера одной панелью (как на YouTube): главная — строки с текущим значением, по нажатию — список;
+ * переключатели — на главной. Закрывается кнопкой, Esc или щелчком мимо.
+ */
+function Settings({ open, onToggle, onClose, info, sub, speed, speedLocked, onSpeed, quality, compat, autoSkip, delay,
+  onQuality, onCompat, onAutoSkip, onAudio, onSub, onDelay }: {
+  open: boolean; onToggle: () => void; onClose: () => void; info: PlayInfo | null; sub: number | null;
+  speed: number; speedLocked: boolean; onSpeed: (s: number) => void;
+  quality: number; compat: boolean; autoSkip: boolean; delay: number;
+  onQuality: (v: number) => void; onCompat: () => void; onAutoSkip: () => void;
+  onAudio: (i: number) => void; onSub: (i: number | null) => void; onDelay: (sec: number) => void;
 }) {
+  const [page, setPage] = useState<SettingsPage>("main");
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (!open) setPage("main"); }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) onClose(); };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [open, onClose]);
+
+  const audio = info?.audio.find((a) => a.index === info.audioIndex);
+  const subs = info?.subs.filter((s) => !s.fromSub) ?? [];
+  const subNow = subs.find((s) => s.index === sub);
+  const subLabel = (s: PlayInfo["subs"][number]) => `${s.label}${s.signs ? " (надписи)" : ""}`;
+  const pick = (fn: () => void) => { fn(); setPage("main"); };
+
   return (
-    <div className="relative">
-      <Ctl onClick={onOpen} label={label}>{icon}</Ctl>
+    <div ref={root} className="relative">
+      <Ctl onClick={onToggle} label="Настройки"><Cog6ToothIcon className={cx("h-5 w-5 transition-transform", open && "rotate-45")} /></Ctl>
       {open && (
-        <div className="absolute bottom-11 right-0 z-10 max-h-72 min-w-48 overflow-y-auto rounded-lg bg-gray-900/95 p-1 text-sm shadow-xl ring-1 ring-gray-700">
-          <p className="px-2.5 py-1 text-xs text-gray-400">{label}</p>
-          {items.map((i) => (
-            <button key={i.key} onClick={() => onPick(i.key)}
-              className={cx("block w-full rounded-md px-2.5 py-1.5 text-left hover:bg-gray-700/70", i.active ? "text-accent-300" : "text-gray-100")}>
-              {i.label}
-            </button>
-          ))}
+        <div className="absolute bottom-11 right-0 z-10 max-h-[min(24rem,70vh)] w-72 overflow-y-auto rounded-lg bg-gray-900/95 p-1 text-sm text-gray-100 shadow-xl ring-1 ring-gray-700">
+          {page === "main" && (
+            <>
+              <Row label="Скорость" value={speedLocked ? "1× · в комнате" : speedLabel(speed)} onClick={speedLocked ? undefined : () => setPage("speed")} />
+              <Row label="Качество" value={`${QUALITIES.find((q) => q.value === quality)?.label ?? "Авто"}${compat ? " · H.264" : ""}`} onClick={() => setPage("quality")} />
+              {info && info.audio.length > 1 && <Row label="Озвучка" value={audio?.label ?? "—"} onClick={() => setPage("audio")} />}
+              {subs.length > 0 && <Row label="Субтитры" value={subNow ? subLabel(subNow) : "Выключены"} onClick={() => setPage("sub")} />}
+              <div className="my-1 border-t border-gray-700/70" />
+              <Switch label="Пропускать опенинг и эндинг" on={autoSkip} onClick={onAutoSkip} />
+              <Switch label="Совместимый режим (H.264)" hint="Если вместо картинки чёрный экран" on={compat} onClick={onCompat} />
+              {info && info.transcode.length > 0 && (
+                <p className="px-2.5 pb-1 pt-2 text-[11px] text-gray-500">Jellyfin перекодирует: {info.transcode.join(", ")}</p>
+              )}
+            </>
+          )}
+          {page === "speed" && (
+            <Sub title="Скорость" onBack={() => setPage("main")}>
+              {SPEEDS.map((s) => <Item key={s} label={s === 1 ? "Обычная" : speedLabel(s)} active={s === speed} onClick={() => pick(() => onSpeed(s))} />)}
+            </Sub>
+          )}
+          {page === "quality" && (
+            <Sub title="Качество" onBack={() => setPage("main")}>
+              {QUALITIES.map((q) => <Item key={q.value} label={q.label} active={q.value === quality} onClick={() => pick(() => { if (q.value !== quality) onQuality(q.value); })} />)}
+            </Sub>
+          )}
+          {page === "audio" && info && (
+            <Sub title="Озвучка" onBack={() => setPage("main")}>
+              {info.audio.map((a) => <Item key={a.index} label={a.label} active={a.index === info.audioIndex} onClick={() => pick(() => onAudio(a.index))} />)}
+            </Sub>
+          )}
+          {page === "sub" && (
+            <Sub title="Субтитры" onBack={() => setPage("main")}>
+              <Item label="Выключены" active={sub === null} onClick={() => pick(() => onSub(null))} />
+              {subs.map((s) => <Item key={s.index} label={subLabel(s)} active={s.index === sub} onClick={() => pick(() => onSub(s.index))} />)}
+              {sub !== null && (
+                <div className="mt-1 flex items-center gap-1 border-t border-gray-700/70 px-2.5 pt-2" title="Z / X — на 0,1 с, с Shift — на 1 с">
+                  <span className="flex-1 text-gray-300">Сдвиг</span>
+                  <button onClick={() => onDelay(delay - 0.1)} className="rounded px-2 py-0.5 hover:bg-gray-700/70" aria-label="Раньше на 0,1 с">−</button>
+                  <span className="w-14 text-center tabular-nums">{delay > 0 ? "+" : ""}{delay.toFixed(1).replace(".", ",")} с</span>
+                  <button onClick={() => onDelay(delay + 0.1)} className="rounded px-2 py-0.5 hover:bg-gray-700/70" aria-label="Позже на 0,1 с">+</button>
+                </div>
+              )}
+            </Sub>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function SeekBar({ duration, time, buffered, chapters, onSeek, pct, cached, trick, segments }: {
+function Row({ label, value, onClick }: { label: string; value: string; onClick?: () => void }) {
+  return (
+    <button onClick={onClick} disabled={!onClick}
+      className="flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left hover:bg-gray-700/70 disabled:hover:bg-transparent">
+      <span className="shrink-0">{label}</span>
+      <span className="ml-auto min-w-0 truncate text-gray-400" title={value}>{value}</span>
+      {onClick && <ChevronRightIcon className="h-4 w-4 shrink-0 text-gray-500" />}
+    </button>
+  );
+}
+
+function Switch({ label, hint, on, onClick }: { label: string; hint?: string; on: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} role="switch" aria-checked={on} className="flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left hover:bg-gray-700/70">
+      <span className="min-w-0 flex-1">
+        {label}
+        {hint && <span className="block text-[11px] text-gray-500">{hint}</span>}
+      </span>
+      <span className={cx("relative h-5 w-9 shrink-0 rounded-full transition", on ? "bg-accent-500" : "bg-gray-600")}>
+        <span className={cx("absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all", on ? "left-4.5" : "left-0.5")} />
+      </span>
+    </button>
+  );
+}
+
+function Sub({ title, onBack, children }: { title: string; onBack: () => void; children: React.ReactNode }) {
+  return (
+    <>
+      <button onClick={onBack} className="mb-1 flex w-full items-center gap-1.5 rounded-md border-b border-gray-700/70 px-1.5 py-2 text-left font-medium hover:bg-gray-700/70">
+        <ChevronLeftIcon className="h-4 w-4 text-gray-400" />{title}
+      </button>
+      {children}
+    </>
+  );
+}
+
+function Item({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} className={cx("flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left hover:bg-gray-700/70", active && "text-accent-300")}>
+      <CheckIcon className={cx("h-4 w-4 shrink-0", !active && "invisible")} />
+      <span className="min-w-0">{label}</span>
+    </button>
+  );
+}
+
+function SeekBar({ duration, time, buffered, chapters, onSeek, pct, cached, trick, segments, video }: {
   duration: number; time: number; buffered: number; chapters: { name: string; start: number }[];
   /** Скачано TorrServer — доли файла (серия «Стрима»); куда можно перематывать без ожидания */
   cached: [number, number][];
-  /** Миниатюры (trickplay Jellyfin) — кадр над подсказкой времени */
+  /** Миниатюры (trickplay Jellyfin или свои у скачанной серии) — кадр над подсказкой времени */
   trick: PlayInfo["trickplay"];
   segments: PlayInfo["segments"];
   onSeek: (t: number) => void; pct: (t: number) => string;
+  /** Позиция берётся прямо из видео каждый кадр — без перерисовки плеера (timeupdate приходит ~4 раза в секунду) */
+  video: React.RefObject<HTMLVideoElement | null>;
 }) {
   const bar = useRef<HTMLDivElement>(null);
+  const fill = useRef<HTMLDivElement>(null);
+  const head = useRef<HTMLSpanElement>(null);
   const [hover, setHover] = useState<number | null>(null);
+  // Тянем головку: позиция — под пальцем, перемотка — когда отпустили
+  const [drag, setDrag] = useState<number | null>(null);
+  const dragRef = useRef<number | null>(null);
+  const timeRef = useRef(time);
+  timeRef.current = time;
   const at = (clientX: number) => {
     const r = bar.current!.getBoundingClientRect();
     return Math.max(0, Math.min(1, (clientX - r.left) / r.width)) * duration;
   };
+  useEffect(() => {
+    let raf = 0;
+    const draw = () => {
+      const v = video.current;
+      const t = dragRef.current ?? (v && Number.isFinite(v.currentTime) && v.readyState > 0 ? v.currentTime : timeRef.current);
+      const w = `${duration ? Math.min(100, (t / duration) * 100) : 0}%`;
+      if (fill.current) fill.current.style.width = w;
+      if (head.current) head.current.style.left = w;
+      raf = requestAnimationFrame(draw);
+    };
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, [duration, video]);
+  const point = drag ?? hover;
   const chapterAt = (t: number) => [...chapters].reverse().find((c) => c.start <= t)?.name;
   // Подсказка у края шкалы не уходит за рамку плеера: центр — не ближе половины её ширины к краю
   const tip = useRef<HTMLSpanElement>(null);
   useLayoutEffect(() => {
     const el = tip.current, b = bar.current;
-    if (!el || !b || hover === null || !duration) return;
+    if (!el || !b || point === null || !duration) return;
     const W = b.clientWidth, w = el.offsetWidth;
-    el.style.left = `${Math.max(w / 2, Math.min(W - w / 2, (hover / duration) * W))}px`;
-  }, [hover, duration]);
+    el.style.left = `${Math.max(w / 2, Math.min(W - w / 2, (point / duration) * W))}px`;
+  }, [point, duration]);
+  const dragging = drag !== null;
   return (
-    <div ref={bar} className="group/bar relative h-4 cursor-pointer" role="slider" aria-label="Перемотка" aria-valuemin={0} aria-valuemax={duration} aria-valuenow={time}
-      onMouseMove={(e) => setHover(at(e.clientX))} onMouseLeave={() => setHover(null)}
-      onClick={(e) => onSeek(at(e.clientX))}>
-      <div className="absolute inset-x-0 top-1.5 h-1 rounded-full bg-white/25 transition-all group-hover/bar:top-1 group-hover/bar:h-2">
+    <div ref={bar} className="group/bar relative h-5 cursor-pointer touch-none select-none" role="slider" aria-label="Перемотка" aria-valuemin={0} aria-valuemax={duration} aria-valuenow={time}
+      onPointerDown={(e) => {
+        if (e.button !== 0 || !duration) return;
+        e.currentTarget.setPointerCapture(e.pointerId);
+        const t = at(e.clientX);
+        dragRef.current = t;
+        setDrag(t);
+      }}
+      onPointerMove={(e) => {
+        const t = at(e.clientX);
+        if (dragRef.current !== null) { dragRef.current = t; setDrag(t); }
+        else if (e.pointerType === "mouse") setHover(t);
+      }}
+      onPointerUp={(e) => {
+        if (dragRef.current === null) return;
+        const t = at(e.clientX);
+        dragRef.current = null;
+        setDrag(null);
+        onSeek(t);
+      }}
+      onPointerCancel={() => { dragRef.current = null; setDrag(null); }}
+      onPointerLeave={() => setHover(null)}>
+      <div className={cx("absolute inset-x-0 top-2 h-1 rounded-full bg-white/25 transition-[height,top] duration-100 group-hover/bar:top-1.5 group-hover/bar:h-2", dragging && "top-1.5 h-2")}>
         <div className="absolute inset-y-0 left-0 rounded-full bg-white/35" style={{ width: pct(buffered) }} />
-        <div className="absolute inset-y-0 left-0 rounded-full bg-accent-400" style={{ width: pct(time) }} />
+        <div ref={fill} className="absolute inset-y-0 left-0 rounded-full bg-accent-400" />
         {/* Опенинг и эндинг — отмечены на шкале */}
         {segments.map((sg) => (
           <span key={sg.kind + sg.start} title={SEG_LABEL[sg.kind]} className="absolute inset-y-0 bg-warning-300/45"
@@ -962,10 +1118,13 @@ function SeekBar({ duration, time, buffered, chapters, onSeek, pct, cached, tric
           <span key={c.start} className="absolute inset-y-0 w-0.5 bg-black/60" style={{ left: pct(c.start) }} />
         ))}
       </div>
-      {hover !== null && trick && <TrickThumb trick={trick} t={hover} left={pct(hover)} />}
-      {hover !== null && (
-        <span ref={tip} className="pointer-events-none absolute -top-7 -translate-x-1/2 whitespace-nowrap rounded bg-black/80 px-1.5 py-0.5 text-xs text-white" style={{ left: pct(hover) }}>
-          {clock(hover)}{chapterAt(hover) ? ` · ${chapterAt(hover)}` : ""}
+      {/* Головка: появляется при наведении, при перетаскивании — крупнее */}
+      <span ref={head} className={cx("pointer-events-none absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent-300 shadow ring-2 ring-black/30 transition-transform duration-100",
+        dragging ? "scale-125" : "scale-0 group-hover/bar:scale-100")} />
+      {point !== null && trick && <TrickThumb trick={trick} t={point} left={pct(point)} />}
+      {point !== null && (
+        <span ref={tip} className="pointer-events-none absolute -top-7 -translate-x-1/2 whitespace-nowrap rounded bg-black/80 px-1.5 py-0.5 text-xs text-white" style={{ left: pct(point) }}>
+          {clock(point)}{chapterAt(point) ? ` · ${chapterAt(point)}` : ""}
         </span>
       )}
     </div>

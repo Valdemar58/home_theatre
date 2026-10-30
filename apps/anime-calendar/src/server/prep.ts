@@ -10,6 +10,7 @@ import { mappingForAnilist } from "./idmap";
 import { notify } from "./notifications";
 import { qbitAdd, qbitConfigured, qbitDelete, qbitFilePrio, qbitFiles, qbitStart, qbitTorrent, type QbitFile } from "./qbit";
 import { strmEpisodes, streamAnilistId } from "./stream";
+import { dropThumbs, ensureThumbs } from "./thumbs";
 
 // «Подготовить серию» скачиванием (TASKS 9.8): файл раздачи «Стрима» целиком качает qBittorrent в STREAM_DIR/.prep/<хэш>/,
 // готовую серию маршрутизатор потоков (apps/stream-router) отдаёт Jellyfin с диска вместо TorrServer — по тем же ссылкам
@@ -69,6 +70,13 @@ function writeIndex() {
 export function isPrepared(hash: string, index: number): boolean {
   const r = rowOf(`${hash}:${index}`);
   return Boolean(r?.done_at && fs.existsSync(path.join(PREP_DIR(), r.rel)));
+}
+
+/** Файл скачанной серии на диске календаря (для миниатюр шкалы) или null. */
+export function preparedPath(hash: string, index: number): string | null {
+  const r = rowOf(`${hash}:${index}`);
+  const p = r?.done_at ? path.join(PREP_DIR(), r.rel) : null;
+  return p && fs.existsSync(p) ? p : null;
 }
 
 /** Скачанные серии раздачи: номер файла → доля (готовые — 1, качающиеся — по qBittorrent не спрашиваем, 0). */
@@ -166,6 +174,8 @@ export async function downloadEpisode(opts: {
   }
   db.prepare("UPDATE prepared_files SET done_at = ? WHERE key = ?").run(now(), key);
   writeIndex();
+  // Миниатюры шкалы — сразу, пока серию не открыли (Jellyfin для «Стрима» их не делает)
+  ensureThumbs(hash, index, final);
   return { mode: "download", size: file.length };
 }
 
@@ -182,6 +192,7 @@ async function dropOne(key: string) {
   if (!r) return;
   db.prepare("DELETE FROM prepared_files WHERE key = ?").run(key);
   writeIndex();
+  dropThumbs(r.hash, r.idx);
   const rest = db.prepare<[string], { n: number }>("SELECT count(*) n FROM prepared_files WHERE hash = ?").get(r.hash)!.n;
   if (!rest) {
     await qbitDelete(r.hash, true).catch((e) => console.warn(`[prep] удаление раздачи ${r.hash}: ${String(e)}`));
@@ -225,6 +236,11 @@ export async function cleanupPrepared(): Promise<void> {
   }
   for (const key of evict) await dropOne(key).catch((e) => console.warn(`[prep] ${key}: ${String(e)}`));
   writeIndex();
+  // Миниатюры шкалы у оставшихся (скачанных до появления миниатюр или после сбоя)
+  for (const r of all) {
+    const file = !evict.has(r.key) && preparedPath(r.hash, r.idx);
+    if (file) ensureThumbs(r.hash, r.idx, file);
+  }
 }
 
 /** Сводка для «Загрузок»: сколько серий и места занято, лимит. */

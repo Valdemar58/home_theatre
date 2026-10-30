@@ -15,7 +15,8 @@ import { ensureSegments, itemKey, storedSegments } from "./segments";
 import { releaseTag, streamSubs, subsForVideo, syncStreamSubsSoon } from "./stream-subs";
 import { sdhFile } from "./sdh";
 import { episodeVoices, fetchVoice, setVoicePref, voicePref, type EpisodeVoice } from "./stream-voices";
-import { isPrepared } from "./prep";
+import { isPrepared, preparedPath } from "./prep";
+import { ensureThumbs, thumbsKey, thumbsOf } from "./thumbs";
 import { dropTorrentCache, jellyfin, torrentCached, torrentStats } from "./stream";
 import { episodeStatus } from "./availability";
 
@@ -199,7 +200,14 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
   if (live) live.subs = subs;
   const meta = await chaptersOf(item.itemId, ms.Id);
   const chapters = meta.chapters.filter((c) => c.start < duration);
-  const trickplay = meta.trickplay && { ...meta.trickplay, url: `${base}/trickplay/${meta.trickplay.width}` };
+  // Миниатюры шкалы: Jellyfin (библиотеки), у скачанной серии «Стрима» — свои (ещё нет — делаются в фоне)
+  let trickplay = meta.trickplay && { ...meta.trickplay, url: `${base}/trickplay/${meta.trickplay.width}` };
+  const local = !trickplay && item.hash && item.index ? preparedPath(item.hash, item.index) : null;
+  if (local) {
+    const own = thumbsOf(item.hash!, item.index!);
+    if (own) trickplay = { ...own, url: `/api/thumbs/${thumbsKey(item.hash!, item.index!)}` };
+    else ensureThumbs(item.hash!, item.index!, local);
+  }
   // Опенинг и эндинг: главы файла точнее всего; нет глав — найденные по звуку (нет отпечатка — поиск в фон)
   const byChapters = segmentsFromChapters(chapters, duration);
   const key = itemKey(item);
