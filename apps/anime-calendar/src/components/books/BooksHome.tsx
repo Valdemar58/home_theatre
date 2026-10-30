@@ -104,7 +104,7 @@ const SUBS = [{ id: "", label: "Все" }, { id: "manga", label: "Манга" },
 const STATUSES = [{ id: "", label: "Любой статус" }, { id: "RELEASING", label: "Выходит" }, { id: "FINISHED", label: "Завершена" }];
 const GENRES = Object.keys(GENRE_LABELS).filter((g) => g !== "Hentai");
 
-type BrowsePage = { books: BookLite[]; more: boolean; fromAnime: (BookRelation & { ru: string | null; anime: number })[] | null };
+type BrowsePage = { books: BookLite[]; more: boolean; fromAnime: (BookRelation & { ru: string | null; anime: number })[] | null; ru: number[] };
 
 /** Каталог книг: по аниме, которое смотрел, и вся база AniList с фильтрами. */
 function Catalog({ kind }: { kind: Kind }) {
@@ -120,6 +120,7 @@ function Catalog({ kind }: { kind: Kind }) {
   });
   const fromAnime = q.data?.pages[0]?.fromAnime ?? [];
   const books = q.data?.pages.flatMap((p) => p.books) ?? [];
+  const ru = new Set(q.data?.pages.flatMap((p) => p.ru) ?? []);
   const toggle = (g: string) => setGenres(genres.includes(g) ? genres.filter((x) => x !== g) : [...genres, g]);
   return (
     <>
@@ -128,7 +129,7 @@ function Catalog({ kind }: { kind: Kind }) {
           {fromAnime.map((b) => (
             <div key={b.id} className="w-32 shrink-0">
               <BookCard book={{ id: b.id, idMal: null, format: b.format, kind: b.format === "NOVEL" ? "novel" : "manga", status: b.status, chapters: null, volumes: null, countryOfOrigin: null, isAdult: false,
-                title: { romaji: b.title, english: null, native: null, ru: b.ru }, coverImage: { large: b.cover, color: null }, year: b.year, averageScore: null }} />
+                title: { romaji: b.title, english: null, native: null, ru: b.ru }, coverImage: { large: b.cover, color: null }, year: b.year, averageScore: null }} ru={ru.has(b.id)} />
             </div>
           ))}
         </Row>
@@ -148,7 +149,7 @@ function Catalog({ kind }: { kind: Kind }) {
           </div>
         </div>
         {q.error ? <ErrorBox error={q.error} /> : null}
-        {q.isLoading ? <Skel className="h-80 w-full" /> : !books.length ? <p className="text-sm text-gray-500">Ничего не нашлось</p> : <Grid books={books} />}
+        {q.isLoading ? <Skel className="h-80 w-full" /> : !books.length ? <p className="text-sm text-gray-500">Ничего не нашлось</p> : <Grid books={books} ru={ru} />}
         {q.hasNextPage && (
           <div className="flex justify-center">
             <Button onClick={() => void q.fetchNextPage()} disabled={q.isFetchingNextPage}>{q.isFetchingNextPage ? <Spinner className="h-4 w-4" /> : null}Показать ещё</Button>
@@ -159,19 +160,21 @@ function Catalog({ kind }: { kind: Kind }) {
   );
 }
 
-export function Grid({ books }: { books: BookLite[] }) {
+export function Grid({ books, ru }: { books: BookLite[]; ru?: Set<number> }) {
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-      {books.map((b) => <BookCard key={b.id} book={b} />)}
+      {books.map((b) => <BookCard key={b.id} book={b} ru={ru?.has(b.id)} />)}
     </div>
   );
 }
 
-export function BookCard({ book, extra }: { book: BookLite; extra?: string }) {
+/** Карточка книги; ru — русский перевод уже известен (нашёлся у провайдеров). */
+export function BookCard({ book, extra, ru }: { book: BookLite; extra?: string; ru?: boolean }) {
   return (
     <Link href={`/manga/${book.id}`} className="group space-y-1.5">
-      <div className="aspect-[2/3] overflow-hidden rounded-lg bg-gray-800 ring-1 ring-gray-700">
+      <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-gray-800 ring-1 ring-gray-700">
         {book.coverImage.large && <Img src={book.coverImage.large} size="card" className="h-full w-full object-cover transition group-hover:scale-105" />}
+        {ru && <span title="Есть главы на русском" className="absolute left-1.5 top-1.5 rounded px-1.5 text-[10px] font-semibold tone-positive solid">RU</span>}
       </div>
       <p className="line-clamp-2 text-sm text-gray-100 group-hover:text-accent-200">{bookName(book)}</p>
       <p className="text-xs text-gray-500">{[KIND_LABELS[book.kind], book.year, extra].filter(Boolean).join(" · ")}</p>

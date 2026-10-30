@@ -1,5 +1,5 @@
 import { browseBooks, type BookBrowse } from "@/server/books/anilist-books";
-import { booksFromMyAnime } from "@/server/books/discover";
+import { booksFromMyAnime, knownRu } from "@/server/books/discover";
 import { authed, json } from "@/server/route";
 
 const pick = <T extends string>(v: string | null, allowed: readonly T[]): T | undefined => (allowed.includes(v as T) ? (v as T) : undefined);
@@ -16,5 +16,6 @@ export const GET = authed(async (req, user) => {
     page: Math.max(1, Math.min(50, Number(u.get("page")) || 1)),
   };
   const res = await browseBooks(f);
-  return json({ ...res, fromAnime: f.page === 1 ? booksFromMyAnime(user.id, f.kind) : null });
+  const fromAnime = f.page === 1 ? booksFromMyAnime(user.id, f.kind) : null;
+  return json({ ...res, fromAnime, ru: knownRu([...res.books.map((b) => b.id), ...(fromAnime ?? []).map((b) => b.id)]) });
 });

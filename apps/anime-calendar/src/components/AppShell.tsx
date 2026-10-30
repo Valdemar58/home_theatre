@@ -47,7 +47,7 @@ const NAV: { href: string; label: string; icon: typeof CalendarDaysIcon; section
   { href: "/lists", label: "Мои списки", icon: QueueListIcon, section: "lists" },
   { href: "/friends", label: "Друзья", icon: UsersIcon },
   { href: "/groups", label: "Группы", icon: UserGroupIcon },
-  { href: "/recommendations", label: "Для тебя", icon: SparklesIcon },
+  { href: "/recommendations", label: "Для тебя", icon: SparklesIcon, section: "picks" },
   { href: "/graph", label: "Карта", icon: MapIcon },
   { href: "/downloads", label: "Загрузки", icon: ArrowDownTrayIcon },
   { href: "/settings", label: "Настройки", icon: Cog6ToothIcon },

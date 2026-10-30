@@ -57,16 +57,16 @@ export function useModeTakeover(value: Mode | null, pick: (m: Mode) => void) {
 const isBookPath = (p: string) => p.startsWith("/manga");
 
 // Разделы меню, у которых своё содержимое в каждом режиме
-export type Section = "calendar" | "catalog" | "lists";
-const ANIME_HREF: Record<Section, string> = { calendar: "/calendar", catalog: "/browse", lists: "/lists" };
-const BOOK_PATH: Record<Section, string> = { calendar: "/manga/releases", catalog: "/manga", lists: "/manga/list" };
+export type Section = "calendar" | "catalog" | "lists" | "picks";
+const ANIME_HREF: Record<Section, string> = { calendar: "/calendar", catalog: "/browse", lists: "/lists", picks: "/recommendations" };
+const BOOK_PATH: Record<Section, string> = { calendar: "/manga/releases", catalog: "/manga", lists: "/manga/list", picks: "/manga/for-you" };
 
 /** Адрес раздела в режиме: аниме — свои страницы, книги — раздел /manga с видом. */
 export const sectionHref = (s: Section, m: Mode) => (m === "anime" ? ANIME_HREF[s] : `${BOOK_PATH[s]}?kind=${m}`);
 
 /** Раздел по адресу (страница книги и прочие — без раздела). */
 export function sectionOf(pathname: string): Section | null {
-  for (const s of ["calendar", "lists", "catalog"] as Section[]) {
+  for (const s of ["calendar", "lists", "picks", "catalog"] as Section[]) {
     if (pathname === BOOK_PATH[s] || pathname.startsWith(ANIME_HREF[s])) return s;
   }
   return null;
