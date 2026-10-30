@@ -3,6 +3,7 @@ import sharp from "sharp";
 import type { JsonSchema } from "@/lib/json-lite";
 import { displayTitle } from "@/lib/schedule";
 import { bestOutput, hashOf, recordOutput } from "./knowledge";
+import { glossaryHint } from "./glossary";
 import { getMedia } from "./lists";
 import { runTask } from "./llm";
 import { episodeSource } from "./playback";
@@ -32,7 +33,8 @@ const SCHEMA: JsonSchema = {
 };
 
 const SYSTEM = "You read text in anime frames and translate it into Russian.";
-const ask = (title: string) => `This is a frame from the anime «${title}».
+const ask = (title: string, names: string[]) => `This is a frame from the anime «${title}».${names.length ? `
+Names and terms of this series in Russian (use these spellings): ${names.join("; ")}.` : ""}
 Find every piece of written text in the image: signs, banners, screens, notes, letters, titles, labels. Japanese text may be vertical (top to bottom columns) — list each block separately. Skip invented or decorative scripts of the fictional world that are not a real language, and TV channel logos.
 Output one JSON object: {"items": [{"bbox_2d": [x1, y1, x2, y2], "text": "original text", "ru": "Russian translation"}]}.
 Translate briefly, as a sign would read. If there is no text, output {"items": []}.`;
@@ -79,7 +81,7 @@ export function frameText(s: PlaySession, t: number): Promise<FrameItem[]> {
     const sq = await square(await grab(src, sec));
     const m = getMedia(s.anilistId);
     const res = await runTask<Raw>("frame", {
-      schema: SCHEMA, system: SYSTEM, user: ask(m ? displayTitle(m.title) : "anime"), images: [sq.img.toString("base64")],
+      schema: SCHEMA, system: SYSTEM, user: ask(m ? displayTitle(m.title) : "anime", await glossaryHint({ anime: s.anilistId }).catch(() => [])), images: [sq.img.toString("base64")],
       maxTokens: 1500, timeoutMs: 180_000, freeform: true,
     });
     const items: FrameItem[] = [];

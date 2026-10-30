@@ -3,6 +3,7 @@ import type { JsonSchema } from "@/lib/json-lite";
 import { chunkText, glossaryFor } from "@/lib/translate-text";
 import { getDetails } from "./anilist";
 import { characterGlossary } from "./characters";
+import { franchiseGlossary } from "./glossary";
 import { corpusOf } from "./corpus-store";
 import { bestOutput, hashOf, recordOutput, type Known } from "./knowledge";
 import { runTask } from "./llm";
@@ -57,7 +58,8 @@ export function translateEpisode(anilistId: number, ep: number, source: string, 
     const d = await getDetails(anilistId);
     // Имена Shikimori первыми (их варианты главнее), дальше имена и термины пересказа сезона до этой серии
     const deep = seasonPlot(anilistId, ep)?.state;
-    const chars = [...await characterGlossary(d.idMal).catch(() => []), ...(deep ? deepGlossary(deep) : [])];
+    // Единый глоссарий франшизы главнее (ручные правки), прежний словарь — то, чего в нём нет
+    const chars = await franchiseGlossary({ anime: anilistId }, [...await characterGlossary(d.idMal).catch(() => []), ...(deep ? deepGlossary(deep) : [])]);
     // Русское название серии (TMDB) — подсказка для названий и терминов
     const ruTitle = texts.find((t) => t.lang === "ru" && t.title)?.title;
     const head = [

@@ -979,6 +979,35 @@ function migrateBooks(db: Db) {
     data TEXT NOT NULL,
     PRIMARY KEY (user_id, book_id)
   )`);
+  // Единый глоссарий франшизы (TASKS 5.6): корень — франшиза аниме (у книги — её экранизации) или сама книга
+  db.exec(`CREATE TABLE IF NOT EXISTS glossary_term (
+    id INTEGER PRIMARY KEY,
+    root_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    ja TEXT,
+    en TEXT,
+    ru TEXT NOT NULL,
+    alts TEXT NOT NULL DEFAULT '[]',
+    note TEXT,
+    source TEXT NOT NULL,
+    locked INTEGER NOT NULL DEFAULT 0,
+    proposed INTEGER NOT NULL DEFAULT 0,
+    hidden INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL
+  )`);
+  db.exec("CREATE INDEX IF NOT EXISTS glossary_term_root ON glossary_term (root_id)");
+  db.exec(`CREATE TABLE IF NOT EXISTS glossary_root (
+    media_id INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    root_id INTEGER NOT NULL,
+    checked_at INTEGER NOT NULL,
+    PRIMARY KEY (media_id, type)
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS glossary_meta (
+    root_id INTEGER PRIMARY KEY,
+    title TEXT,
+    collected_at INTEGER
+  )`);
   // Уведомления о главах: сколько глав было на каждом языке при прошлой проверке
   db.exec(`CREATE TABLE IF NOT EXISTS chapter_marks (
     user_id INTEGER NOT NULL,

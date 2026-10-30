@@ -6,6 +6,7 @@ import { glossaryFor } from "@/lib/translate-text";
 import { displayTitle } from "@/lib/schedule";
 import { getDetails } from "./anilist";
 import { characterGlossary } from "./characters";
+import { franchiseGlossary } from "./glossary";
 import { env } from "./env";
 import { bestOutput, hashOf, recordOutput } from "./knowledge";
 import { getMedia } from "./lists";
@@ -68,7 +69,7 @@ function translate(s: PlaySession, sub: PlaySub, texts: string[]): Promise<Recor
   if (cur) return cur;
   const run = (async () => {
     const d = await getDetails(s.anilistId);
-    const chars = await characterGlossary(d.idMal).catch(() => []);
+    const chars = await franchiseGlossary({ anime: s.anilistId }, await characterGlossary(d.idMal).catch(() => []));
     const m = getMedia(s.anilistId);
     const ru = m ? displayTitle(m.title) : null;
     const map: Record<string, string> = {};

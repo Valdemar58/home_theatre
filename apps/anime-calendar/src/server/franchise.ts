@@ -23,7 +23,8 @@ function lite(m: MediaLite): MediaLite {
 
 const node = (d: AnilistDetails): FranchiseNode => ({ media: d, rel: d.relations.map((r) => ({ type: r.relationType, id: r.media.id })) });
 
-export async function franchiseOf(userId: number, id: number): Promise<FranchiseView> {
+/** Тайтлы франшизы из кэша AniList (недостающие — в очередь архива), корень и порядок. */
+export async function franchiseGraph(id: number) {
   const start = await getDetails(id);
   const nodes = new Map<number, FranchiseNode>([[id, node(start)]]);
   const missing: number[] = [];
@@ -39,9 +40,12 @@ export async function franchiseOf(userId: number, id: number): Promise<Franchise
     }
   }
   if (missing.length) enqueue(missing, "page", `open:${id}`, 1);
-
   const root = franchiseRoot(id, nodes);
-  const items = franchiseItems(root, nodes);
+  return { root, items: franchiseItems(root, nodes), partial: missing.length > 0 };
+}
+
+export async function franchiseOf(userId: number, id: number): Promise<FranchiseView> {
+  const { root, items, partial } = await franchiseGraph(id);
   await withShikimori(items.map((i) => i.media));
   const entries = new Map(db.prepare<[number], EntryLite & { anilist_id: number }>(
     "SELECT anilist_id, status, episodes FROM list_entries WHERE user_id = ? AND deleted = 0").all(userId).map((e) => [e.anilist_id, e]));
@@ -51,7 +55,7 @@ export async function franchiseOf(userId: number, id: number): Promise<Franchise
   const castTitle = main.find((i) => entries.get(i.media.id)?.status === "watching")?.media.id
     ?? next ?? main.filter((i) => entries.has(i.media.id)).at(-1)?.media.id ?? root;
   return {
-    root, castTitle, next, partial: missing.length > 0, progress: franchiseProgress(items, entries),
+    root, castTitle, next, partial, progress: franchiseProgress(items, entries),
     items: items.map((i) => {
       const e = entries.get(i.media.id);
       return { media: lite(i.media), kind: i.kind, entry: e ? { status: e.status, episodes: e.episodes } : null, plot: seasonArcs(userId, i.media.id) };

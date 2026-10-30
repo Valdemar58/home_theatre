@@ -80,6 +80,7 @@ function Loaded({ page, progress }: { page: BookPage; progress: ReturnType<typeo
             {resume && <Link href={resume.href}><Button variant="primary"><BookOpenIcon className="h-4 w-4" />{resume.label}</Button></Link>}
             <ReadControl bookId={book.id} entry={progress?.entry ?? null} />
             <ChapterAlerts bookId={book.id} reading={progress?.entry?.status === "watching" || progress?.entry?.status === "rewatching"} />
+            <Link href={`/manga/${book.id}/glossary`}><Button variant="ghost">Глоссарий</Button></Link>
             {page.updating && <span className="flex items-center gap-1.5 text-xs text-gray-400"><Spinner className="h-3.5 w-3.5" />обновляю у провайдеров</span>}
           </div>
         </div>

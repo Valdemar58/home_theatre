@@ -61,6 +61,7 @@ export function FranchiseView({ id }: { id: number }) {
               <div className="h-full rounded-full bg-accent-500" style={{ width: `${pct}%` }} />
             </div>
           </div>
+          <Link href={`/franchise/${data.root}/glossary`} className="rounded-xl px-4 py-2.5 text-sm ring-1 ring-gray-700 hover:bg-gray-800">Глоссарий</Link>
           {next && (
             <Link href={`/anime/${next.media.id}`} className="flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm tone-accent soft ring-1 ring-inset">
               <span className="min-w-0"><span className="block text-xs opacity-80">Смотреть дальше</span><span className="font-semibold">{displayTitle(next.media.title)}</span></span>

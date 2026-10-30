@@ -10,19 +10,23 @@ import { guarded } from "./sources";
 const shikiLimiter = new RateLimiter(700);
 
 /** Персонажи тайтла из Shikimori: английское и японское имя, синонимы → русское. */
-export function characterGlossary(malId: number | null): Promise<GlossaryEntry[]> {
+export const characterGlossary = (malId: number | null) => shikiCharacters("animes", malId);
+/** Персонажи манги или ранобэ (id манги Shikimori = MAL) — для единого глоссария франшизы. */
+export const bookCharacterGlossary = (malId: number | null) => shikiCharacters("mangas", malId);
+
+function shikiCharacters(type: "animes" | "mangas", malId: number | null): Promise<GlossaryEntry[]> {
   if (!malId) return Promise.resolve([]);
-  return cached(`shiki-chars:${malId}`, { fresh: 30 * 86400, source: "shikimori" }, () => guarded("shikimori", async () => {
+  return cached(`shiki-chars:${type === "mangas" ? "book:" : ""}${malId}`, { fresh: 30 * 86400, source: "shikimori" }, () => guarded("shikimori", async () => {
     type Role = { rolesEn: string[]; character: { name: string; russian: string | null; japanese: string | null; synonyms: string[] } };
     const res = await fetchWithRetry(`${env.shikiUrl}/api/graphql`, {
       method: "POST",
       headers: { "User-Agent": env.shikiAppName, "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ query: `{ animes(ids: "${malId}", limit: 1) { characterRoles { rolesEn character { name russian japanese synonyms } } } }` }),
+      body: JSON.stringify({ query: `{ ${type}(ids: "${malId}", limit: 1) { characterRoles { rolesEn character { name russian japanese synonyms } } } }` }),
     }, shikiLimiter);
     // Сбой — не «персонажей нет»: пусть останется сохранённое
     if (!res.ok) throw new HttpError(res.status, `Shikimori: ${res.status}`);
-    const data = (await res.json()) as { data?: { animes?: { characterRoles?: Role[] }[] } };
-    const roles = data.data?.animes?.[0]?.characterRoles ?? [];
+    const data = (await res.json()) as { data?: Record<string, { characterRoles?: Role[] }[] | undefined> };
+    const roles = data.data?.[type]?.[0]?.characterRoles ?? [];
     // Главные — первыми: при обрезке словаря они важнее
     return roles.sort((a, b) => Number(b.rolesEn.includes("Main")) - Number(a.rolesEn.includes("Main")))
       .filter((r) => r.character.russian)
