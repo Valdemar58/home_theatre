@@ -68,6 +68,8 @@ export const mangadex: Provider = {
   kinds: ["manga"],
   langs: LANGS,
   bookUrl: (ref) => `https://mangadex.org/title/${ref}`,
+  source: "mangadex",
+  ping: async () => { await md("/manga?limit=1"); },
 
   async search(book, query) {
     const hits = new Map<string, Hit>();

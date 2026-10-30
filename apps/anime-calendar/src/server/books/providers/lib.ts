@@ -4,6 +4,7 @@ import { cached } from "../../cache";
 import { env } from "../../env";
 import { expectOk, fetchWithRetry, HttpError, RateLimiter } from "../../http";
 import { guarded } from "../../sources";
+import { libToken } from "../provider-config";
 import { searchQueries, type Content, type Hit, type Provider } from "./types";
 
 // MangaLib и RanobeLib — общий Lib-API (тот же, что у AniLib, Site-Id: 1 — манга, 3 — ранобэ). Русские переводы,
@@ -19,6 +20,8 @@ async function libGet<T>(site: LibSite, path: string): Promise<T> {
       headers: {
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140 Safari/537.36",
         "Site-Id": String(site.siteId), Referer: `${site.url}/`, Origin: site.url, Accept: "application/json",
+        // Вход в Lib (токен из браузера) открывает книги 18+
+        ...(libToken() ? { Authorization: `Bearer ${libToken()}` } : {}),
       },
     }, limiter, { timeoutMs: 25_000 });
     return (await (await expectOk(res, site.name)).json()) as T;
@@ -58,6 +61,8 @@ function libProvider(site: LibSite): Provider {
     langs: ["ru"],
     imageHeaders: { Referer: `${site.url}/` },
     bookUrl: (ref) => `${site.url}/ru/${site.kind === "novel" ? "book" : "manga"}/${ref}`,
+    source: "lib",
+    ping: async () => { await libGet(site, "/constants?fields[]=imageServers"); },
 
     async search(book, query) {
       const hits = new Map<string, Hit>();

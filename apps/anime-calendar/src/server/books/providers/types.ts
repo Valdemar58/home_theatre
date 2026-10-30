@@ -1,5 +1,6 @@
 import "server-only";
 import type { Block, BookDetails, ChapterRow, Edition } from "@/lib/books";
+import type { Source } from "../../sources";
 
 // Провайдер глав (как источники в Tachimanga): находит книгу у себя, отдаёт оглавление (главы по языкам и командам)
 // и саму главу — текст (ранобэ) или страницы (манга). Встроенные: Lib (ranobelib, mangalib), MangaDex, Syosetu;
@@ -43,6 +44,10 @@ export interface Provider {
   bookUrl(ref: string): string;
   /** Заголовки для картинок страниц и иллюстраций (Referer — без него картинку не отдают) */
   imageHeaders?: Record<string, string>;
+  /** Источник в предохранителе (`guarded`) — состояние в карточке «Провайдеры» */
+  source: Source;
+  /** Проверка связи (лёгкий запрос) */
+  ping(): Promise<void>;
 }
 
 /** Несколько названий книги для поиска у провайдера: латиница, английское, русское, родное (без повторов). */

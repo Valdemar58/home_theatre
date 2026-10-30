@@ -74,6 +74,8 @@ export const syosetu: Provider = {
   kinds: ["novel"],
   langs: ["ja"],
   bookUrl: (ref) => `https://ncode.syosetu.com/${ref}/`,
+  source: "syosetu",
+  ping: async () => { await get(`${API}&lim=1`, "Syosetu"); },
 
   async search(book, query) {
     // Веб-новеллы — японские: ищем по родному названию (без подзаголовка в скобках — у Syosetu он часто другой)

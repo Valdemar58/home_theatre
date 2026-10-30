@@ -7,6 +7,7 @@ import { mangalib, ranobelib } from "./providers/lib";
 import { mangadex, mdMeta } from "./providers/mangadex";
 import { narouNovel, syosetu } from "./providers/syosetu";
 import type { Content, Hit, Provider } from "./providers/types";
+import { ordered, providerConfig } from "./provider-config";
 import { muFind, muSeries } from "./trackers";
 
 // Книга целиком: сопоставление с провайдерами (book_links), оглавления (book_chapters), сводка глав, выход в
@@ -14,7 +15,12 @@ import { muFind, muSeries } from "./trackers";
 
 export const PROVIDERS: Provider[] = [ranobelib, syosetu, mangalib, mangadex];
 export const providerById = (id: string) => PROVIDERS.find((p) => p.id === id);
-export const providersFor = (b: Pick<BookDetails, "kind">) => PROVIDERS.filter((p) => p.kinds.includes(b.kind === "novel" ? "novel" : "manga"));
+/** Включённые провайдеры по порядку из настроек */
+export const activeProviders = () => {
+  const cfg = providerConfig();
+  return ordered(PROVIDERS, cfg).filter((p) => !cfg.disabled.includes(p.id));
+};
+export const providersFor = (b: Pick<BookDetails, "kind">) => activeProviders().filter((p) => p.kinds.includes(b.kind === "novel" ? "novel" : "manga"));
 
 type LinkRow = { book_id: number; provider: string; ref: string; title: string | null; edition: Edition; how: string; checked_at: number; chapters_at: number | null };
 const linksOf = (bookId: number) => db.prepare<[number], LinkRow>("SELECT * FROM book_links WHERE book_id = ?").all(bookId);
@@ -82,7 +88,8 @@ type ChRow = { provider: string; ref: string; cref: string; edition: Edition; la
 
 /** Главы всех привязанных книг (как ChapterRow). */
 export function chapterRows(bookId: number): ChapterRow[] {
-  const links = linksOf(bookId).filter((l) => l.ref && l.how !== "hidden");
+  const off = providerConfig().disabled;
+  const links = linksOf(bookId).filter((l) => l.ref && l.how !== "hidden" && !off.includes(l.provider));
   if (!links.length) return [];
   const rows = db.prepare<string[], ChRow>(
     `SELECT * FROM book_chapters WHERE ${links.map(() => "(provider = ? AND ref = ?)").join(" OR ")}`).all(...links.flatMap((l) => [l.provider, l.ref]));
@@ -147,10 +154,13 @@ export async function bookPage(id: number): Promise<BookPage> {
     return !ls.length || ls.some((l) => l.ref && l.how !== "hidden" && chaptersStale(l, live));
   });
   if (stale && !isSyncing(id)) void syncBook(book);
+  const order = activeProviders().map((p) => p.id);
+  const rank = (id: string) => order.indexOf(id);
   const origin = await originOf(book).catch((): Origin => ({ status: null, chapters: null, volumes: null, ended: null, source: "AniList", url: null }));
   return {
     book, origin,
-    links: linksOf(id).filter((l) => l.how !== "hidden").map((l) => {
+    links: linksOf(id).filter((l) => l.how !== "hidden" && !providerConfig().disabled.includes(l.provider))
+      .sort((a, b) => rank(a.provider) - rank(b.provider)).map((l) => {
       const p = providerById(l.provider);
       return { provider: l.provider, name: p?.name ?? l.provider, ref: l.ref, title: l.title, edition: l.edition, how: l.how, url: l.ref && p ? p.bookUrl(l.ref) : null, chaptersAt: l.chapters_at };
     }),
