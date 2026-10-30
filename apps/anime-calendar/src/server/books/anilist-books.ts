@@ -97,6 +97,25 @@ export function searchBooks(q: string, kind: "all" | "manga" | "novel" = "all"):
   });
 }
 
+const BY_MAL_QUERY = `
+query ($malIds: [Int]) { Page(perPage: 50) { media(type: MANGA, idMal_in: $malIds) { ${LITE_FIELDS} } } }`;
+
+/** Книги по MAL id (список Shikimori → AniList); карточки — в хранилище для списка чтения. */
+export async function booksByMalIds(malIds: number[]): Promise<BookLite[]> {
+  const out: BookLite[] = [];
+  for (let i = 0; i < malIds.length; i += 50) {
+    const part = malIds.slice(i, i + 50);
+    const d = await gql<{ Page: { media: RawLite[] } }>(BY_MAL_QUERY, { malIds: part });
+    const ru = await shikiBooksRu(part).catch(() => ({} as Record<number, string | null>));
+    for (const m of d.Page.media) {
+      const lite = toLite(m, m.idMal ? ru[m.idMal] ?? null : null);
+      setCached(`book:lite:${m.id}`, lite, freshFor(lite));
+      out.push(lite);
+    }
+  }
+  return out;
+}
+
 const ANIME_BOOKS_QUERY = `
 query ($id: Int) {
   Media(id: $id, type: ANIME) {

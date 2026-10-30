@@ -78,5 +78,6 @@ export function setMuted(userId: number, anilistId: number, muted: boolean) {
     db.prepare("DELETE FROM notice_mutes WHERE user_id = ? AND anilist_id = ?").run(userId, anilistId);
     // Включили обратно — не присылать всё, что вышло за время тишины
     db.prepare("DELETE FROM episode_marks WHERE user_id = ? AND anilist_id = ?").run(userId, anilistId);
+    db.prepare("DELETE FROM chapter_marks WHERE user_id = ? AND book_id = ?").run(userId, anilistId);
   }
 }

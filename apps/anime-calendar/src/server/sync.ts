@@ -1,5 +1,8 @@
 import "server-only";
+import type { BookLite } from "@/lib/books";
 import { mediaByMalIds } from "./anilist";
+import { bookDetails, booksByMalIds } from "./books/anilist-books";
+import { getCached } from "./cache";
 import { db, now, stmt } from "./db";
 import { HttpError } from "./http";
 import { getRow, getRows, saveMedia, withShikimori, type EntryRow } from "./lists";
@@ -32,6 +35,8 @@ export function unlinkShikimori(userId: number) {
   });
   db.prepare("UPDATE list_entries SET shiki_rate_id = NULL, shiki_updated_at = NULL, dirty = 1 WHERE user_id = ?").run(userId);
   db.prepare("DELETE FROM list_entries WHERE user_id = ? AND deleted = 1").run(userId);
+  db.prepare("UPDATE read_entries SET shiki_rate_id = NULL, shiki_updated_at = NULL, dirty = 1 WHERE user_id = ?").run(userId);
+  db.prepare("DELETE FROM read_entries WHERE user_id = ? AND deleted = 1").run(userId);
 }
 
 /** Действующий access-токен (обновляется за 5 минут до истечения). */
@@ -94,15 +99,125 @@ const PUSH_DELAY_MS = 4000;
 const pushQ = ((globalThis as unknown as { __shikiPush?: { timers: Map<string, NodeJS.Timeout>; chain: Promise<void> } }).__shikiPush ??=
   { timers: new Map(), chain: Promise.resolve() });
 
-/** Поставить отправку записи на Shikimori (если аккаунт привязан). */
-export function schedulePush(userId: number, anilistId: number): void {
-  const key = `${userId}:${anilistId}`;
+function enqueue(key: string, userId: number, fn: () => Promise<void>): void {
   clearTimeout(pushQ.timers.get(key));
   pushQ.timers.set(key, setTimeout(() => {
     pushQ.timers.delete(key);
     if (!getUserById(userId)?.shiki_refresh) return;
-    pushQ.chain = pushQ.chain.then(() => pushEntry(userId, anilistId));
+    pushQ.chain = pushQ.chain.then(fn);
   }, PUSH_DELAY_MS));
+}
+
+/** Поставить отправку записи на Shikimori (если аккаунт привязан). */
+export function schedulePush(userId: number, anilistId: number): void {
+  enqueue(`${userId}:${anilistId}`, userId, () => pushEntry(userId, anilistId));
+}
+
+// ---------------------------------------------------------------- список чтения (манга и ранобэ — target_type Manga)
+
+type ReadRow = {
+  book_id: number; mal_id: number | null; status: shiki.ShikiRate["status"]; chapters: number; volumes: number; score: number;
+  updated_at: number; shiki_rate_id: number | null; shiki_updated_at: number | null; dirty: number; deleted: number;
+};
+const readRows = (userId: number) => db.prepare<[number], ReadRow>("SELECT * FROM read_entries WHERE user_id = ?").all(userId);
+const readRow = (userId: number, bookId: number) =>
+  db.prepare<[number, number], ReadRow>("SELECT * FROM read_entries WHERE user_id = ? AND book_id = ?").get(userId, bookId);
+const readPayload = (r: ReadRow) => ({ status: r.status, chapters: Math.floor(r.chapters), volumes: r.volumes, score: r.score });
+const dropRead = (userId: number, bookId: number) => db.prepare("DELETE FROM read_entries WHERE user_id = ? AND book_id = ?").run(userId, bookId);
+
+/** MAL id книги: в записи, иначе — с карточки (запись из ридера создаётся без него). */
+async function bookMal(userId: number, r: ReadRow): Promise<number | null> {
+  if (r.mal_id) return r.mal_id;
+  const lite = getCached<BookLite>(`book:lite:${r.book_id}`, true) ?? await bookDetails(r.book_id).catch(() => null);
+  if (!lite?.idMal) return null;
+  db.prepare("UPDATE read_entries SET mal_id = ? WHERE user_id = ? AND book_id = ?").run(lite.idMal, userId, r.book_id);
+  return lite.idMal;
+}
+
+async function pushRead(token: string, user: User, r: ReadRow): Promise<void> {
+  if (r.deleted) {
+    if (r.shiki_rate_id) {
+      await shiki.deleteRate(token, r.shiki_rate_id).catch((e) => {
+        if (!(e instanceof HttpError && e.status === 404)) throw e;
+      });
+    }
+    dropRead(user.id, r.book_id);
+    return;
+  }
+  const mal = await bookMal(user.id, r);
+  if (!mal) return; // книги нет на MAL/Shikimori
+  const rate = r.shiki_rate_id
+    ? await shiki.updateRate(token, r.shiki_rate_id, readPayload(r))
+    : await shiki.createRate(token, user.shiki_user_id!, mal, readPayload(r), "Manga");
+  db.prepare("UPDATE read_entries SET shiki_rate_id = ?, shiki_updated_at = ?, dirty = 0 WHERE user_id = ? AND book_id = ?")
+    .run(rate.id, ts(rate.updated_at), user.id, r.book_id);
+}
+
+/** Поставить отправку записи списка чтения на Shikimori. */
+export function scheduleReadPush(userId: number, bookId: number): void {
+  enqueue(`${userId}:book:${bookId}`, userId, async () => {
+    const user = getUserById(userId);
+    if (!user) return;
+    try {
+      const token = await accessToken(user);
+      const r = readRow(userId, bookId);
+      if (token && r?.dirty) await pushRead(token, user, r);
+    } catch (err) {
+      console.warn(`[sync] push book ${bookId}: ${String(err)}`);
+    }
+  });
+}
+
+/** Список чтения ↔ Shikimori: те же правила, что у аниме (свежее побеждает, удалённое там — удаляется здесь). */
+async function syncReads(user: User, token: string, stats: SyncStats): Promise<void> {
+  const remote = new Map((await shiki.listRates(user.shiki_user_id!, token, "Manga")).map((r) => [r.target_id, r]));
+  const takeRead = db.prepare(`UPDATE read_entries SET status = ?, chapters = ?, volumes = ?, score = ?, updated_at = ?,
+    shiki_rate_id = ?, shiki_updated_at = ?, dirty = 0 WHERE user_id = ? AND book_id = ?`);
+  for (const row of readRows(user.id)) {
+    const mal = row.deleted ? row.mal_id : await bookMal(user.id, row);
+    const r = mal ? remote.get(mal) : undefined;
+    if (mal) remote.delete(mal);
+    if (row.deleted) {
+      await pushRead(token, user, row);
+      stats.removed++;
+      continue;
+    }
+    if (!mal) {
+      stats.skipped++;
+      continue;
+    }
+    if (!r) {
+      if (row.shiki_rate_id && !row.dirty) {
+        dropRead(user.id, row.book_id);
+        stats.removed++;
+      } else {
+        await pushRead(token, user, row);
+        stats.pushed++;
+      }
+      continue;
+    }
+    const remoteTs = ts(r.updated_at);
+    if (row.dirty && row.updated_at >= remoteTs) {
+      await pushRead(token, user, { ...row, shiki_rate_id: r.id });
+      stats.pushed++;
+    } else if (remoteTs > (row.shiki_updated_at ?? 0) || row.dirty) {
+      takeRead.run(r.status, r.chapters ?? 0, r.volumes ?? 0, r.score, remoteTs, r.id, remoteTs, user.id, row.book_id);
+      stats.pulled++;
+    }
+  }
+  // Новое на Shikimori: MAL → AniList (MANGA)
+  if (remote.size) {
+    const insert = db.prepare(`INSERT OR IGNORE INTO read_entries (user_id, book_id, mal_id, status, chapters, volumes, score,
+      updated_at, shiki_rate_id, shiki_updated_at, dirty, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)`);
+    for (const b of await booksByMalIds([...remote.keys()])) {
+      const r = b.idMal ? remote.get(b.idMal) : undefined;
+      if (!r) continue;
+      insert.run(user.id, b.id, b.idMal, r.status, r.chapters ?? 0, r.volumes ?? 0, r.score, ts(r.updated_at), r.id, ts(r.updated_at));
+      remote.delete(b.idMal!);
+      stats.imported++;
+    }
+    stats.skipped += remote.size;
+  }
 }
 
 export type SyncStats ={ pushed: number; pulled: number; imported: number; removed: number; skipped: number };
@@ -168,6 +283,7 @@ export async function syncUser(user: User): Promise<SyncStats> {
       }
       stats.skipped += remote.size;
     }
+    await syncReads(user, token, stats);
     setUserShiki(user.id, { shiki_synced_at: now(), shiki_error: null });
     return stats;
   } catch (err) {

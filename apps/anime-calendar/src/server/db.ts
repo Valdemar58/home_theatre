@@ -979,6 +979,13 @@ function migrateBooks(db: Db) {
     data TEXT NOT NULL,
     PRIMARY KEY (user_id, book_id)
   )`);
+  // Уведомления о главах: сколько глав было на каждом языке при прошлой проверке
+  db.exec(`CREATE TABLE IF NOT EXISTS chapter_marks (
+    user_id INTEGER NOT NULL,
+    book_id INTEGER NOT NULL,
+    snap TEXT NOT NULL,
+    PRIMARY KEY (user_id, book_id)
+  )`);
 }
 
 /** Результаты LLM без срока жизни: журнал (строки не удаляются) + провенанс текущего значения. */

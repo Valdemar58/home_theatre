@@ -116,5 +116,37 @@ function libProvider(site: LibSite): Provider {
   };
 }
 
-export const ranobelib = libProvider({ id: "ranobelib", name: "RanobeLib", siteId: 3, url: "https://ranobelib.me", kind: "novel" });
-export const mangalib = libProvider({ id: "mangalib", name: "MangaLib", siteId: 1, url: "https://mangalib.me", kind: "manga" });
+const RANOBELIB: LibSite = { id: "ranobelib", name: "RanobeLib", siteId: 3, url: "https://ranobelib.me", kind: "novel" };
+const MANGALIB: LibSite = { id: "mangalib", name: "MangaLib", siteId: 1, url: "https://mangalib.me", kind: "manga" };
+export const ranobelib = libProvider(RANOBELIB);
+export const mangalib = libProvider(MANGALIB);
+
+/** Закладка Lib: папка, до какой главы дочитано, книга (ref — как у провайдера). */
+export type LibBookmark = {
+  provider: string; kind: "manga" | "novel"; folder: string; chapter: number | null; updatedAt: string;
+  ref: string; title: string; titles: string[]; edition: Edition; url: string;
+};
+
+/** Закладки пользователя Lib на mangalib и ranobelib (аккаунт общий с AniLib, закладки публичные). */
+export async function libBookmarks(libUserId: number): Promise<LibBookmark[]> {
+  const out: LibBookmark[] = [];
+  for (const site of [MANGALIB, RANOBELIB]) {
+    const folders = new Map((await libGet<{ data: { id: number; name: string }[] }>(site, `/bookmarks/folder/${libUserId}`)).data.map((f) => [f.id, f.name]));
+    for (let page = 1; page <= 100; page++) {
+      const d = await libGet<{ data: { status: number; updated_at: string; meta: { item_number?: number | null } | null; media: LibItem | null }[]; meta?: { next_page_url?: unknown } }>(
+        site, `/bookmarks?user_id=${libUserId}&status=0&page=${page}`);
+      for (const b of d.data) {
+        if (!b.media) continue;
+        const m = b.media;
+        out.push({
+          provider: site.id, kind: site.kind, folder: folders.get(b.status) ?? `папка ${b.status}`, chapter: b.meta?.item_number || null,
+          updatedAt: b.updated_at, ref: m.slug_url, title: m.rus_name || m.name,
+          titles: [m.name, m.rus_name, m.eng_name].filter((x): x is string => Boolean(x)), edition: editionOf(site, m),
+          url: `${site.url}/ru/${site.kind === "novel" ? "book" : "manga"}/${m.slug_url}`,
+        });
+      }
+      if (!d.meta?.next_page_url || !d.data.length) break;
+    }
+  }
+  return out;
+}

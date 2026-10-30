@@ -1,14 +1,14 @@
 "use client";
 import { MagnifyingGlassIcon } from "@heroicons/react/24/outline";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { KIND_LABELS, READ_LABELS, type BookLite } from "@/lib/books";
 import { api, useReadList, type ReadListItem } from "@/lib/client";
 import { Img } from "../Img";
-import { Chip, EmptyState, ErrorBox, Skel, Spinner } from "../ui";
+import { Button, Chip, EmptyState, ErrorBox, Skel, Spinner } from "../ui";
 
-// Раздел «Читать»: поиск книг (по-русски — через Shikimori) и свой список чтения по статусам.
+// Раздел «Читать»: поиск книг (по-русски — через Shikimori), свой список чтения по статусам, импорт закладок Lib.
 
 type Kind = "all" | "manga" | "novel";
 const KINDS: { id: Kind; label: string }[] = [{ id: "all", label: "Всё" }, { id: "novel", label: "Ранобэ" }, { id: "manga", label: "Манга и манхва" }];
@@ -53,7 +53,10 @@ export function BooksHome() {
       )}
 
       <section className="space-y-3">
-        <h2 className="text-lg font-bold">Мой список</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-bold">Мой список</h2>
+          <LibImport />
+        </div>
         {isLoading ? <Skel className="h-40 w-full" /> : !list?.items.length ? (
           <EmptyState title="Список чтения пуст">Найдите книгу выше и добавьте её — или просто начните читать: прочитанная глава сама добавит книгу в «Читаю».</EmptyState>
         ) : Object.keys(READ_LABELS).map((status) => {
@@ -92,6 +95,61 @@ function ListGroup({ label, items }: { label: string; items: ReadListItem[] }) {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
         {items.map((i) => <BookCard key={i.bookId} book={i.book} extra={i.chapters ? `${i.chapters} гл.` : undefined} />)}
       </div>
+    </div>
+  );
+}
+
+type ImportState = {
+  linked: boolean;
+  progress: {
+    stage: string; done: number; total: number; finishedAt?: number; error?: string;
+    result?: { added: number; updated: number; same: number; skipped: number; removed: number; unmatched: { title: string; url: string; folder: string }[] };
+  } | null;
+};
+
+/** Импорт закладок mangalib и ranobelib (профиль Lib — из карточки AniLib в Настройках). */
+function LibImport() {
+  const qc = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ["book-import"], queryFn: () => api<ImportState>("/api/books/import-lib"),
+    refetchInterval: (q) => (q.state.data?.progress && !q.state.data.progress.finishedAt ? 1000 : false),
+  });
+  const [error, setError] = useState<unknown>(null);
+  const [open, setOpen] = useState(false);
+  const p = data?.progress;
+  const running = Boolean(p && !p.finishedAt);
+  const was = useRef(false);
+  useEffect(() => {
+    if (was.current && !running) void qc.invalidateQueries({ queryKey: ["read-list"] });
+    was.current = running;
+  }, [running, qc]);
+  if (!data) return null;
+  if (!data.linked) return <Link href="/settings" className="text-xs text-gray-500 hover:text-gray-300">Импорт закладок Lib — подключите профиль AniLib в Настройках</Link>;
+  const r = p?.result;
+  return (
+    <div className="flex flex-col items-end gap-1 text-sm">
+      <Button size="sm" disabled={running} onClick={() => { setError(null); api("/api/books/import-lib", { method: "POST" }).then(() => qc.invalidateQueries({ queryKey: ["book-import"] })).catch(setError); }}>
+        {running ? <><Spinner className="h-4 w-4" />{p!.stage === "fetch" ? "Загружаю закладки" : `Сопоставляю ${p!.done} из ${p!.total}`}</> : "Импорт закладок MangaLib и RanobeLib"}
+      </Button>
+      {error ? <ErrorBox error={error} /> : null}
+      {p?.error && <p className="text-xs text-negative-300">{p.error}</p>}
+      {r && (
+        <p className="text-xs text-gray-400">
+          Добавлено {r.added}, обновлено {r.updated}, без изменений {r.same + r.removed}
+          {r.skipped ? `, пропущено ${r.skipped} (папка без статуса)` : ""}
+          {r.unmatched.length ? <> · <button className="underline decoration-dotted" onClick={() => setOpen(!open)}>не найдено {r.unmatched.length}</button></> : null}
+        </p>
+      )}
+      {open && r && (
+        <ul className="max-h-60 w-80 max-w-full overflow-y-auto rounded-lg bg-gray-900 p-2 text-xs ring-1 ring-gray-700">
+          {r.unmatched.map((u) => (
+            <li key={u.url} className="flex justify-between gap-2 py-0.5">
+              <a href={u.url} target="_blank" rel="noreferrer" className="truncate text-gray-200 hover:underline">{u.title}</a>
+              <span className="shrink-0 text-gray-500">{u.folder}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

@@ -223,28 +223,34 @@ export type ShikiRate = {
   target_id: number;
   status: ListStatus;
   episodes: number;
+  /** У манги и ранобэ (target_type Manga — оба) */
+  chapters?: number;
+  volumes?: number;
   score: number;
   updated_at: string;
 };
 
-export async function listRates(userId: number, token: string): Promise<ShikiRate[]> {
+/** Anime — аниме, Manga — манга и ранобэ (у Shikimori они в одной таблице, id = MAL). */
+export type RateTarget = "Anime" | "Manga";
+
+export async function listRates(userId: number, token: string, target: RateTarget = "Anime"): Promise<ShikiRate[]> {
   const all: ShikiRate[] = [];
   for (let page = 1; page <= 50; page++) {
     const batch = await shiki<ShikiRate[]>(
-      `/api/v2/user_rates?user_id=${userId}&target_type=Anime&page=${page}&limit=1000`, { token });
+      `/api/v2/user_rates?user_id=${userId}&target_type=${target}&page=${page}&limit=1000`, { token });
     all.push(...batch);
     if (batch.length < 1000) break;
   }
   return all;
 }
 
-type RatePayload = { status: ListStatus; episodes: number; score: number };
+type RatePayload = { status: ListStatus; score: number } & ({ episodes: number } | { chapters: number; volumes: number });
 
-export const createRate = (token: string, userId: number, malId: number, rate: RatePayload) =>
+export const createRate = (token: string, userId: number, malId: number, rate: RatePayload, target: RateTarget = "Anime") =>
   shiki<ShikiRate>("/api/v2/user_rates", {
     method: "POST",
     token,
-    json: { user_rate: { user_id: userId, target_id: malId, target_type: "Anime", ...rate } },
+    json: { user_rate: { user_id: userId, target_id: malId, target_type: target, ...rate } },
   });
 
 export const updateRate = (token: string, rateId: number, rate: RatePayload) =>

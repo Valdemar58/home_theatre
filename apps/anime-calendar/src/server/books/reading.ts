@@ -1,6 +1,7 @@
 import "server-only";
 import type { Edition } from "@/lib/books";
 import { db, now } from "../db";
+import { scheduleReadPush } from "../sync";
 
 // Чтение: где остановился в главе (абзац / страница), выбранный перевод книги, отметка прочитанного в списке.
 
@@ -42,6 +43,7 @@ export function saveProgress(userId: number, bookId: number, p: { chapter: strin
     ON CONFLICT (user_id, book_id) DO UPDATE SET status = excluded.status, chapters = max(read_entries.chapters, excluded.chapters),
       deleted = 0, updated_at = excluded.updated_at, dirty = 1`)
     .run(userId, bookId, status, p.ordinal, t);
+  scheduleReadPush(userId, bookId);
 }
 
 export type ReadEntry = { bookId: number; status: string; chapters: number; volumes: number; score: number; note: string | null; updatedAt: number };
@@ -57,6 +59,7 @@ export function setEntry(userId: number, bookId: number, malId: number | null, p
   const t = now();
   if (patch.status === null) {
     db.prepare("UPDATE read_entries SET deleted = 1, dirty = 1, updated_at = ? WHERE user_id = ? AND book_id = ?").run(t, userId, bookId);
+    scheduleReadPush(userId, bookId);
     return;
   }
   const cur = db.prepare<[number, number], { status: string; chapters: number; score: number; deleted: number }>(
@@ -66,6 +69,7 @@ export function setEntry(userId: number, bookId: number, malId: number | null, p
     ON CONFLICT (user_id, book_id) DO UPDATE SET mal_id = excluded.mal_id, status = excluded.status, chapters = excluded.chapters,
       score = excluded.score, updated_at = excluded.updated_at, dirty = 1, deleted = 0`)
     .run(userId, bookId, malId, patch.status ?? live?.status ?? "planned", patch.chapters ?? live?.chapters ?? 0, patch.score ?? live?.score ?? 0, t);
+  scheduleReadPush(userId, bookId);
 }
 
 /** Список чтения пользователя (свежие сверху). */

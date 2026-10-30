@@ -1,6 +1,6 @@
 "use client";
 import {
-  BoltIcon, ChatBubbleLeftRightIcon, EnvelopeIcon, EnvelopeOpenIcon, ExclamationTriangleIcon, FlagIcon, InformationCircleIcon,
+  BoltIcon, BookOpenIcon, ChatBubbleLeftRightIcon, EnvelopeIcon, EnvelopeOpenIcon, ExclamationTriangleIcon, FlagIcon, InformationCircleIcon,
   PlayIcon, QueueListIcon, SpeakerWaveIcon, TrophyIcon, UserPlusIcon, UsersIcon, XMarkIcon,
 } from "@heroicons/react/24/outline";
 import { useQueryClient } from "@tanstack/react-query";
@@ -23,6 +23,7 @@ import { TONE_CLASS, cx } from "./ui";
 const ICONS: Record<NoticeIcon, React.ComponentType<{ className?: string }>> = {
   play: PlayIcon, flag: FlagIcon, speaker: SpeakerWaveIcon, bolt: BoltIcon, user: UserPlusIcon, list: QueueListIcon,
   users: UsersIcon, chat: ChatBubbleLeftRightIcon, alert: ExclamationTriangleIcon, info: InformationCircleIcon, trophy: TrophyIcon,
+  book: BookOpenIcon,
 };
 
 

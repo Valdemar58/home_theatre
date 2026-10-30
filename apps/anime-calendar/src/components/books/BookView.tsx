@@ -1,6 +1,6 @@
 "use client";
-import { ArrowPathIcon, ArrowTopRightOnSquareIcon, BookOpenIcon, CheckIcon, MagnifyingGlassIcon } from "@heroicons/react/24/outline";
-import { useQueryClient } from "@tanstack/react-query";
+import { ArrowPathIcon, ArrowTopRightOnSquareIcon, BellAlertIcon, BellSlashIcon, BookOpenIcon, CheckIcon, MagnifyingGlassIcon } from "@heroicons/react/24/outline";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -79,6 +79,7 @@ function Loaded({ page, progress }: { page: BookPage; progress: ReturnType<typeo
           <div className="flex flex-wrap items-center gap-2">
             {resume && <Link href={resume.href}><Button variant="primary"><BookOpenIcon className="h-4 w-4" />{resume.label}</Button></Link>}
             <ReadControl bookId={book.id} entry={progress?.entry ?? null} />
+            <ChapterAlerts bookId={book.id} reading={progress?.entry?.status === "watching" || progress?.entry?.status === "rewatching"} />
             {page.updating && <span className="flex items-center gap-1.5 text-xs text-gray-400"><Spinner className="h-3.5 w-3.5" />обновляю у провайдеров</span>}
           </div>
         </div>
@@ -192,6 +193,24 @@ function ReadControl({ bookId, entry }: { bookId: number; entry: { status: strin
       <option value="">{entry ? "Убрать из списка" : "Добавить в список"}</option>
       {Object.entries(READ_LABELS).map(([k, v]) => <option key={k} value={k}>{v}{entry?.status === k && entry.chapters ? ` · ${entry.chapters} гл.` : ""}</option>)}
     </select>
+  );
+}
+
+/** Уведомления о новых главах (книга в «Читаю»); выключатель общий с сериями — `/api/anime/<id>/mute`. */
+function ChapterAlerts({ bookId, reading }: { bookId: number; reading: boolean }) {
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ["mute", bookId], queryFn: () => api<{ muted: boolean }>(`/api/anime/${bookId}/mute`), enabled: reading });
+  if (!reading || !data) return null;
+  const toggle = async () => {
+    qc.setQueryData(["mute", bookId], { muted: !data.muted });
+    await api(`/api/anime/${bookId}/mute`, { method: "POST", json: { muted: !data.muted } });
+  };
+  return (
+    <Button onClick={toggle} variant={data.muted ? "ghost" : "default"}
+      title={data.muted ? "Включить уведомления о новых главах" : "Уведомляю о новых главах на русском, а если на русском нет — на английском и в оригинале. Нажмите, чтобы выключить"}>
+      {data.muted ? <BellSlashIcon className="h-4 w-4 text-gray-500" /> : <BellAlertIcon className="h-4 w-4 text-accent-300" />}
+      {data.muted ? "Без уведомлений" : "О новых главах"}
+    </Button>
   );
 }
 

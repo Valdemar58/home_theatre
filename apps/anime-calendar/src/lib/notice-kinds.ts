@@ -4,7 +4,7 @@
 export type NoticeGroup = "titles" | "friends" | "achievements" | "important";
 export const NOTICE_GROUPS: [NoticeGroup | "all", string][] = [["all", "Все"], ["titles", "Тайтлы"], ["friends", "Друзья"], ["achievements", "Достижения"], ["important", "Важное"]];
 
-export type NoticeIcon = "play" | "flag" | "speaker" | "bolt" | "user" | "list" | "users" | "chat" | "alert" | "info" | "trophy";
+export type NoticeIcon = "play" | "flag" | "speaker" | "bolt" | "user" | "list" | "users" | "chat" | "alert" | "info" | "trophy" | "book";
 /** Тон палитры (globals.css) */
 export type NoticeTone = "accent" | "special" | "positive" | "negative" | "warning" | "info" | "neutral";
 
@@ -15,6 +15,7 @@ export const NOTICE_KINDS: Record<string, KindInfo> = {
   finale: { label: "Вышел целиком", group: "titles", icon: "flag", tone: "special" },
   voices: { label: "Озвучки", group: "titles", icon: "speaker", tone: "info" },
   prebuffer: { label: "Можно смотреть", group: "titles", icon: "bolt", tone: "positive" },
+  chapter: { label: "Новая глава", group: "titles", icon: "book", tone: "accent" },
   friend: { label: "Друзья", group: "friends", icon: "user", tone: "special" },
   "shared-list": { label: "Общий список", group: "friends", icon: "list", tone: "warning" },
   together: { label: "Смотрели вместе", group: "friends", icon: "users", tone: "positive" },

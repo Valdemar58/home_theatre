@@ -241,7 +241,7 @@ export function AppShell({ userName, sidebar = "auto", children }: { userName: s
 
       <div className={cx("transition-[padding] duration-200", bar.pad)}>
         {/* Верхняя панель с поиском */}
-        <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-gray-800 bg-gray-900/85 px-4 backdrop-blur lg:px-8">
+        <header className="sticky top-0 z-20 flex h-16 items-center gap-1.5 border-b md:gap-3 border-gray-800 bg-gray-900/85 px-4 backdrop-blur lg:px-8">
           <div className="md:hidden">
             <Logo compact />
           </div>

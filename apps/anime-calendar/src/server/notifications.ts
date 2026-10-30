@@ -24,13 +24,15 @@ export type NoticeInput = {
   error?: boolean;
   /** Награда и полученный уровень — значок в уведомлении и праздничный тост */
   achievement?: { id: string; tier: number };
+  /** Книга (id AniList у книг и аниме общий, но снимка в media у книги нет) — обложка в уведомлении */
+  book?: { id: number; title: string; cover: string | null };
 };
 
 /** replace — адрес-префикс: непрочитанное того же вида с таким адресом заменяется (подсказки не копятся). */
 export function notify(userId: number, n: NoticeInput, opts?: { replace?: string }) {
   if (opts?.replace) db.prepare("DELETE FROM notifications WHERE user_id = ? AND kind = ? AND read_at IS NULL AND substr(href, 1, ?) = ?")
     .run(userId, n.kind, opts.replace.length, opts.replace);
-  const data = { subject: n.subject ?? null, actions: n.actions ?? [], error: Boolean(n.error), achievement: n.achievement ?? null };
+  const data = { subject: n.subject ?? null, actions: n.actions ?? [], error: Boolean(n.error), achievement: n.achievement ?? null, book: n.book ?? null };
   // Тайтла может не быть в списках (озвучки искали из каталога) — снимок с обложкой нужен карточке уведомления
   if (n.anilistId && !getMedia(n.anilistId)) void ensureMedia(n.anilistId).catch(() => undefined);
   db.prepare(`INSERT INTO notifications (user_id, kind, grp, title, body, href, anilist_id, actor_id, data, created_at)
@@ -51,14 +53,16 @@ const userName = (id: number) => db.prepare<[number], { name: string }>("SELECT 
 const anilistOf = (r: Pick<Row, "anilist_id" | "href">) => r.anilist_id ?? (Number(/^\/anime\/(\d+)/.exec(r.href ?? "")?.[1]) || null);
 
 function toNotice(r: Row): Notice {
-  const data = (r.data ? JSON.parse(r.data) : {}) as { subject?: string | null; actions?: NoticeAction[]; error?: boolean; achievement?: { id: string; tier: number } | null };
+  const data = (r.data ? JSON.parse(r.data) : {}) as { subject?: string | null; actions?: NoticeAction[]; error?: boolean; achievement?: { id: string; tier: number } | null;
+    book?: { id: number; title: string; cover: string | null } | null };
   const anilistId = anilistOf(r);
   const m = anilistId ? getMedia(anilistId) : null;
   const actorName = r.actor_id ? userName(r.actor_id) : null;
   return {
     id: r.id, kind: r.kind, group: r.grp ?? kindInfo(r.kind, data.error).group, error: Boolean(data.error),
     title: r.title, body: r.body, href: r.href, createdAt: r.created_at, read: r.read_at !== null,
-    media: m ? { id: m.id, title: displayTitle(m.title), cover: m.coverImage.large ?? null, color: m.coverImage.color ?? null } : null,
+    media: m ? { id: m.id, title: displayTitle(m.title), cover: m.coverImage.large ?? null, color: m.coverImage.color ?? null }
+      : data.book ? { ...data.book, color: null } : null,
     actor: r.actor_id && actorName ? { id: r.actor_id, name: actorName } : null,
     subject: data.subject ?? null,
     actions: data.actions ?? [],
