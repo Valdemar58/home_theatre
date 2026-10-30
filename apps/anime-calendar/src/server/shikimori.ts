@@ -132,6 +132,47 @@ export function ruDescription(malId: number): Promise<string | null> {
   });
 }
 
+// ---------------------------------------------------------------- книги (манга и ранобэ: id Shikimori = id MAL)
+
+export type ShikiBook = { russian: string | null; description: string | null; score: number | null; kind: string | null };
+
+/** Русское название, описание и оценка книги (манга и ранобэ — общий раздел Shikimori `mangas`). */
+export function shikiBook(malId: number): Promise<ShikiBook | null> {
+  return cached(`shiki-media:book:${malId}`, { fresh: 30 * 86400, source: "shikimori" }, async () => {
+    const data = await shiki<{ data: { mangas: { russian: string | null; description: string | null; score: number | null; kind: string | null }[] } }>(
+      "/api/graphql", { method: "POST", json: { query: `{ mangas(ids: "${malId}", limit: 1) { russian description score kind } }` } });
+    const m = data.data.mangas[0];
+    if (!m) return null;
+    return {
+      russian: m.russian?.trim() || null, score: m.score || null, kind: m.kind,
+      description: m.description?.replace(/\[\/?[a-z_]+(=[^\]]*)?\]/gi, "").replace(/\r/g, "").trim() || null,
+    };
+  });
+}
+
+/** Русские названия книг пачкой (поиск, списки): MAL id → название. */
+export function shikiBooksRu(malIds: number[]): Promise<Record<number, string | null>> {
+  const ids = [...new Set(malIds)].sort((a, b) => a - b);
+  if (!ids.length) return Promise.resolve({});
+  return cached(`shiki-media:books-ru:${ids.join(",")}`, { fresh: 30 * 86400, source: "shikimori" }, async () => {
+    const data = await shiki<{ data: { mangas: { id: string; russian: string | null }[] } }>("/api/graphql", {
+      method: "POST", json: { query: `{ mangas(ids: "${ids.join(",")}", limit: 50) { id russian } }` },
+    });
+    return Object.fromEntries(data.data.mangas.map((m) => [Number(m.id), m.russian?.trim() || null]));
+  });
+}
+
+/** Поиск книг по-русски (AniList по-русски не ищет) → MAL id по релевантности. */
+export function shikiBookSearch(q: string, limit: number): Promise<number[]> {
+  const query = q.trim().toLowerCase().replace(/\s+/g, " ");
+  return cached(`shiki-search:book:${limit}:${query}`, { fresh: 86400, source: "shikimori" }, async () => {
+    const data = await shiki<{ data: { mangas: { id: string }[] } }>("/api/graphql", {
+      method: "POST", json: { query: `{ mangas(search: ${JSON.stringify(query)}, limit: ${limit}) { id } }` },
+    });
+    return data.data.mangas.map((a) => Number(a.id));
+  });
+}
+
 // ---------------------------------------------------------------- OAuth
 
 export type Tokens = { access_token: string; refresh_token: string; expires_in: number; created_at: number };

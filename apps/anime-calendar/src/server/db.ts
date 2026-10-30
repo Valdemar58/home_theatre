@@ -899,7 +899,86 @@ function migrate(db: Db) {
       error ? `${m[1]} — не получилось` : (r.body ?? m[1]), error ? r.body : null,
       JSON.stringify({ ...(r.data ? JSON.parse(r.data) : {}), subject: m[2], error }), r.id);
   }
+  migrateBooks(db);
   migrateLlmOutputs(db);
+}
+
+/** Книги (заход 5): сопоставление с провайдерами, оглавления, текст и страницы глав, список чтения, позиция. */
+function migrateBooks(db: Db) {
+  // Книга у провайдера: ref — книга там; how — auto / manual / none (искали — не нашли; ref пустой)
+  db.exec(`CREATE TABLE IF NOT EXISTS book_links (
+    book_id INTEGER NOT NULL,
+    provider TEXT NOT NULL,
+    ref TEXT NOT NULL,
+    title TEXT,
+    edition TEXT NOT NULL DEFAULT 'main',
+    how TEXT NOT NULL,
+    checked_at INTEGER NOT NULL,
+    chapters_at INTEGER,
+    PRIMARY KEY (book_id, provider, ref)
+  )`);
+  // Оглавления провайдеров (переписываются целиком при обновлении книги у провайдера)
+  db.exec(`CREATE TABLE IF NOT EXISTS book_chapters (
+    provider TEXT NOT NULL,
+    ref TEXT NOT NULL,
+    cref TEXT NOT NULL,
+    edition TEXT NOT NULL,
+    lang TEXT NOT NULL,
+    team TEXT,
+    vol REAL,
+    num REAL,
+    num_text TEXT NOT NULL,
+    title TEXT,
+    date INTEGER,
+    PRIMARY KEY (provider, ref, cref)
+  )`);
+  // Глава целиком (текст ранобэ, список страниц манги) — без срока
+  db.exec(`CREATE TABLE IF NOT EXISTS chapter_content (
+    provider TEXT NOT NULL,
+    cref TEXT NOT NULL,
+    ref TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    body TEXT NOT NULL,
+    fetched_at INTEGER NOT NULL,
+    PRIMARY KEY (provider, cref)
+  )`);
+  // Список чтения (отдельно от аниме: там серии, выход, минуты просмотра)
+  db.exec(`CREATE TABLE IF NOT EXISTS read_entries (
+    user_id INTEGER NOT NULL,
+    book_id INTEGER NOT NULL,
+    mal_id INTEGER,
+    status TEXT NOT NULL,
+    chapters REAL NOT NULL DEFAULT 0,
+    volumes INTEGER NOT NULL DEFAULT 0,
+    score INTEGER NOT NULL DEFAULT 0,
+    note TEXT,
+    private INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    shiki_rate_id INTEGER,
+    shiki_updated_at INTEGER,
+    dirty INTEGER NOT NULL DEFAULT 0,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, book_id)
+  )`);
+  // Где остановился в главе (абзац / страница) и выбранный перевод книги
+  db.exec(`CREATE TABLE IF NOT EXISTS read_pos (
+    user_id INTEGER NOT NULL,
+    book_id INTEGER NOT NULL,
+    chapter TEXT NOT NULL,
+    edition TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    cref TEXT NOT NULL,
+    pos REAL NOT NULL DEFAULT 0,
+    done INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, book_id, edition, chapter)
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS book_pref (
+    user_id INTEGER NOT NULL,
+    book_id INTEGER NOT NULL,
+    data TEXT NOT NULL,
+    PRIMARY KEY (user_id, book_id)
+  )`);
 }
 
 /** Результаты LLM без срока жизни: журнал (строки не удаляются) + провенанс текущего значения. */

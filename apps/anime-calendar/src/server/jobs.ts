@@ -10,6 +10,7 @@ import { cleanupStreams } from "./stream";
 import { syncAll } from "./sync";
 import { syncAllLib } from "./anilib";
 import { cleanupImages } from "./img-cache";
+import { cleanupPages } from "./books/pages-cache";
 import { maybeRebuildAtlas } from "./reco/atlas";
 import { warmReference } from "./reco/card";
 import { updateThemeCanon } from "./reco/features";
@@ -87,6 +88,8 @@ export function startJobs() {
   setInterval(() => void safe("episode-notices", checkNewEpisodes), 10 * MINUTE);
   // AniLib: только у тех, кто подтвердил первый импорт; оценки меняются без updated_at — каждый раз весь список
   setInterval(() => void safe("anilib-sync", syncAllLib), 30 * MINUTE);
+  // Страницы глав (книги): сверх лимита — давно открытые
+  setInterval(() => void safe("pages-cleanup", async () => cleanupPages()), 60 * MINUTE);
   // Кэш картинок: поэтапная очистка (копии 14 дн, оригиналы 90 дн, потолок 5 ГБ)
   setInterval(() => void safe("img-cleanup", cleanupImages), 6 * 60 * MINUTE);
   // Нейтральная выборка для прогноза «насколько понравится» (500 популярных; кэш на неделю)

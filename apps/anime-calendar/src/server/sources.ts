@@ -7,10 +7,12 @@ import { HttpError } from "./http";
 // Первый удачный ответ закрывает предохранитель. SOURCES_OFFLINE=anilist,shikimori — принудительно «лежат»
 // (проверка деградации без отключения сети). Тут же — что из сохранённого отдали в текущем запросе (для плашки).
 
-export type Source = "anilist" | "shikimori" | "tmdb" | "kitsu" | "jellyfin" | "seerr" | "fandom" | "wikipedia" | "mal";
+export type Source = "anilist" | "shikimori" | "tmdb" | "kitsu" | "jellyfin" | "seerr" | "fandom" | "wikipedia" | "mal"
+  | "lib" | "mangadex" | "mangaupdates" | "syosetu";
 export const SOURCE_NAMES: Record<Source, string> = {
   anilist: "AniList", shikimori: "Shikimori", tmdb: "TMDB", kitsu: "Kitsu", jellyfin: "Jellyfin", seerr: "Seerr",
   fandom: "Fandom", wikipedia: "Википедия", mal: "MyAnimeList",
+  lib: "MangaLib / RanobeLib", mangadex: "MangaDex", mangaupdates: "MangaUpdates", syosetu: "Syosetu",
 };
 
 type State = { failures: number; downUntil: number; lastError: string | null; lastOk: number | null; calls: number; errors: number; served: number };

@@ -1,6 +1,7 @@
 "use client";
 import {
   ArrowDownTrayIcon,
+  BookOpenIcon,
   ArrowTopRightOnSquareIcon,
   BoltIcon,
   InboxArrowDownIcon,
@@ -43,6 +44,7 @@ const NAV = [
   { href: "/calendar", label: "Календарь", icon: CalendarDaysIcon },
   { href: "/browse", label: "Каталог", icon: Squares2X2Icon },
   { href: "/lists", label: "Мои списки", icon: QueueListIcon },
+  { href: "/manga", label: "Читать", icon: BookOpenIcon },
   { href: "/friends", label: "Друзья", icon: UsersIcon },
   { href: "/groups", label: "Группы", icon: UserGroupIcon },
   { href: "/recommendations", label: "Для тебя", icon: SparklesIcon },
@@ -71,7 +73,7 @@ const browserUrl = (url: string) =>
   typeof window !== "undefined" && window.location.hostname !== "localhost" ? url.replace("//localhost", `//${window.location.hostname}`) : url;
 
 // На телефоне внизу помещается пять пунктов; друзья, настройки и загрузки — значками в шапке
-const MOBILE_NAV = NAV.filter((n) => !["/settings", "/downloads", "/friends"].includes(n.href));
+const MOBILE_NAV = NAV.filter((n) => !["/settings", "/downloads", "/friends", "/manga"].includes(n.href));
 
 function Logo({ compact, textClass }: { compact?: boolean; textClass?: string }) {
   return (
@@ -245,6 +247,9 @@ export function AppShell({ userName, sidebar = "auto", children }: { userName: s
           </div>
           <SearchBox />
           <div className="shrink-0 md:ml-auto"><Notifications /></div>
+          <Link href="/manga" className="rounded-md p-2 text-gray-400 hover:bg-gray-800 hover:text-white md:hidden" aria-label="Читать">
+            <BookOpenIcon className="h-6 w-6" />
+          </Link>
           <Link href="/friends" className="rounded-md p-2 text-gray-400 hover:bg-gray-800 hover:text-white md:hidden" aria-label="Друзья">
             <UsersIcon className="h-6 w-6" />
           </Link>

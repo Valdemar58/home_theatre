@@ -1,4 +1,5 @@
 "use client";
+import { AnimeBooks } from "./books/AnimeBooks";
 import { ArrowTopRightOnSquareIcon, FlagIcon } from "@heroicons/react/24/outline";
 import Link from "next/link";
 import { useState } from "react";
@@ -221,6 +222,8 @@ export function AnimeDetailsView({ id, openVoices, together, undo, comment }: {
             {gallery && <Videos videos={gallery.videos} />}
 
             <Episodes media={a} entry={myList.get(a.id)} now={now} />
+
+            <AnimeBooks id={a.id} />
 
             {a.relations.length > 0 && (
               <section>

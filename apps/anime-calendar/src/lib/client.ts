@@ -1,6 +1,7 @@
 "use client";
 // Клиентские запросы к API и хуки React Query.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { BookLite, BookPage, BookProgress, BookRelation, ChapterContentView } from "./books";
 import { useMemo } from "react";
 import type { Me } from "@/app/api/me/route";
 import type { AnimeDetails, CharacterDetails, EventDetails, FranchiseView, NameRefs, PlaceDetails, PlotMap, PlotViewMode, TitlePlaces, RelationMap, TitleCast, TitleEvents, AnimeImages, MatchInfo, PlotInfo, SimilarItem, CalendarResponse, ListEntryWithMedia, ListStatus, MediaLite, SeerrStatus, Notice, NoticeCounts, FriendOpinion, FriendPick, Person, SharedListDetail, SharedListSummary, TogetherState, Profile, TaskInfo, VoicesState } from "./types";
@@ -268,3 +269,27 @@ export function useTagLabel(): (name: string) => string {
   const { data } = useQuery({ queryKey: ["tags-ru"], queryFn: () => api<Record<string, string>>("/api/tags"), staleTime: 3600_000 });
   return (name: string) => data?.[name] ?? name;
 }
+
+// ---------------------------------------------------------------- книги (заход 5)
+
+/** Страница книги; пока провайдеры ищут и обновляют оглавления — опрос раз в 5 с. */
+export const useBook = (id: number) =>
+  useQuery({
+    queryKey: ["book", id], queryFn: () => api<BookPage>(`/api/books/${id}`), enabled: id > 0, staleTime: 30_000,
+    refetchInterval: (q) => (q.state.data?.updating ? 5000 : false),
+  });
+
+export const useBookProgress = (id: number) =>
+  useQuery({ queryKey: ["book-progress", id], queryFn: () => api<BookProgress>(`/api/books/${id}/progress`), enabled: id > 0 });
+
+export const useBookChapter = (id: number, provider: string | null, cref: string | null) =>
+  useQuery({
+    queryKey: ["book-chapter", id, provider, cref], enabled: Boolean(id > 0 && provider && cref), staleTime: Infinity, retry: 1,
+    queryFn: () => api<ChapterContentView>(`/api/books/${id}/chapter?provider=${encodeURIComponent(provider!)}&cref=${encodeURIComponent(cref!)}`),
+  });
+
+export type ReadListItem = { bookId: number; status: string; chapters: number; score: number; updatedAt: number; book: BookLite };
+export const useReadList = () => useQuery({ queryKey: ["read-list"], queryFn: () => api<{ items: ReadListItem[] }>("/api/books/list") });
+
+export const useBooksForAnime = (id: number) =>
+  useQuery({ queryKey: ["anime-books", id], queryFn: () => api<{ books: (BookRelation & { ru: string | null })[] }>(`/api/books/for-anime/${id}`), enabled: id > 0, staleTime: 3600_000 });
