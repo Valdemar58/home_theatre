@@ -1,6 +1,8 @@
 import "server-only";
 import type { CommentItem } from "@/lib/types";
 import { db, now } from "./db";
+import type { BookLite } from "@/lib/books";
+import { getCached } from "./cache";
 import { notify } from "./notifications";
 import { ApiError } from "./route";
 import { areFriends, visibleTo } from "./social";
@@ -67,9 +69,14 @@ export function addComment(user: { id: number; name: string }, anilistId: number
     "INSERT INTO comments (anilist_id, user_id, parent_id, body, spoiler, episode, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
     .run(anilistId, user.id, p.parentId ?? null, body, p.spoiler ? 1 : 0, episode, now()).lastInsertRowid);
   if (parent && parent.user_id !== user.id) {
+    // Обсуждение книги (id AniList общие): книга в уведомлении и ссылка на её страницу
+    const book = getCached<BookLite>(`book:lite:${anilistId}`, true);
     notify(parent.user_id, {
-      kind: "comment", anilistId, actorId: user.id, title: `${user.name} ответил на ваш комментарий`,
-      body: p.spoiler ? "(спойлер)" : body.slice(0, 140), href: `/anime/${anilistId}?comment=${id}#c${id}`,
+      kind: "comment", actorId: user.id, title: `${user.name} ответил на ваш комментарий`,
+      body: p.spoiler ? "(спойлер)" : body.slice(0, 140),
+      ...(book
+        ? { book: { id: book.id, title: book.title.ru || book.title.romaji || book.title.english || String(book.id), cover: book.coverImage.large }, href: `/manga/${anilistId}` }
+        : { anilistId, href: `/anime/${anilistId}?comment=${id}#c${id}` }),
     });
   }
   return id;

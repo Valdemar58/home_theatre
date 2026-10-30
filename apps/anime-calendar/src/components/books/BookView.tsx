@@ -5,11 +5,15 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   chapterName, EDITION_LABELS, KIND_LABELS, LANG_LABELS, pickTranslation, READ_LABELS, translationLabel,
-  type BookHit, type BookPage, type ChapterSummary, type Edition, type EditionSummary,
+  type BookHit, type BookLite, type BookPage, type ChapterSummary, type Edition, type EditionSummary,
 } from "@/lib/books";
+import { GENRE_LABELS, label } from "@/lib/labels";
+import type { BookCharacter } from "@/server/books/anilist-books";
 import { api, useBook, useBookProgress } from "@/lib/client";
 import { FranchiseChip } from "../FranchiseChip";
+import { Discussion } from "../Discussion";
 import { Img } from "../Img";
+import { Grid } from "./BooksHome";
 import { useDeclareMode } from "../Mode";
 import { Badge, Button, cx, ErrorBox, Modal, Skel, Spinner } from "../ui";
 
@@ -39,6 +43,7 @@ function Loaded({ page, progress }: { page: BookPage; progress: ReturnType<typeo
   const qc = useQueryClient();
   const name = book.title.ru || book.title.romaji || book.title.english || "";
   const [edition, setEdition] = useState<Edition | null>(null);
+  const [tab, setTab] = useState<Tab>("overview");
   const ed = editions.find((e) => e.edition === edition) ?? editions[0];
   const pref = progress?.pref ?? {};
   // Продолжить: последняя открытая глава (недочитанная — она же, дочитанная — следующая)
@@ -90,34 +95,91 @@ function Loaded({ page, progress }: { page: BookPage; progress: ReturnType<typeo
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
-        <div className="min-w-0 space-y-6">
-          {(book.descriptionRu || book.description) && (
-            <section className="space-y-1">
-              <h2 className="text-lg font-bold">Описание</h2>
-              <p className="whitespace-pre-line text-sm leading-relaxed text-gray-300">{book.descriptionRu ?? stripHtml(book.description ?? "")}</p>
-            </section>
-          )}
-          {ed && (
-            <section className="space-y-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-lg font-bold">Главы</h2>
-                {editions.length > 1 && editions.map((e) => (
-                  <button key={e.edition} onClick={() => setEdition(e.edition)}
-                    className={cx("rounded-full px-3 py-1 text-xs", e.edition === ed.edition ? "tone-accent solid" : "bg-gray-800 text-gray-300 hover:bg-gray-700")}>
-                    {EDITION_LABELS[e.edition]}
-                  </button>
-                ))}
-              </div>
-              <ChapterList bookId={book.id} ed={ed} pref={pref} read={new Map((progress?.positions ?? []).filter((p) => p.edition === ed.edition).map((p) => [p.chapter, p.done]))} />
-            </section>
-          )}
+      <nav aria-label="Разделы книги" className="-mx-1 flex gap-1 overflow-x-auto border-b border-gray-800 px-1">
+        {TABS.map((t) => (
+          <button key={t.id} type="button" onClick={() => setTab(t.id)}
+            className={cx("shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition", tab === t.id ? "border-accent-400 text-white" : "border-transparent text-gray-400 hover:text-gray-200")}>
+            {t.label}{t.id === "chapters" && ed ? <span className="ml-1 text-gray-500">{ed.chapters.length}</span> : null}
+          </button>
+        ))}
+      </nav>
+
+      {tab === "overview" && (
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+          <div className="min-w-0 space-y-6">
+            {(book.descriptionRu || book.description) && (
+              <section className="space-y-1">
+                <h2 className="text-lg font-bold">Описание</h2>
+                <p className="whitespace-pre-line text-sm leading-relaxed text-gray-300">{book.descriptionRu ?? stripHtml(book.description ?? "")}</p>
+              </section>
+            )}
+            {book.genres.length > 0 && <p className="flex flex-wrap gap-1.5">{book.genres.map((g) => <Badge key={g}>{label(GENRE_LABELS, g)}</Badge>)}</p>}
+            <Related page={page} />
+          </div>
+          <aside className="space-y-4">
+            <Providers page={page} onChange={() => void qc.invalidateQueries({ queryKey: ["book", book.id] })} />
+          </aside>
         </div>
-        <aside className="space-y-4">
-          <Providers page={page} onChange={() => void qc.invalidateQueries({ queryKey: ["book", book.id] })} />
-          <Related page={page} />
-        </aside>
-      </div>
+      )}
+      {tab === "chapters" && (ed ? (
+        <section className="space-y-2">
+          {editions.length > 1 && (
+            <div className="flex flex-wrap gap-2">
+              {editions.map((e) => (
+                <button key={e.edition} onClick={() => setEdition(e.edition)}
+                  className={cx("rounded-full px-3 py-1 text-xs", e.edition === ed.edition ? "tone-accent solid" : "bg-gray-800 text-gray-300 hover:bg-gray-700")}>
+                  {EDITION_LABELS[e.edition]}
+                </button>
+              ))}
+            </div>
+          )}
+          <ChapterList bookId={book.id} ed={ed} pref={pref} read={new Map((progress?.positions ?? []).filter((p) => p.edition === ed.edition).map((p) => [p.chapter, p.done]))} />
+        </section>
+      ) : <p className="text-sm text-gray-500">Глав пока нет — проверьте провайдеров на вкладке «Обзор».</p>)}
+      {tab === "characters" && <BookCharacters id={book.id} />}
+      {tab === "similar" && <SimilarBooks id={book.id} />}
+      {tab === "discussion" && <Discussion anilistId={book.id} />}
+    </div>
+  );
+}
+
+const TABS = [
+  { id: "overview", label: "Обзор" }, { id: "chapters", label: "Главы" }, { id: "characters", label: "Персонажи" },
+  { id: "similar", label: "Похожее" }, { id: "discussion", label: "Обсуждение" },
+] as const;
+type Tab = (typeof TABS)[number]["id"];
+
+/** Персонажи книги: главные первыми, имя по-русски (Shikimori), если есть. */
+function BookCharacters({ id }: { id: number }) {
+  const { data, error, isLoading } = useQuery({ queryKey: ["book-chars", id], queryFn: () => api<{ characters: BookCharacter[] }>(`/api/books/${id}/characters`), staleTime: 3600_000 });
+  if (error) return <ErrorBox error={error} />;
+  if (isLoading) return <Skel className="h-60 w-full" />;
+  if (!data?.characters.length) return <p className="text-sm text-gray-500">О персонажах этой книги данных нет.</p>;
+  return (
+    <div className="grid grid-cols-3 gap-3 sm:grid-cols-5 lg:grid-cols-8">
+      {data.characters.map((c) => (
+        <div key={c.id} className="space-y-1 text-center">
+          <div className="relative aspect-2/3 overflow-hidden rounded-xl bg-gray-800 ring-1 ring-gray-700">
+            {c.image && <Img src={c.image} size="card" className="absolute inset-0 h-full w-full object-cover" />}
+            {c.main && <span className="absolute left-1 top-1 rounded-full bg-gray-900/80 px-1.5 text-[10px] font-semibold uppercase text-gray-200">главный</span>}
+          </div>
+          <p className="line-clamp-2 text-xs leading-tight text-gray-100">{c.ru ?? c.name}</p>
+          {c.ru && <p className="truncate text-[10px] text-gray-500">{c.name}</p>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SimilarBooks({ id }: { id: number }) {
+  const { data, error, isLoading } = useQuery({ queryKey: ["book-similar", id], queryFn: () => api<{ books: BookLite[] }>(`/api/books/${id}/similar`), staleTime: 3600_000 });
+  if (error) return <ErrorBox error={error} />;
+  if (isLoading) return <Skel className="h-60 w-full" />;
+  if (!data?.books.length) return <p className="text-sm text-gray-500">Похожих книг читатели AniList пока не предложили.</p>;
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-gray-500">По рекомендациям читателей AniList</p>
+      <Grid books={data.books} />
     </div>
   );
 }

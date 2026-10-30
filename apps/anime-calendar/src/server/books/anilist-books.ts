@@ -4,6 +4,7 @@ import { freshFor } from "@/lib/freshness";
 import type { FuzzyDate } from "@/lib/types";
 import { gql } from "../anilist";
 import { cached, setCached } from "../cache";
+import { bookCharacterGlossary } from "../characters";
 import { shikiBook, shikiBookSearch, shikiBooksRu } from "../shikimori";
 
 // Книги на AniList: тот же GraphQL, что у аниме, но type: MANGA (манга, ваншоты, ранобэ). Id у AniList общий.
@@ -179,5 +180,49 @@ export function browseBooks(f: BookBrowse): Promise<{ books: BookLite[]; more: b
     });
     const ru = await shikiBooksRu(d.Page.media.map((m) => m.idMal).filter((x): x is number => Boolean(x))).catch(() => ({} as Record<number, string | null>));
     return { books: d.Page.media.map((m) => toLite(m, m.idMal ? ru[m.idMal] ?? null : null)), more: d.Page.pageInfo.hasNextPage };
+  });
+}
+
+// ---------------------------------------------------------------- персонажи и похожее (страница книги)
+
+export type BookCharacter = { id: number; name: string; ru: string | null; native: string | null; image: string | null; main: boolean };
+
+const CHARS_QUERY = `
+query ($id: Int) {
+  Media(id: $id, type: MANGA) {
+    idMal
+    characters(sort: [ROLE, RELEVANCE, ID], perPage: 40) { edges { role node { id name { full native } image { large } } } }
+  }
+}`;
+
+/** Персонажи книги: AniList (портреты, роль), русские имена — Shikimori по совпадению имени. */
+export function bookCharacters(id: number): Promise<BookCharacter[]> {
+  return cached(`book:chars:${id}`, { fresh: 30 * 86400, source: "anilist" }, async () => {
+    type Edge = { role: string; node: { id: number; name: { full: string; native: string | null }; image: { large: string | null } } };
+    const { Media: m } = await gql<{ Media: { idMal: number | null; characters: { edges: Edge[] } } }>(CHARS_QUERY, { id });
+    const ru = await bookCharacterGlossary(m.idMal).catch(() => []);
+    const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    const byName = new Map(ru.flatMap((e) => e.names.map((n) => [norm(n), e.ru] as const)));
+    // Shikimori пишет «Фамилия Имя», AniList — «Имя Фамилия»
+    const ruOf = (n: string) => byName.get(norm(n)) ?? byName.get(norm(n.split(" ").reverse().join(" "))) ?? null;
+    return m.characters.edges.map((e) => ({
+      id: e.node.id, name: e.node.name.full, ru: ruOf(e.node.name.full) ?? (e.node.name.native ? byName.get(norm(e.node.name.native)) ?? null : null),
+      native: e.node.name.native, image: e.node.image.large, main: e.role === "MAIN",
+    }));
+  });
+}
+
+const RECS_QUERY = `
+query ($id: Int) {
+  Media(id: $id, type: MANGA) { recommendations(sort: [RATING_DESC], perPage: 24) { nodes { rating mediaRecommendation { ${LITE_FIELDS} } } } }
+}`;
+
+/** Похожие книги — рекомендации читателей AniList (по оценке рекомендации), без 18+. */
+export function similarBooks(id: number): Promise<BookLite[]> {
+  return cached(`book:recs:${id}`, { fresh: 14 * 86400, source: "anilist" }, async () => {
+    const { Media: m } = await gql<{ Media: { recommendations: { nodes: { rating: number; mediaRecommendation: RawLite | null }[] } } }>(RECS_QUERY, { id });
+    const list = m.recommendations.nodes.map((n) => n.mediaRecommendation).filter((x): x is RawLite => Boolean(x) && !x!.isAdult);
+    const ru = await shikiBooksRu(list.map((x) => x.idMal).filter((x): x is number => Boolean(x))).catch(() => ({} as Record<number, string | null>));
+    return list.map((x) => toLite(x, x.idMal ? ru[x.idMal] ?? null : null));
   });
 }
