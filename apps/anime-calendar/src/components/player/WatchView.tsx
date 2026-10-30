@@ -1,5 +1,5 @@
 "use client";
-import { CheckIcon, EyeIcon, EyeSlashIcon, MagnifyingGlassIcon } from "@heroicons/react/24/outline";
+import { CheckIcon, EyeIcon, EyeSlashIcon } from "@heroicons/react/24/outline";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -32,9 +32,23 @@ import { WatchSidebar } from "./WatchSidebar";
 // Общий с «Показать все описания» на странице тайтла (Plot.tsx)
 const SPOILERS_KEY = "episodes-show-all";
 
-export function WatchView({ id, ep }: { id: number; ep: number }) {
+export function WatchView({ id, ep: initialEp }: { id: number; ep: number }) {
   const router = useRouter();
   const params = useSearchParams();
+  // Серия меняется на месте (адрес — history API, без новой страницы): обёртка плеера живёт дальше и остаётся
+  // во весь экран при переходе на следующую серию. Назад/вперёд в браузере — Next отдаёт новый номер
+  const [ep, setEp] = useState(initialEp);
+  // «Сразу смотреть» — своим состоянием: новый плеер создаётся раньше, чем useSearchParams увидит ?play=1
+  const [autoPlay, setAutoPlay] = useState(params.get("play") === "1");
+  useEffect(() => setEp(initialEp), [initialEp]);
+  const stage = useRef<HTMLDivElement>(null);
+  const showEp = useCallback((n: number, query: URLSearchParams, replace = false) => {
+    setEp(n);
+    setAutoPlay(query.get("play") === "1");
+    const url = `/anime/${id}/watch/${n}${query.size ? `?${query}` : ""}`;
+    if (replace) window.history.replaceState(null, "", url);
+    else window.history.pushState(null, "", url);
+  }, [id]);
   const qc = useQueryClient();
   const { data: a } = useAnime(id);
   const { data: plot } = usePlot(id);
@@ -72,13 +86,13 @@ export function WatchView({ id, ep }: { id: number; ep: number }) {
     const q = new URLSearchParams();
     if (play) q.set("play", "1");
     if (rid && inRoom) q.set("room", rid);
-    router.push(`/anime/${id}/watch/${n}${q.size ? `?${q}` : ""}`);
-  }, [router, id, rid, inRoom]);
+    showEp(n, q);
+  }, [showEp, rid, inRoom]);
   // Комната перешла на другую серию — за ней
   const roomEp = inRoom ? rm.room!.state.ep : null;
   useEffect(() => {
-    if (roomEp && roomEp !== ep) router.replace(`/anime/${id}/watch/${roomEp}?room=${rid}&play=1`);
-  }, [roomEp, ep, id, rid, router]);
+    if (roomEp && roomEp !== ep) showEp(roomEp, new URLSearchParams({ room: rid!, play: "1" }), true);
+  }, [roomEp, ep, rid, showEp]);
   const sync: RoomSync | null = useMemo(() => (inRoom && rm.room ? {
     state: rm.room.state, canControl: rm.canControl, serverNow: rm.serverNow, report: rm.report,
     command: (action, pos) => void rm.act({ action, pos }).catch(() => undefined),
@@ -134,7 +148,8 @@ export function WatchView({ id, ep }: { id: number; ep: number }) {
 
       {/* Плеер и боковая панель */}
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
-        <Player key={`${id}:${ep}`} anilistId={id} ep={ep} autoPlay={params.get("play") === "1"}
+        <div ref={stage} className="min-w-0">
+        <Player key={`${id}:${ep}`} anilistId={id} ep={ep} autoPlay={autoPlay} fullscreenRoot={stage}
           title={`${name} · ${ep} серия${info?.title ? ` · ${info.title}` : ""}`}
           preview={{ still: info?.still ?? null, heading: `${ep} серия${info?.title ? ` · ${info.title}` : ""}`, text: spoiler ? null : info?.overview ?? null }}
           next={nextEp && (!inRoom || rm.canControl) ? { label: `${nextEp.ep} серия`, go: () => pickEp(nextEp.ep, true) } : null}
@@ -146,6 +161,7 @@ export function WatchView({ id, ep }: { id: number; ep: number }) {
             </div>
           )}
         </Player>
+        </div>
         <div className="space-y-4">
           {a && <WatchSidebar media={a} info={player.info} sub={player.sub} subs={player.subs} signs={player.signs} signsState={player.signsState} controls={controls} />}
           <RoomPanel handle={rm} friends={rooms?.friends ?? []} groups={rooms?.groups ?? []}
@@ -216,33 +232,22 @@ function EpisodeStrip({ id, current, statuses, watched, positions, titles, onPic
     try { localStorage.setItem(SPOILERS_KEY, v ? "0" : "1"); } catch { /* не страшно */ }
     return !v;
   });
-  const [find, setFind] = useState("");
   const pos = new Map(positions.map((p) => [p.ep, p]));
   // Текущая серия — в середине ленты
   useEffect(() => {
     strip.current?.querySelector<HTMLElement>(`[data-ep="${current}"]`)?.scrollIntoView({ block: "nearest", inline: "center" });
   }, [current, statuses.length]);
-  const jump = (e: React.FormEvent) => {
-    e.preventDefault();
-    const n = Number(find);
-    if (n >= 1 && n <= statuses.length) strip.current?.querySelector<HTMLElement>(`[data-ep="${n}"]`)?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
-  };
   return (
     <section className="space-y-2">
       <div className="flex items-center gap-3">
         <h2 className="text-lg font-bold">Серии <span className="text-sm font-normal text-gray-500">{statuses.length}</span></h2>
         {statuses.some((s) => s.ep > watched + 1) && (
           <button onClick={toggleShots} className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-200"
-            title="Кадры и названия серий дальше вашей размыты, чтобы не подсмотреть сюжет">
+            title="Кадры серий дальше вашей размыты, чтобы не подсмотреть сюжет">
             {shots ? <EyeSlashIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
-            {shots ? "Размыть серии дальше моей" : "Показать кадры и названия"}
+            {shots ? "Размыть кадры дальше моей" : "Показать кадры"}
           </button>
         )}
-        <form onSubmit={jump} className="ml-auto flex items-center gap-1 rounded-lg bg-gray-800/60 px-2 ring-1 ring-gray-700">
-          <MagnifyingGlassIcon className="h-4 w-4 text-gray-500" />
-          <input value={find} onChange={(e) => setFind(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="Серия №" inputMode="numeric"
-            className="h-8 w-20 bg-transparent text-sm outline-none placeholder:text-gray-500" />
-        </form>
       </div>
       <div ref={strip} className="flex snap-x items-start gap-2 overflow-x-auto pb-2">
         {statuses.map((s) => {
@@ -251,8 +256,10 @@ function EpisodeStrip({ id, current, statuses, watched, positions, titles, onPic
           const can = playable(s);
           const seen = s.ep <= watched;
           const progress = seen ? 1 : p?.dur ? Math.min(1, p.pos / p.dur) : 0;
-          // Дальше следующей серии — кадр и название размыты (не подсмотреть сюжет); открытая сейчас — видна
+          // Дальше следующей серии — кадр размыт (не подсмотреть сюжет); открытая сейчас — видна
           const hide = !shots && s.ep > watched + 1 && s.ep !== current;
+          // Название — только у просмотренных и открытой сейчас, у остальных номер (названия серий тоже спойлерят)
+          const named = t?.title && (seen || s.ep === current) ? t.title : null;
           return (
             <div key={s.ep} data-ep={s.ep} className={cx("w-44 shrink-0 snap-start overflow-hidden rounded-lg bg-gray-800/60 ring-1",
               s.ep === current ? "ring-2 ring-accent-400" : "ring-gray-700", !can && "opacity-60")}>
@@ -265,7 +272,7 @@ function EpisodeStrip({ id, current, statuses, watched, positions, titles, onPic
                   {/* Прогресс просмотра */}
                   {progress > 0 && <span className="absolute inset-x-0 bottom-0 h-1 bg-black/50"><span className="block h-full bg-accent-400" style={{ width: `${progress * 100}%` }} /></span>}
                 </div>
-                <p className={cx("truncate px-2 pt-1.5 text-xs text-gray-200", hide && t?.title && "select-none blur-[4px]")}>{t?.title ?? `Серия ${s.ep}`}</p>
+                <p className={cx("truncate px-2 pt-1.5 text-xs", named ? "text-gray-200" : "text-gray-400")} title={named ?? undefined}>{named ?? `Серия ${s.ep}`}</p>
               </button>
               <div className="flex h-7 items-center gap-1.5 px-2 pb-1.5 text-[11px] text-gray-400">
                 <ReadyLine s={s} />

@@ -116,8 +116,10 @@ export type RoomSync = {
   report: (r: { buffering: boolean; bw: number | null; drift: number | null }) => void;
 };
 
-export function Player({ anilistId, ep, title, onEnded, next, onReport, children, autoPlay, preview, onState, controls, room }: {
+export function Player({ anilistId, ep, title, onEnded, next, onReport, children, autoPlay, preview, onState, controls, room, fullscreenRoot }: {
   anilistId: number;
+  /** Что разворачивать во весь экран: обёртка снаружи переживает смену серии (плеер пересоздаётся) — экран не сворачивается */
+  fullscreenRoot?: React.RefObject<HTMLElement | null>;
   ep: number;
   title: string;
   /** Сразу смотреть (автопереход); иначе — превью серии и кнопка ▶ (сессия Jellyfin готовится заранее) */
@@ -672,8 +674,8 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
 
   const fullscreen = useCallback(() => {
     if (document.fullscreenElement) void document.exitFullscreen();
-    else void box.current?.requestFullscreen();
-  }, []);
+    else void (fullscreenRoot?.current ?? box.current)?.requestFullscreen();
+  }, [fullscreenRoot]);
   const setVol = (x: number) => {
     const v = video.current;
     if (!v) return;
@@ -685,7 +687,9 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
   };
 
   useEffect(() => {
+    // Следующая серия открылась уже во весь экран (обёртка развёрнута) — сразу в этом виде
     const onFs = () => setFull(Boolean(document.fullscreenElement));
+    onFs();
     document.addEventListener("fullscreenchange", onFs);
     return () => document.removeEventListener("fullscreenchange", onFs);
   }, []);
