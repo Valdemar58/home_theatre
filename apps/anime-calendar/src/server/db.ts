@@ -1009,6 +1009,22 @@ function migrateBooks(db: Db) {
     updated_at INTEGER NOT NULL
   )`);
   db.exec("CREATE INDEX IF NOT EXISTS glossary_term_root ON glossary_term (root_id)");
+  // Серия ↔ главы книги по сюжету (TASKS 5.11): индексы и ключи глав издания, уверенность
+  db.exec(`CREATE TABLE IF NOT EXISTS plot_align (
+    anime_id INTEGER NOT NULL,
+    ep INTEGER NOT NULL,
+    book_id INTEGER NOT NULL,
+    edition TEXT NOT NULL,
+    from_key TEXT NOT NULL,
+    to_key TEXT NOT NULL,
+    from_num REAL,
+    to_num REAL,
+    from_vol REAL,
+    to_vol REAL,
+    score REAL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (anime_id, ep)
+  )`);
   // Что из книги адаптирует сезон (TASKS 5.10) — ручная правка; данные Fandom — в хранилище (fandom-adapt:)
   db.exec(`CREATE TABLE IF NOT EXISTS adapt_manual (
     anime_id INTEGER PRIMARY KEY,

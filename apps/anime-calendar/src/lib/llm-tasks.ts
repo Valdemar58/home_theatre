@@ -1,7 +1,7 @@
 // Задачи LLM и настройки маршрутизации — общие для сервера и карточки «ИИ» в настройках.
 import type { Price } from "./llm-pricing";
 
-export const LLM_TASKS = ["analysis", "synopsis", "recap", "portrait", "rerank", "tags", "cluster", "plot_deep", "translate", "sdh", "plot_graph", "look", "signs", "frame", "book_translate", "manga_translate", "franchise_about"] as const;
+export const LLM_TASKS = ["analysis", "synopsis", "recap", "portrait", "rerank", "tags", "cluster", "plot_deep", "translate", "sdh", "plot_graph", "look", "signs", "frame", "book_translate", "manga_translate", "franchise_about", "chapter_digest"] as const;
 export type LlmTask = (typeof LLM_TASKS)[number];
 
 /** Куда идёт задача: локальная модель, дешёвая или умная внешняя. */
@@ -26,6 +26,7 @@ export const TASK_LABELS: Record<LlmTask, { title: string; hint: string }> = {
   book_translate: { title: "Перевод глав ранобэ", hint: "по кнопке в ридере или вперёд по мере чтения: глава без русского перевода — с японского оригинала или английского, по глоссарию франшизы" },
   manga_translate: { title: "Перевод страниц манги", hint: "по кнопке в ридере: текст на страницах читает контейнер mapvec, модель переводит реплики всей главы по глоссарию (картинки наружу не уходят)" },
   franchise_about: { title: "Описание франшизы", hint: "один раз на франшизу: что за мир, кто герои и с чего всё начинается — по описаниям первоисточника и первого сезона, без спойлеров" },
+  chapter_digest: { title: "Пересказ главы книги", hint: "по кнопке «Сопоставить с сюжетом» на франшизе: короткий пересказ каждой главы, чтобы найти, какие главы показывает серия; один раз на главу" },
   signs: { title: "Перевод надписей", hint: "в плеере по выбору «Надписи по-русски»: вывески и титры из английской или японской дорожки, один раз на дорожку" },
 };
 
@@ -40,9 +41,12 @@ export type LlmSettings = {
   prices: Record<string, Price>;
 };
 
-/** «recap:smart,rerank:cheap» → пулы задач (остальные — local). */
+// Пул по умолчанию, если не задан: пересказы глав — сотни вызовов, локально это часы (решение пользователя — DeepSeek)
+const DEFAULT_POOLS: Partial<Record<LlmTask, Pool>> = { chapter_digest: "cheap" };
+
+/** «recap:smart,rerank:cheap» → пулы задач (остальные — local или DEFAULT_POOLS). */
 export function parseTaskPools(s: string | undefined): Record<LlmTask, Pool> {
-  const out = Object.fromEntries(LLM_TASKS.map((t) => [t, "local"])) as Record<LlmTask, Pool>;
+  const out = Object.fromEntries(LLM_TASKS.map((t) => [t, DEFAULT_POOLS[t] ?? "local"])) as Record<LlmTask, Pool>;
   for (const part of (s ?? "").split(",")) {
     const [task, pool = "cheap"] = part.trim().split(":").map((x) => x.trim());
     if ((LLM_TASKS as readonly string[]).includes(task) && ["local", "cheap", "smart"].includes(pool)) out[task as LlmTask] = pool as Pool;

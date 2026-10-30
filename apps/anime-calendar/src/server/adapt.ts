@@ -1,17 +1,28 @@
 import "server-only";
 import { parseAdaptation, seasonRange, sourceForm, type AdaptForm, type AdaptRange, type AdaptUnit } from "@/lib/adapt";
+import type { BookLite } from "@/lib/books";
 import type { MediaLite } from "@/lib/types";
 import { cached, getCached } from "./cache";
 import { db, now } from "./db";
 import { fetchWithRetry, HttpError, RateLimiter } from "./http";
 import { guarded } from "./sources";
 
-// Что из книги адаптирует сезон (TASKS 5.10): ручная правка (adapt_manual) важнее Fandom. С Fandom — по страницам
+// Что из книги адаптирует сезон (TASKS 5.10): ручная правка (adapt_manual) важнее Fandom, Fandom — сопоставления
+// по сюжету (plot_align, TASKS 5.11). С Fandom — по страницам
 // серий, которые уже нашёл корпус сюжета (episode_text, source = fandom): поле adaptation / chapters / volume
 // в инфобоксе. Нет корпуса — только ручная правка.
 
 const UA = "home-theater/1.0 (personal media server)";
 const limiter = new RateLimiter(700);
+
+export type AlignRow = {
+  ep: number; book_id: number; edition: string; from_key: string; to_key: string;
+  from_num: number | null; to_num: number | null; from_vol: number | null; to_vol: number | null; score: number | null;
+};
+
+/** Серии сезона ↔ главы книги, сопоставленные по сюжету (TASKS 5.11). */
+export const alignRows = (animeId: number) =>
+  db.prepare<[number], AlignRow>("SELECT * FROM plot_align WHERE anime_id = ? ORDER BY ep").all(animeId);
 
 type Manual = { anime_id: number; form: AdaptForm; unit: AdaptUnit; from_n: number; to_n: number };
 
@@ -67,10 +78,24 @@ export function adaptRanges(anime: Pick<MediaLite, "id" | "source">[]): Map<numb
     const m = manual.get(a.id);
     if (m) { out.set(a.id, { form: m.form, unit: m.unit, from: m.from_n, to: m.to_n, source: "manual" }); continue; }
     const f = getCached<Omit<AdaptRange, "source"> | null>(fandomKey(a.id), true);
-    if (f) out.set(a.id, { ...f, source: "fandom" });
-    else if (f === undefined && fandomPages(a.id)) fetchLater(a);
+    if (f) { out.set(a.id, { ...f, source: "fandom" }); continue; }
+    if (f === undefined && fandomPages(a.id)) fetchLater(a);
+    const p = plotRange(a.id);
+    if (p) out.set(a.id, p);
   }
   return out;
+}
+
+/** Диапазон сезона по сопоставлению с сюжетом: тома, если у глав есть тома, иначе главы. */
+function plotRange(animeId: number): AdaptRange | null {
+  const rows = alignRows(animeId);
+  if (!rows.length) return null;
+  const book = getCached<BookLite>(`book:lite:${rows[0].book_id}`, true);
+  const form: AdaptForm = book?.kind === "novel" ? "novel" : "manga";
+  const first = rows[0], last = rows.at(-1)!;
+  if (first.from_vol && last.to_vol) return { form, unit: "vol", from: first.from_vol, to: last.to_vol, source: "plot" };
+  if (first.from_num === null || last.to_num === null) return null;
+  return { form, unit: "ch", from: first.from_num, to: last.to_num, source: "plot" };
 }
 
 /** Ручная правка: диапазон или null — убрать (вернётся Fandom, если есть). */

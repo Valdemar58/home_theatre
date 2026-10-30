@@ -11,6 +11,7 @@ import { syncAll } from "./sync";
 import { syncAllLib } from "./anilib";
 import { cleanupImages } from "./img-cache";
 import "./books/book-translate"; // обработчик задачи «перевод главы»
+import "./plot-align"; // обработчик задачи «сопоставить серии и главы»
 import "./books/manga-translate"; // и «перевод страниц манги»
 import { checkNewChapters } from "./books/chapter-notices";
 import { cleanupPages } from "./books/pages-cache";

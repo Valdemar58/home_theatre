@@ -1,9 +1,9 @@
 // Что из книги адаптирует сезон аниме (TASKS 5.10): «тома 1–4 ранобэ», «главы 1–38 манги». Источник — инфобоксы
-// серий на Fandom (поле adaptation / chapters / volume), ручная правка важнее. Чистые функции — для тестов.
+// серий на Fandom (поле adaptation / chapters / volume), сопоставление по сюжету (TASKS 5.11); ручная правка важнее. Чистые функции — для тестов.
 
 export type AdaptForm = "novel" | "manga";
 export type AdaptUnit = "vol" | "ch";
-export type AdaptRange = { form: AdaptForm; unit: AdaptUnit; from: number; to: number; source: "fandom" | "manual" };
+export type AdaptRange = { form: AdaptForm; unit: AdaptUnit; from: number; to: number; source: "fandom" | "manual" | "plot" };
 
 const FIELD = /adapt|chapter|volume|source|manga|novel/;
 

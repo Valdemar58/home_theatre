@@ -1,5 +1,5 @@
 import "server-only";
-import { summarize, type BookDetails, type BookLite } from "@/lib/books";
+import { chapterName, pickTranslation, summarize, type BookDetails, type BookLite, type EditionSummary } from "@/lib/books";
 import {
   bookSeeds, franchiseBooks, franchiseBranches, franchiseItems, franchiseProgress, franchiseRoot, FRANCHISE_LIMIT, nextUp,
   type EntryLite, type FranchiseItem, type FranchiseKind, type FranchiseNode,
@@ -7,7 +7,7 @@ import {
 import type { JsonSchema } from "@/lib/json-lite";
 import { displayTitle } from "@/lib/schedule";
 import type { FranchiseView, MediaLite } from "@/lib/types";
-import { adaptRanges } from "./adapt";
+import { adaptRanges, alignRows } from "./adapt";
 import { getDetails, type AnilistDetails } from "./anilist";
 import { enqueue } from "./archive";
 import { booksForAnime, bookDetails, type AnimeBook } from "./books/anilist-books";
@@ -211,6 +211,40 @@ function crossoversOf(nodes: Map<number, FranchiseNode>, inFranchise: Set<number
   return out;
 }
 
+// ---------------------------------------------------------------- серии ↔ главы (TASKS 5.11)
+
+/** Сопоставление по сюжету для страницы: серии сезона с главами и «досмотрел серию N — читай с главы M». */
+function alignView(story: FranchiseItem[], entries: Map<number, EntryLite>) {
+  const eds = new Map<number, EditionSummary[]>();
+  const edOf = (book: number, edition: string) => {
+    if (!eds.has(book)) eds.set(book, summarize(chapterRows(book)));
+    return eds.get(book)!.find((e) => e.edition === edition) ?? null;
+  };
+  const perSeason = new Map<number, { ep: number; label: string }[]>();
+  let readAfter: FranchiseView["readAfter"] = null;
+  for (const it of story) {
+    const rows = alignRows(it.media.id);
+    if (!rows.length) continue;
+    const ed = edOf(rows[0].book_id, rows[0].edition);
+    if (!ed) continue;
+    const name = (key: string) => { const c = ed.chapters.find((x) => x.key === key); return c ? chapterName(c, ed.edition) : key; };
+    perSeason.set(it.media.id, rows.map((r) => ({ ep: r.ep, label: r.from_key === r.to_key ? name(r.from_key) : `${name(r.from_key)} — ${name(r.to_key).toLowerCase()}` })));
+    const e = entries.get(it.media.id);
+    const upTo = e?.status === "completed" ? Infinity : e?.episodes ?? 0;
+    const last = rows.filter((r) => r.ep <= upTo).at(-1);
+    if (!last) continue;
+    const next = ed.chapters[ed.chapters.findIndex((c) => c.key === last.to_key) + 1];
+    if (!next) continue;
+    const t = pickTranslation(next);
+    const book = getCached<BookLite>(`book:lite:${last.book_id}`, true);
+    readAfter = {
+      bookId: last.book_id, form: book?.kind === "novel" ? "novel" : "manga", anime: it.media.id, ep: last.ep, label: chapterName(next, ed.edition),
+      href: t ? `/manga/${last.book_id}/read?e=${ed.edition}&c=${encodeURIComponent(next.key)}&p=${t.provider}&r=${encodeURIComponent(t.cref)}` : `/manga/${last.book_id}`,
+    };
+  }
+  return { perSeason, readAfter };
+}
+
 // ---------------------------------------------------------------- страница
 
 /** Франшиза по любому её тайтлу — аниме или книге. */
@@ -284,14 +318,17 @@ export async function franchiseOf(userId: number, id: number): Promise<Franchise
       count((b) => b.kind === "novel") ? `ранобэ — ${count((b) => b.kind === "novel")}` : null].filter(Boolean).join(", "),
   });
 
-  const adapt = adaptRanges(anime.filter((i) => i.kind === "main" || i.kind === "side").map((i) => i.media));
+  const story = anime.filter((i) => i.kind === "main" || i.kind === "side");
+  const adapt = adaptRanges(story.map((i) => i.media));
+  const aligned = alignView(story, entries);
   return {
     root, castTitle, next, partial, progress: franchiseProgress(anime, entries),
-    title, about, sourceBook: source?.id ?? null,
+    title, about, sourceBook: source?.id ?? null, readAfter: aligned.readAfter,
     banner: rootAnime?.bannerImage ?? sourceDetails?.bannerImage ?? null,
     items: anime.map((i) => {
       const e = entries.get(i.media.id);
-      return { media: lite(i.media), kind: i.kind, entry: e ? { status: e.status, episodes: e.episodes } : null, plot: seasonArcs(userId, i.media.id), adapt: adapt.get(i.media.id) ?? null };
+      return { media: lite(i.media), kind: i.kind, entry: e ? { status: e.status, episodes: e.episodes } : null, plot: seasonArcs(userId, i.media.id), adapt: adapt.get(i.media.id) ?? null,
+        align: aligned.perSeason.get(i.media.id) ?? null };
     }),
     books: books.items.map((i) => {
       const b = books.cards.get(i.media.id)!;

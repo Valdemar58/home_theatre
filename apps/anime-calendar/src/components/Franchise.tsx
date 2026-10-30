@@ -2,8 +2,8 @@
 import { ChevronDownIcon, SparklesIcon } from "@heroicons/react/24/outline";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { KIND_LABELS as BOOK_KIND_LABELS, type BookLite } from "@/lib/books";
 import { api, useFranchise, useTitleCast } from "@/lib/client";
 import { adaptLabel, continueAfter, type AdaptForm, type AdaptUnit } from "@/lib/adapt";
@@ -241,6 +241,11 @@ function whereOf(data: View, parts: Map<number, string>, f: Form): Spot | null {
     return { form: f, state: bookTitle(cur.book), detail: `глава ${c}${cur.known ? ` из ${cur.known}` : ""}`, pct: cur.known ? Math.min(1, c / cur.known) : 0, action: `Читать гл. ${c + 1}`, href: `/manga/${cur.book.id}` };
   }
   const left = main.find((b) => b.entry?.status !== "completed") ?? null;
+  // Сопоставление по сюжету: досмотрел серию N — следующая глава (точнее, чем по сезонам)
+  const ra = data.readAfter;
+  if (ra && ra.form === f && !story.some((b) => b.book.id === ra.bookId && reading(b.entry?.status))) {
+    return { form: f, state: `Дальше аниме — ${ra.label.toLowerCase()}`, detail: `после серии ${ra.ep} · ${parts.get(ra.anime) ?? ""}`, pct: 0, action: "Читать дальше аниме", href: ra.href };
+  }
   // Досмотренные сезоны уже прошли часть книги — читать дальше аниме
   const after = continueAfter(data.items.filter((i) => i.adapt && i.entry?.status === "completed").map((i) => i.adapt!), f);
   if (left && !left.entry && after) {
@@ -311,7 +316,7 @@ function AnimeCard({ it, part, next }: { it: Item; part: string; next: boolean }
         <span className="text-xs text-gray-400">{[label(FORMAT_LABELS, m.format), m.startDate.year].filter(Boolean).join(" · ")}{side ? " · доп." : ""}</span>
         <span title={displayTitle(m.title)} className="line-clamp-2 text-sm font-semibold leading-snug text-gray-100">{part}</span>
         <span className="text-xs text-gray-500">{[t ? `${t} сер.` : null, m.status === "RELEASING" ? "выходит" : m.status === "NOT_YET_RELEASED" ? "анонс" : null, entryNote(it)].filter(Boolean).join(" · ")}</span>
-        {it.adapt && <span className={cx("text-xs", it.adapt.form === "novel" ? "text-positive-300" : "text-warning-300")} title={it.adapt.source === "fandom" ? "по вики Fandom" : "поправлено вручную"}>{adaptLabel(it.adapt)}</span>}
+        {it.adapt && <span className={cx("text-xs", it.adapt.form === "novel" ? "text-positive-300" : "text-warning-300")} title={it.adapt.source === "fandom" ? "по вики Fandom" : it.adapt.source === "plot" ? "сопоставлено по сюжету" : "поправлено вручную"}>{adaptLabel(it.adapt)}</span>}
         <Progress pct={done} form="anime" />
       </div>
     </Link>
@@ -464,7 +469,7 @@ function AdaptEditor({ data, parts }: { data: View; parts: Map<number, string> }
         <Modal open onClose={() => { setOpen(false); void qc.invalidateQueries({ queryKey: ["franchise"] }); }} title="Сезоны и книга" wide>
           <p className="mb-3 text-sm text-gray-400">Какие тома или главы книги адаптирует сезон. Данные с вики Fandom подставляются сами, ваша правка важнее. По ним плитка «где я» подскажет, с какого места читать после аниме.</p>
           <div className="space-y-2">
-            {seasons.map((i) => <AdaptRow key={i.media.id} it={i} part={parts.get(i.media.id)!} defForm={defForm} />)}
+            {seasons.map((i) => <AdaptRow key={i.media.id} it={i} part={parts.get(i.media.id)!} defForm={defForm} books={data.books.filter((b) => b.kind === "main")} />)}
           </div>
         </Modal>
       )}
@@ -472,7 +477,7 @@ function AdaptEditor({ data, parts }: { data: View; parts: Map<number, string> }
   );
 }
 
-function AdaptRow({ it, part, defForm }: { it: View["items"][number]; part: string; defForm: AdaptForm }) {
+function AdaptRow({ it, part, defForm, books }: { it: View["items"][number]; part: string; defForm: AdaptForm; books: View["books"] }) {
   const a = it.adapt;
   const [form, setForm] = useState<AdaptForm>(a?.form ?? defForm);
   const [unit, setUnit] = useState<AdaptUnit>(a?.unit ?? "vol");
@@ -490,7 +495,7 @@ function AdaptRow({ it, part, defForm }: { it: View["items"][number]; part: stri
   const field = "h-8 rounded-md border border-gray-600 bg-gray-800 px-2 text-sm focus:border-accent-500 focus:outline-none";
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg bg-gray-800/40 p-2 ring-1 ring-gray-700">
-      <span className="min-w-40 flex-1 text-sm">{part} <span className="text-xs text-gray-500">{it.media.startDate.year}{a ? ` · ${a.source === "fandom" ? "Fandom" : "вручную"}` : ""}</span></span>
+      <span className="min-w-40 flex-1 text-sm">{part} <span className="text-xs text-gray-500">{it.media.startDate.year}{a ? ` · ${a.source === "fandom" ? "Fandom" : a.source === "plot" ? "по сюжету" : "вручную"}` : ""}</span></span>
       <select value={form} onChange={(e) => setForm(e.target.value as AdaptForm)} className={field}><option value="novel">ранобэ</option><option value="manga">манга</option></select>
       <select value={unit} onChange={(e) => setUnit(e.target.value as AdaptUnit)} className={field}><option value="vol">тома</option><option value="ch">главы</option></select>
       <input value={from} onChange={(e) => setFrom(e.target.value)} inputMode="numeric" placeholder="с" className={cx(field, "w-16")} />
@@ -498,6 +503,50 @@ function AdaptRow({ it, part, defForm }: { it: View["items"][number]; part: stri
       <Button size="sm" disabled={!from || !to || state === "busy"} onClick={() => void save()}>{state === "saved" ? "Сохранено" : "Сохранить"}</Button>
       {a?.source === "manual" && <Button size="sm" variant="ghost" onClick={() => void save(true)}>Убрать</Button>}
       {state instanceof Error && <span className="w-full text-xs text-negative-300">{state.message}</span>}
+      <AlignByPlot it={it} book={books.find((b) => (b.book.kind === "novel") === (form === "novel"))?.book ?? null} />
+    </div>
+  );
+}
+
+/** Сопоставление серий с главами по сюжету: запуск, ход, итог по сериям. */
+function AlignByPlot({ it, book }: { it: View["items"][number]; book: BookLite | null }) {
+  const qc = useQueryClient();
+  const key = book ? `anime=${it.media.id}&book=${book.id}` : "";
+  const { data } = useQuery({
+    queryKey: ["align-task", key], enabled: Boolean(book),
+    queryFn: () => api<{ task: { status: string; error: string | null } | null }>(`/api/franchise/align?${key}`),
+    refetchInterval: (q) => (q.state.data?.task && ["queued", "running"].includes(q.state.data.task.status) ? 4000 : false),
+  });
+  const task = data?.task;
+  const running = Boolean(task && ["queued", "running"].includes(task.status));
+  const was = useRef(running);
+  useEffect(() => {
+    if (was.current && !running) void qc.invalidateQueries({ queryKey: ["franchise"] });
+    was.current = running;
+  }, [running, qc]);
+  if (!book) return null;
+  const start = async () => {
+    await api("/api/franchise/align", { method: "POST", json: { anime: it.media.id, book: book.id } });
+    await qc.invalidateQueries({ queryKey: ["align-task", key] });
+  };
+  return (
+    <div className="w-full space-y-1 text-xs">
+      <div className="flex flex-wrap items-center gap-2 text-gray-400">
+        <button type="button" disabled={running} onClick={() => void start()} className="flex items-center gap-1 text-accent-300 hover:text-accent-200 disabled:text-gray-500">
+          <SparklesIcon className="h-3.5 w-3.5" />{running ? "Сопоставляю по сюжету…" : it.align ? "Сопоставить заново" : "Сопоставить по сюжету"}
+        </button>
+        {running && <Spinner className="h-3 w-3" />}
+        <span className="text-gray-500">с «{book.title.ru || book.title.romaji}»: пересказы серий ↔ пересказы глав (ИИ)</span>
+        {task?.status === "error" && task.error && <span className="text-negative-300">{task.error}</span>}
+      </div>
+      {it.align && (
+        <details>
+          <summary className="cursor-pointer text-gray-400">По сериям ({it.align.length})</summary>
+          <ul className="mt-1 grid gap-x-4 gap-y-0.5 sm:grid-cols-2">
+            {it.align.map((a) => <li key={a.ep}><span className="text-gray-500">серия {a.ep}:</span> {a.label}</li>)}
+          </ul>
+        </details>
+      )}
     </div>
   );
 }

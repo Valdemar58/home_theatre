@@ -644,7 +644,11 @@ export type FranchiseView = {
     plot: { ep: number; events: number; ahead: number; arcs: { name: string; fromEp: number | null; events: number }[] } | null;
     /** Что из книги адаптирует (Fandom или ручная правка) */
     adapt: import("./adapt").AdaptRange | null;
+    /** Серии ↔ главы, сопоставленные по сюжету (TASKS 5.11) */
+    align: { ep: number; label: string }[] | null;
   }[];
+  /** Досмотренная серия ↔ следующая глава книги (по сопоставлению сюжета) — откуда читать дальше аниме */
+  readAfter: { bookId: number; form: "manga" | "novel"; anime: number; ep: number; label: string; href: string } | null;
   /** Манга и ранобэ франшизы: вид, мой прогресс, сколько глав на русском и всего известно */
   books: {
     book: import("./books").BookLite;
