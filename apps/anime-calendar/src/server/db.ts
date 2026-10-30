@@ -942,6 +942,19 @@ function migrateBooks(db: Db) {
     fetched_at INTEGER NOT NULL,
     PRIMARY KEY (provider, cref)
   )`);
+  // Текст и страницы главы: cref уникален только внутри книги провайдера (у Lib — «том|глава|ветка»), поэтому ключ —
+  // с ref. Прежняя chapter_content (ключ без ref — главы разных книг перетирали друг друга) — переносится сюда
+  db.exec(`CREATE TABLE IF NOT EXISTS chapter_body (
+    provider TEXT NOT NULL,
+    ref TEXT NOT NULL,
+    cref TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    body TEXT NOT NULL,
+    fetched_at INTEGER NOT NULL,
+    PRIMARY KEY (provider, ref, cref)
+  )`);
+  db.exec(`INSERT OR IGNORE INTO chapter_body (provider, ref, cref, kind, body, fetched_at)
+    SELECT provider, ref, cref, kind, body, fetched_at FROM chapter_content`);
   // Список чтения (отдельно от аниме: там серии, выход, минуты просмотра)
   db.exec(`CREATE TABLE IF NOT EXISTS read_entries (
     user_id INTEGER NOT NULL,

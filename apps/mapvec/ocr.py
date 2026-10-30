@@ -182,3 +182,21 @@ def _reread(model, proc, img, labels):
         # Рамка подписи — по уточнённым строкам
         l["x0"], l["y0"] = min(ln[0] for ln in l["lines"]), min(ln[1] for ln in l["lines"])
         l["x1"], l["y1"] = max(ln[2] for ln in l["lines"]), max(ln[3] for ln in l["lines"])
+
+
+PAGE_MAX = int(os.environ.get("MAPVEC_PAGE_MAX", "1600"))
+
+
+def read_lines(img: Image.Image):
+    """Строки текста страницы манги за один проход (страница целиком, длинная сторона — не больше PAGE_MAX):
+    [{text, x0, y0, x1, y1}] в пикселях исходной картинки. Склейка строк в пузыри — у календаря."""
+    global _used
+    W, H = img.size
+    k = min(1.0, PAGE_MAX / max(W, H))
+    small = img.resize((round(W * k), round(H * k))) if k < 1 else img
+    with _lock:
+        model, proc = _load()
+        lines = [dict(text=t, x0=round(a / k), y0=round(b / k), x1=round(c / k), y1=round(d / k))
+                 for t, a, b, c, d in _spot(model, proc, small)]
+        _used = time.time()
+    return lines

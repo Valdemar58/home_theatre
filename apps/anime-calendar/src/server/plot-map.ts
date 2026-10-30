@@ -1,4 +1,5 @@
 import "server-only";
+import { mapvec, mapvecUp } from "./mapvec";
 import { readFile } from "node:fs/promises";
 import sharp from "sharp";
 import type { JsonSchema } from "@/lib/json-lite";
@@ -75,7 +76,6 @@ async function tileLabels(png: Buffer): Promise<MapLabel[]> {
 
 // ---------------------------------------------------------------- векторизация (контейнер mapvec)
 
-const MAPVEC = (process.env.MAPVEC_URL ?? "").replace(/\/+$/, "");
 /** Подпись от OCR: рамка и строки в пикселях обрезки карты. */
 type VecLabel = { text: string; x0: number; y0: number; x1: number; y1: number; lines: [number, number, number, number, string][] };
 type Poly = [number, number][];
@@ -89,22 +89,6 @@ type MapVector = {
 };
 // 2 — второе чтение подписей по центру, раскраска соседей, место для названия страны
 const VECTOR_V = 2;
-
-let vecHealth: { ok: boolean; at: number } | null = null;
-async function mapvecUp(): Promise<boolean> {
-  if (!MAPVEC) return false;
-  if (vecHealth && Date.now() - vecHealth.at < 60_000) return vecHealth.ok;
-  const ok = await fetch(`${MAPVEC}/health`, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false);
-  vecHealth = { ok, at: Date.now() };
-  return ok;
-}
-
-async function mapvec<T>(path: string, body: BodyInit, signal: AbortSignal): Promise<T> {
-  // Без видеокарты подписи читаются минутами: ждём до получаса
-  const r = await fetch(`${MAPVEC}${path}`, { method: "POST", body, signal: AbortSignal.any([signal, AbortSignal.timeout(1_800_000)]) });
-  if (!r.ok) throw new Error(`mapvec ${path}: ${(await r.text()).slice(0, 300)}`);
-  return (await r.json()) as T;
-}
 
 /** Карта франшизы: найти, отрезать легенду, прочитать подписи (и векторизовать, если есть mapvec). Та же карта заново не читается. */
 async function buildMap(rootId: number, anilistId: number, signal: AbortSignal, onTile?: (done: number, total: number) => void): Promise<boolean> {

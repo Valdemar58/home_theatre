@@ -46,7 +46,7 @@ export function endedAt(m: Liveness): number | null {
  *  volatile — состояние сервисов (Sonarr, торренты, Seerr). */
 export type CacheClass = "entity" | "listing" | "volatile";
 
-const ENTITY = /^(media:|title-chars:|character:|shiki-desc:|shiki-chars:|shiki-media:|tmdb-|kitsu-eps:|plot-eps:|corpus-wd:|fandom-|airing:|ru-topic:|ru:names:|lite:|book:|book-meta:|md-|mu-|narou-|lib-book:)/;
+const ENTITY = /^(media:|title-chars:|character:|shiki-desc:|shiki-chars:|shiki-media:|tmdb-|kitsu-eps:|plot-eps:|corpus-wd:|fandom-|airing:|ru-topic:|ru:names:|lite:|book:|book-meta:|md-|mu-|narou-|lib-book:|manga-ocr:)/;
 const LISTING = /^(book-search:|lib-search:|md-search:|mu-search:|narou-search:|browse:|shiki-search:|genres$|seerr-search:|similar:|jimaku-index$|.*popular)/;
 
 /** Класс записи по ключу (для старых записей и вызовов без явного класса). */

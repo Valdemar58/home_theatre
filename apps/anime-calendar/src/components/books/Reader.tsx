@@ -10,6 +10,7 @@ import { api, useBook, useBookChapter, useBookProgress } from "@/lib/client";
 import { Button, cx, ErrorBox, Skel, Spinner } from "../ui";
 import { providerName, readHref } from "./BookView";
 import { MangaReader, MangaSettingsPanel, useMangaSettings } from "./MangaReader";
+import type { MangaAiPage } from "@/lib/manga-ocr";
 
 // Ридер главы. Ранобэ — текст абзацами (шрифт, размер, ширина, интервал, тема — у браузера), позиция — по абзацу,
 // дочитал до конца — глава отмечена в списке. Перевод главы — переключателем (команда, провайдер, оригинал),
@@ -55,6 +56,13 @@ export function Reader({ id }: { id: number }) {
   const [panel, setPanel] = useState(false);
   const theme = THEMES[settings.theme];
   const pages = content?.kind === "pages" ? content.pages : null;
+  // Перевод страниц ИИ (TASKS 5.8): слой поверх картинок, пока идёт — опрос раз в 3 с
+  const mangaAi = useQuery({
+    queryKey: ["manga-ai", id, provider, cref], enabled: Boolean(pages && provider && cref),
+    queryFn: () => api<MangaAiState>(`/api/books/${id}/manga-ai?provider=${encodeURIComponent(provider!)}&cref=${encodeURIComponent(cref!)}`),
+    refetchInterval: (q) => (q.state.data?.task && ["queued", "running"].includes(q.state.data.task.status) && !q.state.data.pages ? 3000 : false),
+  });
+  const [aiOn, setAiOn] = useState(true);
 
   const ed = page?.editions.find((e) => e.edition === edition);
   const idx = ed ? ed.chapters.findIndex((c) => c.key === key) : -1;
@@ -140,7 +148,11 @@ export function Reader({ id }: { id: number }) {
       </div>
       {panel && (pages ? <MangaSettingsPanel s={manga} set={setManga} /> : <SettingsPanel s={settings} set={set} />)}
 
-      {pages && <MangaReader key={cref} pages={pages} s={manga} restore={saved && !saved.done ? saved.pos : 0} prev={prev} next={next} dim={theme.dim}
+      {pages && provider && cref && (current?.lang !== "ru" || mangaAi.data?.pages) && (
+        <MangaAiBar bookId={id} provider={provider} cref={cref} data={mangaAi.data} on={aiOn} setOn={setAiOn} dim={theme.dim}
+          refresh={() => void qc.invalidateQueries({ queryKey: ["manga-ai", id, provider, cref] })} />
+      )}
+      {pages && <MangaReader key={cref} pages={pages} ai={aiOn ? mangaAi.data?.pages : null} s={manga} restore={saved && !saved.done ? saved.pos : 0} prev={prev} next={next} dim={theme.dim}
         onPos={(i) => { pos.current = i; }} onEnd={finish} />}
       {pages && manga.mode === "strip" && <ChapterNav prev={prev} next={next} id={id} />}
 
@@ -206,6 +218,35 @@ function AiBar({ bookId, edition, chapter, current, ahead, dim, onReady }: {
         </>
       )}
       {data?.task?.status === "error" && <span className="w-full text-xs text-negative-300">Не вышло: {data.task.error}</span>}
+    </div>
+  );
+}
+
+type MangaAiState = { pages: MangaAiPage[] | null; model: string | null; task: { status: string; error: string | null } | null };
+
+/** Перевод страниц манги ИИ: запуск, состояние, «оригинал / перевод». */
+function MangaAiBar({ bookId, provider, cref, data, on, setOn, dim, refresh }: {
+  bookId: number; provider: string; cref: string; data: MangaAiState | undefined; on: boolean; setOn: (x: boolean) => void; dim: string; refresh: () => void;
+}) {
+  const busy = data?.task && ["queued", "running"].includes(data.task.status) && !data.pages;
+  const btn = (active: boolean) => cx("rounded px-2 py-0.5", active && "tone-accent solid");
+  return (
+    <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-center gap-2 px-3 py-2 text-xs" style={{ color: dim }}>
+      {data?.pages ? (
+        <>
+          <span>Перевод ИИ{data.model ? ` (${data.model})` : ""}:</span>
+          <button className={btn(!on)} onClick={() => setOn(false)}>Оригинал</button>
+          <button className={btn(on)} onClick={() => setOn(true)}>Перевод</button>
+        </>
+      ) : busy ? (
+        <span className="flex items-center gap-2"><Spinner className="h-3.5 w-3.5" />{data!.task!.status === "queued" ? "В очереди на перевод страниц…" : "Читаю текст на страницах и перевожу…"}</span>
+      ) : (
+        <>
+          <span>Русского перевода нет — можно перевести страницы ИИ</span>
+          <Button size="sm" onClick={() => void api(`/api/books/${bookId}/manga-ai`, { method: "POST", json: { provider, cref } }).then(refresh)}>Перевести ИИ</Button>
+        </>
+      )}
+      {data?.task?.status === "error" && !data.pages && <span className="w-full text-center text-negative-300">Не вышло: {data.task.error}</span>}
     </div>
   );
 }

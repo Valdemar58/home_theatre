@@ -2,6 +2,7 @@
 import { ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { isStrip, spreadsOf, type BookKind } from "@/lib/books";
+import { fitFont, type MangaAiPage } from "@/lib/manga-ocr";
 import { cx } from "../ui";
 
 // Ридер манги (TASKS 5.4). Постранично — справа налево (японская манга) или слева направо, на широком экране —
@@ -52,6 +53,8 @@ export function useMangaSettings(id: number, kind: BookKind | undefined): [Manga
 
 type Props = {
   pages: Page[];
+  /** Перевод ИИ поверх страниц (TASKS 5.8) — по индексу страницы; null — оригинал */
+  ai?: MangaAiPage[] | null;
   s: MangaSettings;
   restore: number;
   onPos: (i: number) => void;
@@ -77,7 +80,7 @@ function useWide() {
   return wide;
 }
 
-function Paged({ pages, s, restore, onPos, onEnd, prev, next, dim }: Props) {
+function Paged({ pages, ai, s, restore, onPos, onEnd, prev, next, dim }: Props) {
   const wide = useWide();
   const spreads = useMemo(() => spreadsOf(pages, s.double && wide), [pages, s.double, wide]);
   const [at, setAt] = useState(0);
@@ -147,9 +150,12 @@ function Paged({ pages, s, restore, onPos, onEnd, prev, next, dim }: Props) {
         className={cx("min-h-0 flex-1 select-none", fitH ? "flex items-center justify-center overflow-hidden" : "overflow-y-auto")}>
         <div className={cx("flex justify-center", fitH ? "h-full w-full" : "mx-auto w-full max-w-5xl")}>
           {shown.map((i) => (
-            <img key={pages[i].url} src={pages[i].url} alt={`Страница ${i + 1}`} draggable={false}
-              className={cx("block", fitH ? "h-full min-w-0 object-contain" : "h-auto min-w-0", cur.length > 1 && (fitH ? "max-w-[50%]" : "w-1/2"), cur.length === 1 && !fitH && "w-full")}
-              style={fitH && pages[i].w && pages[i].h ? { aspectRatio: `${pages[i].w} / ${pages[i].h}` } : undefined} />
+            <div key={pages[i].url} className={cx("relative min-w-0", fitH ? "h-full" : "h-auto", cur.length > 1 && (fitH ? "max-w-[50%]" : "w-1/2"), cur.length === 1 && !fitH && "w-full")}
+              style={fitH && pages[i].w && pages[i].h ? { aspectRatio: `${pages[i].w} / ${pages[i].h}` } : undefined}>
+              <img src={pages[i].url} alt={`Страница ${i + 1}`} draggable={false}
+                className={cx("block", fitH ? "h-full w-auto max-w-full object-contain" : "h-auto w-full")} />
+              {ai?.[i] && <AiLayer page={ai[i]} />}
+            </div>
           ))}
         </div>
       </div>
@@ -166,7 +172,7 @@ function Paged({ pages, s, restore, onPos, onEnd, prev, next, dim }: Props) {
   );
 }
 
-function Strip({ pages, s, restore, onPos, onEnd, next, prev }: Props) {
+function Strip({ pages, ai, s, restore, onPos, onEnd, next, prev }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -202,10 +208,53 @@ function Strip({ pages, s, restore, onPos, onEnd, next, prev }: Props) {
     <div ref={root} className="mx-auto" style={{ maxWidth: `${s.stripWidth}rem` }}>
       {pages.map((p, i) => (
         // Ширина и высота заранее — лента не прыгает при загрузке
-        <img key={p.url} data-i={i} src={p.url} alt={`Страница ${i + 1}`} loading={i < 4 ? "eager" : "lazy"} className="block w-full"
-          style={p.w && p.h ? { aspectRatio: `${p.w} / ${p.h}` } : { minHeight: "50vh" }} />
+        <div key={p.url} data-i={i} className="relative">
+          <img src={p.url} alt={`Страница ${i + 1}`} loading={i < 4 ? "eager" : "lazy"} className="block w-full"
+            style={p.w && p.h ? { aspectRatio: `${p.w} / ${p.h}` } : { minHeight: "50vh" }} />
+          {ai?.[i] && <AiLayer page={ai[i]} />}
+        </div>
       ))}
       <div ref={end} className="h-1" />
+    </div>
+  );
+}
+
+/**
+ * Перевод ИИ поверх страницы: пузырь закрашивается, русский текст вписывается подбором размера (по ширине картинки
+ * на экране). Узкий вертикальный японский пузырь расширяется под горизонтальный текст. Исходный текст — в подсказке.
+ */
+function AiLayer({ page }: { page: MangaAiPage }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setScale(el.clientWidth / page.w));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [page.w]);
+  return (
+    <div ref={ref} className="pointer-events-none absolute inset-0">
+      {scale > 0 && page.bubbles.map((b, k) => {
+        // Рамка распознавания облегает текст вплотную — закрашиваем с запасом 8%, чтобы края букв не выглядывали
+        const px = (b.x1 - b.x0) * 0.08, py = (b.y1 - b.y0) * 0.08;
+        let x0 = Math.max(0, b.x0 - px), x1 = Math.min(1000, b.x1 + px);
+        const y0 = Math.max(0, b.y0 - py), y1 = Math.min(1000, b.y1 + py);
+        const h = ((y1 - y0) / 1000) * page.h;
+        if (b.vertical && ((x1 - x0) / 1000) * page.w < h * 0.6) {
+          const half = ((h * 0.6) / page.w) * 500, c = (x0 + x1) / 2;
+          x0 = Math.max(0, c - half);
+          x1 = Math.min(1000, c + half);
+        }
+        const w = ((x1 - x0) / 1000) * page.w;
+        return (
+          <div key={k} title={b.text} className="pointer-events-auto absolute flex items-center justify-center overflow-hidden text-center font-semibold"
+            style={{ left: `${x0 / 10}%`, top: `${y0 / 10}%`, width: `${(x1 - x0) / 10}%`, height: `${(y1 - y0) / 10}%`,
+              fontSize: fitFont(b.ru, w, h) * scale, lineHeight: 1.1, borderRadius: "35%", padding: "2%", background: "#ffffff", color: "#111111" }}>
+            {b.ru}
+          </div>
+        );
+      })}
     </div>
   );
 }

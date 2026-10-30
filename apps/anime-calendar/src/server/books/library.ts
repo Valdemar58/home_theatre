@@ -189,17 +189,19 @@ export async function chapterContent(bookId: number, provider: string, cref: str
     if (!k) throw new Error("Перевода ИИ этой главы нет");
     return { kind: "text", blocks: k.value.blocks };
   }
-  const ch = db.prepare<[string, string], { ref: string }>("SELECT ref FROM book_chapters WHERE provider = ? AND cref = ?").get(provider, cref);
-  const link = ch && linksOf(bookId).find((l) => l.provider === provider && l.ref === ch.ref && l.how !== "hidden");
-  if (!ch || !link) throw new Error("Этой главы нет у книги");
-  const saved = db.prepare<[string, string], { kind: string; body: string }>("SELECT kind, body FROM chapter_content WHERE provider = ? AND cref = ?").get(provider, cref);
+  // cref уникален только внутри книги провайдера — ищем среди книг, привязанных к этой
+  const refs = linksOf(bookId).filter((l) => l.provider === provider && l.ref && l.how !== "hidden").map((l) => l.ref);
+  const ch = refs.length ? db.prepare<string[], { ref: string }>(
+    `SELECT ref FROM book_chapters WHERE provider = ? AND cref = ? AND ref IN (${refs.map(() => "?").join(",")})`).get(provider, cref, ...refs) : undefined;
+  if (!ch) throw new Error("Этой главы нет у книги");
+  const saved = db.prepare<[string, string, string], { kind: string; body: string }>("SELECT kind, body FROM chapter_body WHERE provider = ? AND ref = ? AND cref = ?").get(provider, ch.ref, cref);
   if (saved) return { kind: saved.kind, ...JSON.parse(saved.body) } as Content;
   const p = providerById(provider)!;
   const c = await p.content(ch.ref, cref);
   if (c.kind !== "external") {
     const { kind, ...body } = c;
-    db.prepare("INSERT OR REPLACE INTO chapter_content (provider, cref, ref, kind, body, fetched_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(provider, cref, ch.ref, kind, JSON.stringify(body), now());
+    db.prepare("INSERT OR REPLACE INTO chapter_body (provider, ref, cref, kind, body, fetched_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(provider, ch.ref, cref, kind, JSON.stringify(body), now());
   }
   return c;
 }

@@ -2,6 +2,7 @@
 
 GET  /health      — {"ok": true, "device": "cuda|cpu", "ocr_loaded": bool}
 POST /ocr         — тело: картинка карты → {"width", "height", "labels": [{text, x0, y0, x1, y1, lines}]} (пиксели)
+POST /lines       — тело: страница манги → {"width", "height", "lines": [{text, x0, y0, x1, y1}]} (один проход, пиксели)
 POST /vectorize   — тело: JSON {"image": base64, "labels": [...] из /ocr} → {"width", "height", "land", "regions"}
 Запросы по одному: модель на видеокарте одна.
 """
@@ -51,6 +52,9 @@ class Handler(BaseHTTPRequestHandler):
                 if self.path == "/ocr":
                     img = Image.open(BytesIO(body)).convert("RGB")
                     out = dict(width=img.width, height=img.height, labels=ocr.read_labels(img))
+                elif self.path == "/lines":
+                    img = Image.open(BytesIO(body)).convert("RGB")
+                    out = dict(width=img.width, height=img.height, lines=ocr.read_lines(img))
                 elif self.path == "/vectorize":
                     req = json.loads(body)
                     img = cv2.imdecode(np.frombuffer(base64.b64decode(req["image"]), np.uint8), cv2.IMREAD_COLOR)
