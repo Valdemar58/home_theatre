@@ -2,7 +2,11 @@ import "server-only";
 import { chapterName, summarize, translationsOf, type ChapterSummary, type EditionSummary } from "@/lib/books";
 import type { JsonSchema } from "@/lib/json-lite";
 import { alignPlot, needsMore, simMatrix } from "@/lib/plot-align";
+import sharp from "sharp";
 import { alignRows, fandomChapters } from "./adapt";
+import { pageImage } from "./books/pages-cache";
+import { cached } from "./cache";
+import { mapvec, mapvecUp } from "./mapvec";
 import { getDetails } from "./anilist";
 import { bookDetails } from "./books/anilist-books";
 import { chapterContent, chapterRows } from "./books/library";
@@ -62,17 +66,62 @@ function coveredUntil(chs: ChapterSummary[], digests: (string | null)[]): number
   return digests.length;
 }
 
+// Язык промпта распознавания — по языку перевода главы (оригинал японской манги — японский)
+const ocrLang = (lang: string) => (lang === "ru" ? "ru" : lang === "ja" ? "ja" : "en");
+const PAGES_MAX = 60;
+
+/** Текст страниц главы манги (mapvec, dots.mocr): страница за проход, полоса манхвы — кусками; навсегда в хранилище. */
+async function pagesText(provider: string, pages: { url: string }[], lang: string, signal: AbortSignal): Promise<string> {
+  const out: string[] = [];
+  const list = pages.slice(0, PAGES_MAX);
+  // Картинки качаются на несколько страниц вперёд: загрузка с CDN дольше распознавания, видеокарта не ждёт сеть
+  const loads = new Map<string, Promise<Buffer>>();
+  const load = (url: string) => {
+    let p = loads.get(url);
+    if (!p) {
+      p = pageImage(provider, url).then((r) => r.body);
+      p.catch(() => {});
+      loads.set(url, p);
+    }
+    return p;
+  };
+  for (const [i, p] of list.entries()) {
+    signal.throwIfAborted();
+    const t = await cached(`manga-ocr:text:${lang}:${hashOf(p.url)}`, { fresh: 10 * 365 * 86400 }, async () => {
+      for (const q of list.slice(i + 1, i + 4)) load(q.url);
+      const img = await load(p.url);
+      const meta = await sharp(img).metadata();
+      const w = meta.width ?? 0, h = meta.height ?? 0;
+      const step = h > w * 2 ? Math.round(w * 1.4) : h;
+      const parts: string[] = [];
+      for (let top = 0; top < h; top += step) {
+        const png = await sharp(img).extract({ left: 0, top, width: w, height: Math.min(step, h - top) }).png().toBuffer();
+        parts.push((await mapvec<{ text: string }>(`/text?lang=${lang}`, new Uint8Array(png), signal)).text);
+      }
+      return parts.join("\n");
+    }).catch(() => "");
+    if (t.trim()) out.push(t.trim());
+  }
+  return out.join("\n\n");
+}
+
 /** Пересказ главы (ИИ, один раз); null — текста нет (картинки, внешняя ссылка). */
-async function digest(bookId: number, edition: string, c: ChapterSummary, bad: Set<string>): Promise<string | null> {
+async function digest(bookId: number, edition: string, c: ChapterSummary, bad: Set<string>, ocr: boolean, signal: AbortSignal): Promise<string | null> {
   // Текст — из первого перевода, который его отдаёт (русский, ИИ, английский, оригинал). Провайдер, не отдавший
   // текст (выключен, сбой, долго), до конца задачи пропускается — иначе сотни глав ждут его тайм-аут
   let text = "";
+  let scanned = false;
   for (const t of translationsOf(c)) {
     if (bad.has(t.provider)) continue;
     const content = await Promise.race([
       chapterContent(bookId, t.provider, t.cref).catch(() => null),
       new Promise<null>((ok) => setTimeout(() => ok(null), 30_000)),
     ]);
+    if (content?.kind === "pages" && ocr) {
+      text = (await pagesText(t.provider, content.pages, ocrLang(t.lang), signal)).slice(0, TEXT_MAX);
+      if (text.length >= 200) { scanned = true; break; }
+      continue;
+    }
     if (content?.kind !== "text") { bad.add(t.provider); continue; }
     text = content.blocks.map((b) => (b.t === "p" ? b.text : "")).filter(Boolean).join("\n").slice(0, TEXT_MAX);
     if (text.length >= 200) break;
@@ -80,7 +129,8 @@ async function digest(bookId: number, edition: string, c: ChapterSummary, bad: S
   if (text.length < 200) return null;
   const k = await produce<string>("chapter_digest", `chapter:${bookId}:${edition}:${c.key}`, {
     ...DIGEST, inputHash: hashOf(text), schema: DIGEST_SCHEMA, maxTokens: 600,
-    system: "You summarize one chapter of a novel or manga for matching it with anime episodes. Only events from the text, no speculation. English.",
+    system: "You summarize one chapter of a novel or manga for matching it with anime episodes. Only events from the text, no speculation. English."
+      + (scanned ? " The text was recognized from manga pages (speech bubbles and captions in reading order); expect recognition errors." : ""),
     user: () => `Chapter: ${c.numText}${c.title ? ` — ${c.title}` : ""}\n\n${text}`,
     shape: (a) => String((a as { digest?: string }).digest ?? "").trim(),
   });
@@ -114,7 +164,9 @@ export async function alignSeason(animeId: number, bookId: number, signal: Abort
   const book = await bookDetails(bookId);
   const wiki = book.kind !== "novel" ? await fandomChapters(animeId).catch(() => ({} as Record<number, string>)) : {};
   const fromWiki = (c: ChapterSummary) => (c.num !== null && wiki[c.num] ? wiki[c.num].slice(0, EP_MAX) : null);
-  if (book.kind !== "novel" && !Object.keys(wiki).length) throw new Error("Пересказов глав манги на вики франшизы нет (распознавание страниц — следующий шаг)");
+  // Глав без пересказа на вики — читаем страницы (контейнер mapvec)
+  const ocr = book.kind !== "novel" && (await mapvecUp());
+  if (book.kind !== "novel" && !Object.keys(wiki).length && !ocr) throw new Error("Пересказов глав манги на вики франшизы нет, а распознавание страниц недоступно (контейнер mapvec)");
   const ed = withWiki(pickEdition(summarize(chapterRows(bookId))), wiki);
   if (!ed?.chapters.length) throw new Error("У книги нет глав у провайдеров");
 
@@ -130,8 +182,8 @@ export async function alignSeason(animeId: number, bookId: number, signal: Abort
     for (let j = digests.length; j < want.length; j++) {
       signal.throwIfAborted();
       const w = fromWiki(want[j]);
-      if (w || book.kind !== "novel") { digests.push(w); continue; }
-      digests.push(await digest(bookId, ed.edition, want[j], bad).catch((e) => { console.warn(`[align] ${bookId} гл. ${want[j].key}: ${String(e).slice(0, 200)}`); return null; }));
+      if (w || (book.kind !== "novel" && !ocr)) { digests.push(w); continue; }
+      digests.push(await digest(bookId, ed.edition, want[j], bad, ocr, signal).catch((e) => { console.warn(`[align] ${bookId} гл. ${want[j].key}: ${String(e).slice(0, 200)}`); return null; }));
     }
     const fresh = digests.slice(vecs.length);
     if (fresh.length) vecs.push(...(await embed(fresh.map((d) => d ?? "—"))));

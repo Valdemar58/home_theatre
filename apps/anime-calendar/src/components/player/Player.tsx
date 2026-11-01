@@ -116,8 +116,9 @@ export type RoomSync = {
   report: (r: { buffering: boolean; bw: number | null; drift: number | null }) => void;
 };
 
-export function Player({ anilistId, ep, title, onEnded, next, onReport, children, autoPlay, preview, onState, controls, room, fullscreenRoot }: {
+export function Player({ anilistId, ep, source, title, onEnded, next, onReport, children, autoPlay, preview, onState, controls, room, fullscreenRoot }: {
   anilistId: number;
+  source?: string;
   /** Что разворачивать во весь экран: обёртка снаружи переживает смену серии (плеер пересоздаётся) — экран не сворачивается */
   fullscreenRoot?: React.RefObject<HTMLElement | null>;
   ep: number;
@@ -221,7 +222,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
       // В комнате — с её позиции
       const rm = roomRef.current;
       const start = opts.start ?? (rm ? positionAt(rm.state, rm.serverNow()) : undefined);
-      const r = await api<PlayInfo>("/api/play", { method: "POST", json: { anilistId, ep, caps, ...opts, start, replace: sid.current } });
+      const r = await api<PlayInfo>("/api/play", { method: "POST", json: { anilistId, ep, source, caps, ...opts, start, replace: sid.current } });
       hevcSent.current = caps.hevc;
       recoveries.current = 0;
       sid.current = r.sid;
@@ -260,7 +261,7 @@ export function Player({ anilistId, ep, title, onEnded, next, onReport, children
     renewing.current = true;
     try {
       const old = sid.current;
-      const r = await api<PlayInfo>("/api/play", { method: "POST", json: { anilistId, ep, caps: detectCaps(), audio: info?.audioIndex ?? null, start: v.currentTime, replace: sid.current } });
+      const r = await api<PlayInfo>("/api/play", { method: "POST", json: { anilistId, ep, source, caps: detectCaps(), audio: info?.audioIndex ?? null, start: v.currentTime, replace: sid.current } });
       // Адрес кусков новой сессии: каталог и параметры — из её плейлиста
       const first = (text: string) => text.split("\n").map((l) => l.trim()).find((l) => l && !l.startsWith("#"));
       const variant = new URL(first(await (await fetch(r.src)).text()) ?? "", new URL(r.src, location.href));

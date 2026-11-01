@@ -149,7 +149,7 @@ export function WatchView({ id, ep: initialEp }: { id: number; ep: number }) {
       {/* Плеер и боковая панель */}
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
         <div ref={stage} className="min-w-0">
-        <Player key={`${id}:${ep}`} anilistId={id} ep={ep} autoPlay={autoPlay} fullscreenRoot={stage}
+        <Player key={`${id}:${ep}`} anilistId={id} ep={ep} source={params.get("source") ?? undefined} autoPlay={autoPlay} fullscreenRoot={stage}
           title={`${name} · ${ep} серия${info?.title ? ` · ${info.title}` : ""}`}
           preview={{ still: info?.still ?? null, heading: `${ep} серия${info?.title ? ` · ${info.title}` : ""}`, text: spoiler ? null : info?.overview ?? null }}
           next={nextEp && (!inRoom || rm.canControl) ? { label: `${nextEp.ep} серия`, go: () => pickEp(nextEp.ep, true) } : null}

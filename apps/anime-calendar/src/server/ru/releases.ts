@@ -279,7 +279,7 @@ export async function subsRuRelease(anilistId: number, guid: string): Promise<{ 
   return { ok: true, message: `Субтитры (${groups.join(", ")}) — у ${pluralRu(eps, "серии", "серий", "серий")}; выберите их в плеере во вкладке «Субтитры»` };
 }
 
-export async function streamRuRelease(anilistId: number, guid: string): Promise<{ ok: boolean; message: string }> {
+export async function streamRuRelease(anilistId: number, guid: string): Promise<{ ok: boolean; message: string; hash?: string }> {
   const { match, mapping } = await pick(anilistId, guid);
   const details = await getDetails(anilistId);
   const series = (await sonarrSeries()).find((s) => s.tvdbId === mapping.tvdb);
@@ -294,7 +294,8 @@ export async function streamRuRelease(anilistId: number, guid: string): Promise<
   if (!result.episodes) return { ok: false, message: "Не удалось сопоставить файлы раздачи с сериями" };
   return {
     ok: true,
-    message: `Готово: ${pluralRu(result.episodes, "серия", "серии", "серий")} в Jellyfin → «Стрим»` +
+    hash: result.hash,
+    message: `Источник выбран: ${pluralRu(result.episodes, "серия", "серии", "серий")} для плеера` +
       (result.skipped ? ` (пропущено файлов: ${result.skipped})` : "") +
       ". Первая минута может грузиться дольше, пока торрент набирает скорость.",
   };

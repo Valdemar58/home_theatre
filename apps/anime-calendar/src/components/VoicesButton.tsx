@@ -2,8 +2,9 @@
 import { ArrowDownTrayIcon, ArrowTopRightOnSquareIcon, ChatBubbleBottomCenterTextIcon, PlayIcon, SpeakerWaveIcon } from "@heroicons/react/24/outline";
 import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { api, cancelAutoTask, startTask, useMe, useVoices } from "@/lib/client";
+import { api, cancelAutoTask, startTask, useList, useMe, useVoices } from "@/lib/client";
 import type { MediaLite } from "@/lib/types";
 import type { RuRelease } from "@/server/ru/releases";
 import { Badge, Button, cx, EmptyState, ErrorBox, Modal, Spinner } from "./ui";
@@ -80,6 +81,10 @@ const ago = (unix: number) => {
 
 function VoicesDialog({ media, onClose, onSubs }: { media: MediaLite; onClose: () => void; onSubs?: () => void }) {
   const qc = useQueryClient();
+  const router = useRouter();
+  const { byId } = useList();
+  const active = useRef(true);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const { data: state, error, isLoading } = useVoices(media.id, true);
   const { data: me } = useMe();
   const [busy, setBusy] = useState<string | null>(null);
@@ -115,20 +120,27 @@ function VoicesDialog({ media, onClose, onSubs }: { media: MediaLite; onClose: (
     setResult(null);
     try {
       const path = action === "download" ? `/api/ru/releases/${media.id}` : `/api/ru/releases/${media.id}/${action}`;
-      const res = await api<{ ok: boolean; message: string }>(path, { method: "POST", json: { guid: r.guid } });
+      const res = await api<{ ok: boolean; message: string; hash?: string }>(path, { method: "POST", json: { guid: r.guid } });
       setResult({ guid: shownOn, action, ...res });
       if (action === "download") qc.invalidateQueries({ queryKey: ["seerr", media.id] });
       if (action === "subs" && res.ok) onSubs?.();
-      // Ждём, пока Jellyfin отсканирует новый сериал, и показываем ссылку на него
-      if (action === "stream" && res.ok) {
-        for (let i = 0; i < 12; i++) {
-          await new Promise((ok) => setTimeout(ok, 5000));
-          const { url } = await api<{ url: string | null }>(`/api/ru/releases/${media.id}/stream`).catch(() => ({ url: null }));
-          if (url) {
-            setResult((prev) => (prev && prev.guid === shownOn ? { ...prev, url } : prev));
-            break;
+      // Ждём именно серии выбранной раздачи, не готовность буфера и не ссылку Jellyfin.
+      if (action === "stream" && res.ok && res.hash) {
+        setResult({ guid: shownOn, action, ok: true, message: "Источник выбран. Открываю серию в плеере…" });
+        for (let i = 0; i < 40 && active.current; i++) {
+          const { episodes } = await api<{ episodes: number[] }>(`/api/ru/releases/${media.id}/stream?hash=${res.hash}`);
+          if (!active.current) return;
+          if (episodes.length) {
+            const watched = byId.get(media.id)?.episodes ?? 0;
+            const ep = episodes.find((n) => n > watched) ?? episodes[0];
+            void qc.invalidateQueries({ queryKey: ["episode-status", media.id] });
+            router.push(`/anime/${media.id}/watch/${ep}?play=1&source=${res.hash}`);
+            onClose();
+            return;
           }
+          await new Promise((ok) => setTimeout(ok, 3000));
         }
+        if (active.current) setResult({ guid: shownOn, action, ok: false, message: "Индексация серий ещё не завершилась. Нажмите «Смотреть» повторно; подготовка в «Загрузках» не требуется." });
       }
     } catch (err) {
       setResult({ guid: shownOn, action, ok: false, message: err instanceof Error ? err.message : String(err) });
@@ -282,12 +294,7 @@ function ReleaseCard({ r, busy, result, canStream, ruSubs, onRun }: {
               {result?.guid === r.guid && (
                 <div className={cx("mt-2 text-sm", result.ok ? "text-green-300" : "text-red-300")}>
                   {result.message}
-                  {result.ok && result.action !== "subs" && <Link href="/downloads" className="ml-2 text-indigo-300 underline">Прогресс и отмена — в «Загрузках»</Link>}
-                  {result.action === "stream" && result.ok && (
-                    result.url
-                      ? <a href={result.url} target="_blank" rel="noreferrer" className="ml-2 inline-flex items-center gap-1 font-semibold text-indigo-300 underline">Открыть в Jellyfin <ArrowTopRightOnSquareIcon className="h-4 w-4" /></a>
-                      : <span className="ml-2 text-gray-400">Jellyfin сканирует библиотеку…</span>
-                  )}
+                  {result.ok && result.action === "download" && <Link href="/downloads" className="ml-2 text-indigo-300 underline">Прогресс и отмена — в «Загрузках»</Link>}
                 </div>
               )}
             </div>

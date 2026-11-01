@@ -24,10 +24,10 @@ const TTL = 60_000;
 const memo = new Map<number, { at: number; items: Map<number, JfEpisodeItem[]> }>();
 
 /** Серии тайтла: номер AniList → элементы Jellyfin (кэш 1 мин). Нет ключа Jellyfin или сопоставления — пусто. */
-export async function episodeItems(anilistId: number): Promise<Map<number, JfEpisodeItem[]>> {
+export async function episodeItems(anilistId: number, fresh = false): Promise<Map<number, JfEpisodeItem[]>> {
   const hit = memo.get(anilistId);
-  if (hit && Date.now() - hit.at < TTL) return hit.items;
-  const items = await load(anilistId);
+  if (!fresh && hit && Date.now() - hit.at < TTL) return hit.items;
+  const items = await load(anilistId, fresh);
   memo.set(anilistId, { at: Date.now(), items });
   return items;
 }
@@ -35,11 +35,11 @@ export async function episodeItems(anilistId: number): Promise<Map<number, JfEpi
 /** Сбросить кэш (после «Смотреть» — новая папка «Стрима»). */
 export const forgetEpisodeItems = (anilistId: number) => memo.delete(anilistId);
 
-async function load(anilistId: number): Promise<Map<number, JfEpisodeItem[]>> {
+async function load(anilistId: number, fresh = false): Promise<Map<number, JfEpisodeItem[]>> {
   const out = new Map<number, JfEpisodeItem[]>();
   const m = env.jellyfinApiKey ? await mappingForAnilist(anilistId) : null;
   if (!m) return out;
-  const series = (await guarded("jellyfin", () => jellyfinSeries()))
+  const series = (await guarded("jellyfin", () => jellyfinSeries(fresh)))
     .filter((s) => s.ProviderIds?.Tvdb === String(m.tvdb) || s.Path?.includes(`[tvdbid-${m.tvdb}]`));
   if (!series.length) return out;
 

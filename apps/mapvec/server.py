@@ -3,6 +3,7 @@
 GET  /health      — {"ok": true, "device": "cuda|cpu", "ocr_loaded": bool}
 POST /ocr         — тело: картинка карты → {"width", "height", "labels": [{text, x0, y0, x1, y1, lines}]} (пиксели)
 POST /lines       — тело: страница манги → {"width", "height", "lines": [{text, x0, y0, x1, y1}]} (один проход, пиксели)
+POST /text?lang=ru — тело: страница манги → {"width", "height", "text"} (текст по порядку чтения, промпт на языке страницы)
 POST /vectorize   — тело: JSON {"image": base64, "labels": [...] из /ocr} → {"width", "height", "land", "regions"}
 Запросы по одному: модель на видеокарте одна.
 """
@@ -11,6 +12,7 @@ import json
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 from io import BytesIO
 
 import cv2
@@ -55,6 +57,10 @@ class Handler(BaseHTTPRequestHandler):
                 elif self.path == "/lines":
                     img = Image.open(BytesIO(body)).convert("RGB")
                     out = dict(width=img.width, height=img.height, lines=ocr.read_lines(img))
+                elif self.path.startswith("/text"):
+                    img = Image.open(BytesIO(body)).convert("RGB")
+                    lang = parse_qs(urlparse(self.path).query).get("lang", ["ru"])[0]
+                    out = dict(width=img.width, height=img.height, text=ocr.read_text(img, lang))
                 elif self.path == "/vectorize":
                     req = json.loads(body)
                     img = cv2.imdecode(np.frombuffer(base64.b64decode(req["image"]), np.uint8), cv2.IMREAD_COLOR)

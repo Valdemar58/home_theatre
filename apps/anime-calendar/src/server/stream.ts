@@ -68,7 +68,7 @@ function removeStrm(strm: string) {
 }
 const pad = (n: number) => String(n).padStart(2, "0");
 
-export type StreamResult = { episodes: number; skipped: number; folder: string };
+export type StreamResult = { episodes: number; skipped: number; folder: string; hash: string };
 
 /**
  * Создать .strm-ссылки на серии раздачи. ref — какие серии в нумерации TVDB
@@ -119,7 +119,7 @@ export async function streamRelease(opts: {
   // Русские субтитры и шрифты раздачи — в фон (мегабайты, без видео)
   const { syncStreamSubsSoon } = await import("./stream-subs");
   syncStreamSubsSoon(torrent.hash);
-  return { episodes: created, skipped, folder: path.basename(folder) };
+  return { episodes: created, skipped, folder: path.basename(folder), hash: torrent.hash };
 }
 
 /**
@@ -495,9 +495,9 @@ type JfSeries = { Id: string; Path?: string; ProviderIds?: Record<string, string
 
 /** Все сериалы Jellyfin (для ссылок со страницы «Загрузки»), кэш 1 мин. */
 let jfCache: { at: number; items: JfSeries[] } | null = null;
-export async function jellyfinSeries(): Promise<JfSeries[]> {
+export async function jellyfinSeries(fresh = false): Promise<JfSeries[]> {
   if (!env.jellyfinApiKey) return [];
-  if (jfCache && Date.now() - jfCache.at < 60_000) return jfCache.items;
+  if (!fresh && jfCache && Date.now() - jfCache.at < 60_000) return jfCache.items;
   const r = await jellyfin<{ Items: JfSeries[] }>("/Items?IncludeItemTypes=Series&Recursive=true&Fields=Path,ProviderIds");
   jfCache = { at: Date.now(), items: r.Items };
   return r.Items;

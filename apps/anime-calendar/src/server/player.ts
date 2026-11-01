@@ -77,10 +77,10 @@ export function playSession(sid: string, userId: number): PlaySession {
 
 /** Начать (или перезапустить с другой озвучкой/с позиции) просмотр серии. */
 export async function startPlayback(user: { id: number; jellyfin_id: string }, anilistId: number, ep: number, opts: {
-  caps: PlayCaps; audio?: number | null; voice?: string | null; start?: number | null; replace?: string | null;
+  caps: PlayCaps; source?: string; audio?: number | null; voice?: string | null; start?: number | null; replace?: string | null;
 }): Promise<PlayInfo> {
   const items = (await episodeItems(anilistId)).get(ep) ?? [];
-  const item = items.find((i) => i.where === "library") ?? items[0];
+  const item = opts.source ? items.find((i) => i.hash === opts.source) : items.find((i) => i.where === "library") ?? items[0];
   if (!item) throw new ApiError(404, "Этой серии нет ни в библиотеке, ни в «Стриме»");
   // Сменили озвучку — старое перекодирование больше не нужно
   const prev = opts.replace && opts.audio != null ? sessions.get(opts.replace)?.audio.find((a: PlayTrack) => a.index === opts.audio) : undefined;

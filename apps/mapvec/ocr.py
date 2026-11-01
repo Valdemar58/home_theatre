@@ -200,3 +200,32 @@ def read_lines(img: Image.Image):
                  for t, a, b, c, d in _spot(model, proc, small)]
         _used = time.time()
     return lines
+
+
+# Текст страницы целиком (без рамок) — промпт на языке текста: английский промпт поиска текста читает заглавную
+# кириллицу манги латиницей-двойником («ПОХОЖЕ» → «NOXOKE»), русский — кириллицей
+TEXT_PROMPTS = {
+    "ru": "Найди и распознай русский текст на изображении.",
+    "en": "Detect and recognize the text in the image.",
+    "ja": "画像内の日本語のテキストを検出して認識してください。",
+}
+
+
+def read_text(img: Image.Image, lang: str = "ru") -> str:
+    """Весь текст страницы по порядку чтения (для пересказа главы); длинная сторона — не больше PAGE_MAX."""
+    global _used
+    W, H = img.size
+    k = min(1.0, PAGE_MAX / max(W, H))
+    small = img.resize((round(W * k), round(H * k))) if k < 1 else img
+    prompt = TEXT_PROMPTS.get(lang, TEXT_PROMPTS["en"])
+    with _lock:
+        model, proc = _load()
+        msgs = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt}]}]
+        text = proc.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+        inp = proc(text=[text], images=[small], return_tensors="pt").to(device)
+        ids = model.generate(**inp, max_new_tokens=1500, do_sample=False, repetition_penalty=1.05)
+        res = proc.decode(ids[0][inp.input_ids.shape[1]:], skip_special_tokens=True)
+        _used = time.time()
+    # Режим поиска текста отдаёт рамки «(x, y), …» перед строками — оставляем только текст
+    lines = [m.group(9).strip() for m in QUAD.finditer(res)] if QUAD.search(res) else res.splitlines()
+    return "\n".join(l for l in (x.strip() for x in lines) if l and not re.fullmatch(r"(.)\1{8,}", l))
