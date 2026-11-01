@@ -205,7 +205,7 @@ export async function cleanupImages(): Promise<{ removed: number; freed: number 
   // 2) оригиналы без запросов (с копиями) — по последнему обращению к любой версии; с апскейлом — в m раз дольше
   //    (закреплённые — картинки сохранённых целиком тайтлов — не удаляются)
   const stale = db.prepare<[number, number], { key: string }>(
-    `SELECT key FROM img_cache GROUP BY key HAVING MAX(pinned) = 0 AND MAX(last_access) < CASE WHEN SUM(variant = 'up') > 0 THEN ? ELSE ? END`)
+    "SELECT key FROM img_cache GROUP BY key HAVING MAX(pinned) = 0 AND MAX(last_access) < CASE WHEN SUM(CASE WHEN variant = 'up' THEN 1 ELSE 0 END) > 0 THEN CAST(? AS BIGINT) ELSE CAST(? AS BIGINT) END")
     .all(t - LIMITS.originalTtl * m, t - LIMITS.originalTtl);
   for (const { key } of stale) await drop(db.prepare<[string], Row>("SELECT * FROM img_cache WHERE key = ?").all(key));
   // 3) потолок размера (закреплённые не в счёт): давно не нужные картинки целиком

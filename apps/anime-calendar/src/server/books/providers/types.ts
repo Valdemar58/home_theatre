@@ -1,6 +1,7 @@
 import "server-only";
 import type { Block, BookDetails, ChapterRow, Edition } from "@/lib/books";
 import type { Source } from "../../sources";
+import { searchNames } from "@/lib/manga-sources";
 
 // Провайдер глав (как источники в Tachimanga): находит книгу у себя, отдаёт оглавление (главы по языкам и командам)
 // и саму главу — текст (ранобэ) или страницы (манга). Встроенные: Lib (ranobelib, mangalib), MangaDex, Syosetu;
@@ -8,6 +9,8 @@ import type { Source } from "../../sources";
 
 /** Книга у провайдера — кандидат на сопоставление. */
 export type Hit = {
+  sourceId?: string;
+  lang?: string;
   provider: string;
   ref: string;
   title: string;
@@ -38,7 +41,7 @@ export interface Provider {
   /** Языки переводов («ja» — оригинал) */
   langs: string[];
   /** Найти книгу: по своему запросу или по названиям нашей книги */
-  search(book: BookDetails, query?: string): Promise<Hit[]>;
+  search(book: BookDetails, query?: string, options?: { sourceId?: string; page?: number; signal?: AbortSignal }): Promise<Hit[]>;
   chapters(ref: string, edition: Edition): Promise<ChapterRow[]>;
   content(ref: string, cref: string): Promise<Content>;
   bookUrl(ref: string): string;
@@ -53,11 +56,6 @@ export interface Provider {
 }
 
 /** Несколько названий книги для поиска у провайдера: латиница, английское, русское, родное (без повторов). */
-export function searchQueries(book: BookDetails, query?: string, max = 3): string[] {
-  if (query?.trim()) return [query.trim()];
-  const seen = new Set<string>();
-  return [book.title.romaji, book.title.english, book.title.ru, book.title.native]
-    .filter((t): t is string => Boolean(t?.trim()))
-    .filter((t) => (seen.has(t.toLowerCase()) ? false : (seen.add(t.toLowerCase()), true)))
-    .slice(0, max);
+export function searchQueries(book: BookDetails, query?: string, max = 8): string[] {
+  return searchNames([book.title.romaji, book.title.english, book.title.ru, book.title.native, ...book.synonyms], query, max);
 }

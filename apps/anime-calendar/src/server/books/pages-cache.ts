@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { env } from "../env";
 import { providerById } from "./library";
+import { providerConfig } from "./provider-config";
 
 // Картинки глав (страницы манги, иллюстрации ранобэ) через календарь: провайдеры отдают их только с Referer своего
 // сайта, а браузеру не нужно знать адреса. Свой кэш на диске (DATA_DIR/pages), отдельно от кэша обложек:
@@ -20,6 +21,10 @@ export function allowedImage(url: string, provider?: string): boolean {
     const u = new URL(url);
     if (provider) {
       const p = providerById(provider);
+      if (provider === "suwayomi") {
+        const base = new URL(providerConfig().suwayomi.url);
+        return u.origin === base.origin && /^\/api\/v1\/manga\/[0-9]+\/chapter\/[0-9]+\/page\/[0-9]+$/.test(u.pathname) && !u.username && !u.password;
+      }
       if (p?.imageHost) return p.imageHost(u.hostname, u.protocol);
     }
     return u.protocol === "https:" && ALLOWED.test(u.hostname);
@@ -46,7 +51,8 @@ export async function pageImage(provider: string, url: string): Promise<{ body: 
     return { body, type: fs.readFileSync(`${f}.type`, "utf8") };
   } catch { /* нет на диске */ }
   const p = providerById(provider);
-  const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140", ...(p?.imageHeaders ?? {}) }, signal: AbortSignal.timeout(30_000) });
+  if (!allowedImage(url, provider)) throw new Error("Картинка не с сайта провайдера");
+  const res = await fetch(url, { redirect: provider === "suwayomi" ? "error" : "follow", headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140", ...(p?.imageHeaders ?? {}) }, signal: AbortSignal.timeout(30_000) });
   if (!res.ok) throw new Error(`картинка ${res.status}`);
   const body = Buffer.from(await res.arrayBuffer());
   const type = res.headers.get("content-type") ?? "image/jpeg";

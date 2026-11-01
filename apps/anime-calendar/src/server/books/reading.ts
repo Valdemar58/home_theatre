@@ -7,7 +7,7 @@ import { scheduleReadPush } from "../sync";
 
 export type ReadPos = { chapter: string; edition: Edition; provider: string; cref: string; pos: number; done: boolean; updatedAt: number };
 /** Выбранный перевод книги: провайдер и команда (переключатель в ридере), шрифт и тема — у браузера */
-export type BookPref = { provider?: string; team?: string | null; lang?: string; edition?: Edition;
+export type BookPref = { provider?: string; ref?: string; team?: string | null; lang?: string; edition?: Edition;
   /** Переводить ИИ вперёд: столько следующих глав без русского перевода (TASKS 5.7) */
   aiAhead?: number };
 
@@ -33,17 +33,13 @@ export function setBookPref(userId: number, bookId: number, pref: BookPref) {
  */
 export function saveProgress(userId: number, bookId: number, p: { chapter: string; edition: Edition; provider: string; cref: string; pos: number; done: boolean; ordinal: number | null }) {
   const t = now();
-  db.prepare(`INSERT INTO read_pos (user_id, book_id, chapter, edition, provider, cref, pos, done, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT (user_id, book_id, edition, chapter) DO UPDATE SET provider = excluded.provider, cref = excluded.cref, pos = excluded.pos,
-      done = max(done, excluded.done), updated_at = excluded.updated_at`)
+  db.prepare("INSERT INTO read_pos (user_id, book_id, chapter, edition, provider, cref, pos, done, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n    ON CONFLICT (user_id, book_id, edition, chapter) DO UPDATE SET provider = excluded.provider, cref = excluded.cref, pos = excluded.pos,\n      done = GREATEST(read_pos.done, excluded.done), updated_at = excluded.updated_at")
     .run(userId, bookId, p.chapter, p.edition, p.provider, p.cref, p.pos, p.done ? 1 : 0, t);
   if (!p.done || !p.ordinal) return;
   const e = db.prepare<[number, number], { status: string; chapters: number; deleted: number }>("SELECT status, chapters, deleted FROM read_entries WHERE user_id = ? AND book_id = ?").get(userId, bookId);
   if (e && !e.deleted && e.chapters >= p.ordinal) return;
   const status = !e || e.deleted || e.status === "planned" || e.status === "on_hold" || e.status === "dropped" ? "watching" : e.status;
-  db.prepare(`INSERT INTO read_entries (user_id, book_id, status, chapters, updated_at, dirty) VALUES (?, ?, ?, ?, ?, 1)
-    ON CONFLICT (user_id, book_id) DO UPDATE SET status = excluded.status, chapters = max(read_entries.chapters, excluded.chapters),
-      deleted = 0, updated_at = excluded.updated_at, dirty = 1`)
+  db.prepare("INSERT INTO read_entries (user_id, book_id, status, chapters, updated_at, dirty) VALUES (?, ?, ?, ?, ?, 1)\n    ON CONFLICT (user_id, book_id) DO UPDATE SET status = excluded.status, chapters = GREATEST(read_entries.chapters, excluded.chapters),\n      deleted = 0, updated_at = excluded.updated_at, dirty = 1")
     .run(userId, bookId, status, p.ordinal, t);
   scheduleReadPush(userId, bookId);
 }

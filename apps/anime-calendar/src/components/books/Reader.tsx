@@ -52,8 +52,10 @@ export function Reader({ id }: { id: number }) {
   const { data: progress } = useBookProgress(id);
   const { data: content, error, isLoading } = useBookChapter(id, provider, cref);
   const [settings, set] = useSettings();
-  const [manga, setManga] = useMangaSettings(id, page?.book.kind);
+  const [manga, setManga, mangaScope] = useMangaSettings(id, page?.book.kind);
   const [panel, setPanel] = useState(false);
+  const [tools, setTools] = useState(true);
+  const readerRoot = useRef<HTMLDivElement>(null);
   const theme = THEMES[settings.theme];
   const pages = content?.kind === "pages" ? content.pages : null;
   // Перевод страниц ИИ (TASKS 5.8): слой поверх картинок, пока идёт — опрос раз в 3 с
@@ -69,7 +71,7 @@ export function Reader({ id }: { id: number }) {
   const chapter = idx >= 0 ? ed!.chapters[idx] : null;
   const translations = chapter ? translationsOf(chapter) : [];
   const current = translations.find((t) => t.provider === provider && t.cref === cref);
-  const pref = useMemo(() => (current ? { provider: current.provider, team: current.team } : progress?.pref ?? {}), [current, progress?.pref]);
+  const pref = useMemo(() => ({ languages: page?.preferredLanguages, ...(current ? { provider: current.provider, ref: current.ref, lang: current.lang, team: current.team } : progress?.pref ?? {}) }), [current, progress?.pref, page?.preferredLanguages]);
   const go = useCallback((i: number) => {
     const c = ed?.chapters[i];
     const t = c && pickTranslation(c, pref);
@@ -89,17 +91,22 @@ export function Reader({ id }: { id: number }) {
   // Позиция: первый видимый абзац; раз в 5 с и при уходе. Конец главы виден — дочитано
   const pos = useRef(0);
   const done = useRef(false);
-  const saved = progress?.positions.find((p) => p.edition === edition && p.chapter === key);
+  const positionOwner = useRef<string | null>(null);
+  const positionKey = `${id}:${edition}:${key}:${provider}:${cref}`;
+  const reportPosition = (i: number) => {
+    if (positionOwner.current !== positionKey) done.current = false;
+    positionOwner.current = positionKey;
+    pos.current = i;
+  };
+  const saved = progress?.positions.find((p) => p.edition === edition && p.chapter === key && p.provider === provider && p.cref === cref);
   const save = useCallback((final = false) => {
-    if (!provider || !cref || !key) return;
+    if (!provider || !cref || !key || positionOwner.current !== positionKey) return;
     void fetch(`/api/books/${id}/progress`, {
       method: "POST", headers: { "Content-Type": "application/json" }, keepalive: final,
       body: JSON.stringify({ chapter: key, edition, provider, cref, pos: pos.current, done: done.current, ordinal: idx >= 0 ? idx + 1 : null }),
     }).catch(() => undefined);
-  }, [id, key, edition, provider, cref, idx]);
+  }, [id, key, edition, provider, cref, idx, positionKey]);
   useEffect(() => {
-    done.current = false;
-    pos.current = 0;
     const t = setInterval(() => save(), 5000);
     const leave = () => save(true);
     window.addEventListener("pagehide", leave);
@@ -107,8 +114,8 @@ export function Reader({ id }: { id: number }) {
   }, [save]);
   // Выбор перевода — у книги
   useEffect(() => {
-    if (current && (progress?.pref.provider !== current.provider || progress?.pref.team !== current.team)) {
-      void api(`/api/books/${id}/progress`, { method: "POST", json: { pref: { provider: current.provider, team: current.team, edition } } });
+    if (current && (progress?.pref.provider !== current.provider || progress?.pref.team !== current.team || progress?.pref.ref !== current.ref)) {
+      void api(`/api/books/${id}/progress`, { method: "POST", json: { pref: { provider: current.provider, ref: current.ref, lang: current.lang, team: current.team, edition } } });
     }
   }, [current, progress?.pref, id, edition]);
 
@@ -129,9 +136,9 @@ export function Reader({ id }: { id: number }) {
   const bookName = page ? page.book.title.ru || page.book.title.romaji || "" : "";
 
   return (
-    <div className="-mx-4 -mt-6 min-h-screen lg:-mx-8" style={{ background: theme.bg, color: theme.fg }}>
+    <div ref={readerRoot} className="-mx-4 -mt-6 min-h-screen overflow-y-auto lg:-mx-8" style={{ background: theme.bg, color: theme.fg }}>
       {/* Шапка ридера */}
-      <div className="sticky top-16 z-10 flex items-center gap-2 border-b px-3 py-2 backdrop-blur" style={{ background: `${theme.bg}e6`, borderColor: `${theme.dim}40` }}>
+      <div className={cx("sticky top-16 z-10 flex items-center gap-2 border-b px-3 py-2 backdrop-blur", !tools && "hidden")} style={{ background: `${theme.bg}e6`, borderColor: `${theme.dim}40` }}>
         <Link href={`/manga/${id}`} className="flex min-w-0 items-center gap-1.5 text-sm" style={{ color: theme.dim }} title="К книге">
           <ArrowLeftIcon className="h-4 w-4 shrink-0" /><span className="hidden truncate sm:inline">{bookName}</span>
         </Link>
@@ -145,16 +152,22 @@ export function Reader({ id }: { id: number }) {
           </select>
         )}
         <button onClick={() => setPanel(!panel)} className="rounded p-1.5" style={{ color: theme.dim }} title={pages ? "Вид страниц" : "Вид текста"}><AdjustmentsHorizontalIcon className="h-5 w-5" /></button>
+        <button className="rounded p-1.5 text-xs" onClick={() => { if (document.fullscreenElement) void document.exitFullscreen(); else void readerRoot.current?.requestFullscreen(); }} title="Полный экран">⛶</button>
+        {pages && <button className="rounded p-1.5 text-xs" onClick={async () => {
+          const refreshed = await api<ChapterContentView>(`/api/books/${id}/chapter?provider=${encodeURIComponent(provider!)}&cref=${encodeURIComponent(cref!)}&refresh=1`);
+          qc.setQueryData(["book-chapter", id, provider, cref], refreshed);
+        }} title="Обновить истёкшие ссылки на страницы">Обновить страницы</button>}
       </div>
-      {panel && (pages ? <MangaSettingsPanel s={manga} set={setManga} /> : <SettingsPanel s={settings} set={set} />)}
+      {!tools && <button onClick={() => setTools(true)} className="fixed right-4 top-20 z-20 rounded-lg bg-gray-900/90 px-3 py-2 text-xs text-white">Панели</button>}
+      {panel && (pages ? <MangaSettingsPanel s={manga} set={setManga} scope={mangaScope} /> : <SettingsPanel s={settings} set={set} />)}
 
       {pages && provider && cref && (current?.lang !== "ru" || mangaAi.data?.pages) && (
         <MangaAiBar bookId={id} provider={provider} cref={cref} data={mangaAi.data} on={aiOn} setOn={setAiOn} dim={theme.dim}
           refresh={() => void qc.invalidateQueries({ queryKey: ["manga-ai", id, provider, cref] })} />
       )}
-      {pages && <MangaReader key={cref} pages={pages} ai={aiOn ? mangaAi.data?.pages : null} s={manga} restore={saved && !saved.done ? saved.pos : 0} prev={prev} next={next} dim={theme.dim}
-        onPos={(i) => { pos.current = i; }} onEnd={finish} />}
-      {pages && manga.mode === "strip" && <ChapterNav prev={prev} next={next} id={id} />}
+      {pages && progress && <MangaReader key={`${provider}:${cref}`} pages={pages} ai={aiOn ? mangaAi.data?.pages : null} s={manga} restore={saved && !saved.done ? saved.pos : 0} prev={prev} next={next} dim={theme.dim} onToggleControls={() => { setTools((v) => !v); setPanel(false); }}
+        onPos={reportPosition} onEnd={finish} />}
+      {pages && <ChapterNav prev={prev} next={next} id={id} />}
 
       {!pages && <article className="mx-auto px-4 pb-10 pt-6" style={{ maxWidth: `${settings.width}rem`, fontSize: settings.size, lineHeight: settings.leading,
         fontFamily: settings.serif ? "Georgia, 'PT Serif', 'Times New Roman', serif" : "inherit" }}>
@@ -165,7 +178,7 @@ export function Reader({ id }: { id: number }) {
         )}
         {isLoading && <div className="space-y-3"><Skel className="h-4 w-full" /><Skel className="h-4 w-11/12" /><Skel className="h-4 w-10/12" /></div>}
         {error ? <ErrorBox error={error} /> : null}
-        {content && <Body content={content} restore={saved && !saved.done ? saved.pos : 0} onPos={(i) => { pos.current = i; }}
+        {content && <Body content={content} restore={saved && !saved.done ? saved.pos : 0} onPos={reportPosition}
           onEnd={finish} dim={theme.dim} />}
         <ChapterNav prev={prev} next={next} id={id} />
       </article>}

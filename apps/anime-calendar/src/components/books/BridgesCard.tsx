@@ -1,6 +1,7 @@
 "use client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { LANG_LABELS } from "@/lib/books";
 import { api } from "@/lib/client";
 import { Badge, Button, Chip, cx, ErrorBox, Skel, Spinner } from "../ui";
@@ -11,7 +12,7 @@ import { Badge, Button, Chip, cx, ErrorBox, Skel, Spinner } from "../ui";
 type State = {
   lnreader: { index: string; enabled: string[]; plugins: { id: string; name: string; lang: string; site: string }[] | null };
   suwayomi: {
-    up: boolean; version: string | null; error: string | null; url: string; repo: string; enabled: string[];
+    up: boolean; version: string | null; error: string | null; url: string; repo: string; enabled: string[]; languages: string[];
     extensions: { pkgName: string; name: string; lang: string; versionName: string; isInstalled: boolean; hasUpdate: boolean; isNsfw: boolean }[];
     sources: { id: string; name: string; lang: string; nsfw: boolean }[];
   };
@@ -92,6 +93,7 @@ function Lnreader({ s, busy, save }: { s: State["lnreader"]; busy: string | null
 }
 
 function Suwayomi({ s, busy, refreshing, call }: { s: State["suwayomi"]; busy: string | null; refreshing: boolean; call: (m: "PUT" | "POST", j: unknown, l: string) => Promise<void> }) {
+  const [url, setUrl] = useState(s.url);
   const [repo, setRepo] = useState(s.repo);
   const [lang, setLang] = useState("ru");
   const [q, setQ] = useState("");
@@ -101,6 +103,9 @@ function Suwayomi({ s, busy, refreshing, call }: { s: State["suwayomi"]; busy: s
   const toggleSource = (id: string) => void call("PUT", { sources: s.enabled.includes(id) ? s.enabled.filter((x) => x !== id) : [...s.enabled, id] }, "src");
   return (
     <section className="space-y-3">
+      <p className="text-xs text-gray-400">1. Подключите сервер → 2. Добавьте репозиторий → 3. Установите расширения → 4. Включите источники. После этого книги ищутся автоматически.</p>
+      <div className="flex gap-2"><input aria-label="Адрес Suwayomi" value={url} onChange={(e) => setUrl(e.target.value)} className={input} />
+        <Button size="sm" disabled={Boolean(busy)} onClick={() => void call("PUT", { url }, "connect")}>Подключить / проверить</Button></div>
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="font-semibold">Suwayomi</h3><span className="text-gray-500">манга</span>
         {s.up ? <Badge tone="positive">работает · {s.version}</Badge> : <Badge tone="negative">недоступен</Badge>}
@@ -111,10 +116,10 @@ function Suwayomi({ s, busy, refreshing, call }: { s: State["suwayomi"]; busy: s
       ) : (
         <>
           <div className="space-y-1">
-            <p className="text-xs text-gray-500">Репозиторий расширений Mihon — адрес его index.min.json. Встроенного нет: какой брать — решаете вы.</p>
+            <p className="text-xs text-gray-500">Репозиторий расширений Mihon — ссылка на репозиторий GitHub или index.min.json, как в Tachimanga. Это не ссылка на отдельную мангу.</p>
             <div className="flex gap-2">
               <input value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="https://…/index.min.json" className={input} />
-              <Button size="sm" disabled={repo === s.repo || busy === "repo"} onClick={() => void call("POST", { repo }, "repo")}>{busy === "repo" ? "Загружаю…" : "Сохранить"}</Button>
+              <Button size="sm" disabled={!repo.trim() || Boolean(busy)} onClick={() => void call("POST", { repo }, "repo")}>{busy === "repo" ? "Загружаю…" : "Сохранить / обновить"}</Button>
             </div>
           </div>
           {s.extensions.length > 0 && (
@@ -141,12 +146,20 @@ function Suwayomi({ s, busy, refreshing, call }: { s: State["suwayomi"]; busy: s
           )}
           {s.sources.length > 0 && (
             <div className="space-y-1">
+              <p className="text-xs text-gray-400">Предпочтительные языки (первый — основной):</p>
+              <div className="flex flex-wrap gap-2">{[...s.languages, ...["ru", "en", "ja", "ko", "zh"].filter((l) => !s.languages.includes(l))].map((l) => (
+                <Chip key={l} active={s.languages.includes(l)} onClick={() => void call("PUT", { languages: s.languages.includes(l) ? s.languages.filter((x) => x !== l) : [...s.languages, l] }, "lang")}>{l === "ja" ? "JP" : l.toUpperCase()}{s.languages.includes(l) ? ` · ${s.languages.indexOf(l) + 1}` : ""}</Chip>
+              ))}</div>
               <p className="text-xs text-gray-500">Источники установленных расширений — где искать книги:</p>
               <div className="flex flex-wrap gap-2">
                 {s.sources.map((src) => (
                   <Chip key={src.id} active={s.enabled.includes(src.id)} onClick={() => toggleSource(src.id)}>{src.name} · {langName(src.lang)}</Chip>
                 ))}
               </div>
+              {!s.enabled.length && <p className="text-warning-300">Выберите хотя бы один источник — пока поиск манги выключен.</p>}
+              <p className="text-xs text-gray-400">Приоритет источников: нажмите ↑, чтобы переместить выше.</p>
+              {s.enabled.map((id, i) => <div key={id} className="flex items-center gap-2 text-xs"><button disabled={i === 0 || Boolean(busy)} onClick={() => { const sources = [...s.enabled]; [sources[i - 1], sources[i]] = [sources[i], sources[i - 1]]; void call("PUT", { sources }, "src"); }}>↑</button>{i + 1}. {s.sources.find((x) => x.id === id)?.name ?? id}</div>)}
+              {s.enabled.length > 0 && <Link href="/manga/30002" className="inline-block pt-2 text-accent-300">Проверить поиск и чтение на «Берсерке» →</Link>}
             </div>
           )}
         </>

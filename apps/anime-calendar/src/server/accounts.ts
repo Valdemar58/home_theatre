@@ -154,7 +154,7 @@ export async function decideSignup(admin: User, authPk: number, approve: boolean
   const inviter = r.inviter_id ? db.prepare<[number], User>("SELECT * FROM users WHERE id = ?").get(r.inviter_id) : undefined;
   if (inviter && inviter.id !== user.id) {
     // Дружба — сразу принятая, без встречных уведомлений «хочет добавить» / «принял заявку»
-    db.prepare("INSERT OR REPLACE INTO friendships (from_id, to_id, status, created_at) VALUES (?, ?, 'accepted', ?)").run(inviter.id, user.id, now());
+    db.prepare("INSERT INTO friendships (from_id, to_id, status, created_at) VALUES (?, ?, 'accepted', ?) ON CONFLICT (from_id, to_id) DO UPDATE SET status = excluded.status, created_at = excluded.created_at").run(inviter.id, user.id, now());
     if (invite?.group_id && roleIn(invite.group_id, inviter.id)) inviteToList(inviter, invite.group_id, user.id);
     if (inviter.id !== admin.id) notify(inviter.id, { kind: "signup", actorId: user.id, title: "принят по вашему приглашению — теперь вы друзья", href: `/users/${user.id}` });
   }

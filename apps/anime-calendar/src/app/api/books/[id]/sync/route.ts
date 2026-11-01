@@ -3,7 +3,8 @@ import { syncBook } from "@/server/books/library";
 import { authed, json } from "@/server/route";
 
 /** Обновить книгу у провайдеров сейчас (заново искать и перечитать оглавления). */
-export const POST = authed<{ id: string }>(async (_req, _user, { id }) => {
-  void syncBook(await bookDetails(Number(id)), true);
+export const POST = authed<{ id: string }>(async (req, _user, { id }) => {
+  const b = await req.json().catch(() => ({})) as { provider?: string; sourceId?: string };
+  void syncBook(await bookDetails(Number(id)), true, b.provider ? { provider: b.provider, sourceId: b.sourceId } : undefined);
   return json({ ok: true });
 });

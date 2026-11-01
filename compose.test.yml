@@ -1,0 +1,58 @@
+# Изолированные проверки: docker compose -f docker-compose.yml -f compose.test.yml run --build --rm calendar-test
+services:
+  calendar-test-db:
+    image: postgres:17-alpine
+    profiles: ["tools"]
+    environment:
+      POSTGRES_DB: calendar_test
+      POSTGRES_USER: calendar_test
+      POSTGRES_PASSWORD: isolated-test-only
+    tmpfs:
+      - /var/lib/postgresql/data
+    networks: [calendar-tests]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U calendar_test -d calendar_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+  calendar-test:
+    image: home-theater/postgres-test-deps:local
+    build:
+      context: ./apps/anime-calendar
+      target: deps
+    profiles: ["tools"]
+    environment:
+      PGHOST: calendar-test-db
+      PGDATABASE: calendar_test
+      PGUSER: calendar_test
+      PGPASSWORD: isolated-test-only
+      POSTGRES_TEST: "1"
+      NODE_OPTIONS: --disable-warning=ExperimentalWarning
+    networks: [calendar-tests]
+    depends_on:
+      calendar-test-db:
+        condition: service_healthy
+    volumes:
+      - ./apps/anime-calendar/src:/workspace/src:ro
+      - ./apps/anime-calendar/database:/workspace/database:ro
+      - ./apps/anime-calendar/migrations:/workspace/migrations:ro
+      - ./apps/anime-calendar/vitest.config.mts:/workspace/vitest.config.mts:ro
+      - ./profiles.toml:/profiles.toml:ro
+    command: ["sh", "-c", "cp -r /workspace/src /workspace/database /workspace/migrations /app/ && cp /workspace/vitest.config.mts /app/ && node database/migrate.mjs && node database/check-queries.mjs && node database/import-check.mjs && npm test -- --reporter=dot"]
+  calendar-backup-test:
+    image: home-theater/anime-calendar:local
+    profiles: ["tools"]
+    environment:
+      PGHOST: calendar-test-db
+      PGDATABASE: calendar_test
+      PGUSER: calendar_test
+      PGPASSWORD: isolated-test-only
+      POSTGRES_TEST: "1"
+    networks: [calendar-tests]
+    depends_on:
+      calendar-test-db:
+        condition: service_healthy
+    command: ["node", "database/backup-check.mjs"]
+networks:
+  calendar-tests:
+    internal: true

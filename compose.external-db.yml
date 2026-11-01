@@ -1,0 +1,8 @@
+# Добавьте этот файл в COMPOSE_FILE для внешней PostgreSQL; локальная БД не запускается.
+services:
+  calendar-db:
+    profiles: ["local-database"]
+  anime-calendar:
+    depends_on: !override
+      jellyfin:
+        condition: service_started

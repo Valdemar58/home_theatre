@@ -94,6 +94,6 @@ async function syncUser(u: User): Promise<void> {
     if (await markWatched(u, hit.anilistId, hit.episode, "jellyfin")) marked++;
     db.prepare("UPDATE users SET jf_played_at = ? WHERE id = ?").run(at, u.id);
   }
-  db.prepare("UPDATE users SET jf_played_at = MAX(jf_played_at, ?) WHERE id = ?").run(fresh.at(-1)!.at, u.id);
+  db.prepare("UPDATE users SET jf_played_at = GREATEST(jf_played_at, ?) WHERE id = ?").run(fresh.at(-1)!.at, u.id);
   if (marked) console.log(`[jellyfin-sync] пользователь ${u.id}: отмечено серий ${marked}`);
 }

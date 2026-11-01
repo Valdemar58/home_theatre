@@ -85,7 +85,7 @@ export function deleteList(userId: number, listId: number) {
 export async function addItem(user: { id: number; name: string }, listId: number, anilistId: number) {
   requireMember(listId, user.id);
   const media = await ensureMedia(anilistId);
-  const res = db.prepare("INSERT OR IGNORE INTO shared_list_items (list_id, anilist_id, added_by, added_at) VALUES (?, ?, ?, ?)").run(listId, anilistId, user.id, now());
+  const res = db.prepare("INSERT INTO shared_list_items (list_id, anilist_id, added_by, added_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING").run(listId, anilistId, user.id, now());
   if (!res.changes) return;
   const list = listRow(listId)!;
   for (const m of membersOf(listId)) if (m.user_id !== user.id && m.status === "member")

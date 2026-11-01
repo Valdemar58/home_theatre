@@ -1,8 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { bookKind, docToBlocks, htmlToBlocks, keyRanges, parseNum, summarize, titleMatch, type ChapterRow } from "./books";
+import { bookKind, docToBlocks, htmlToBlocks, keyRanges, parseNum, pickTranslation, summarize, titleMatch, type ChapterRow } from "./books";
 
 const row = (o: Partial<ChapterRow>): ChapterRow => ({
   provider: "p", ref: "b", edition: "main", lang: "ru", team: null, vol: null, num: 1, numText: "1", title: null, date: null, cref: "c", ...o,
+});
+
+it("keeps the selected extension source when scanlator changes and honors language preference", () => {
+  const [edition] = summarize([
+    row({ provider: "suwayomi", ref: "jp", lang: "ja", team: "Rawkuma" }),
+    row({ provider: "suwayomi", ref: "en", lang: "en", team: "Weeb Central · Unknown" }),
+  ]);
+  const chapter = edition.chapters[0];
+  expect(pickTranslation(chapter, { provider: "suwayomi", ref: "en", team: "Weeb Central · Official" })?.ref).toBe("en");
+  expect(pickTranslation(chapter, { languages: ["ru", "en", "ja"] })?.lang).toBe("en");
 });
 
 describe("bookKind", () => {

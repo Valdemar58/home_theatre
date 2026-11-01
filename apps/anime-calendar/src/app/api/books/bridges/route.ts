@@ -11,8 +11,10 @@ export const GET = authed(async (_req, user) => {
 /** { plugins?, index?, sources? } — включённые плагины LNReader, адрес индекса, источники Suwayomi для поиска. */
 export const PUT = authed(async (req, user) => {
   adminOnly(user);
-  const b = (await req.json().catch(() => ({}))) as { plugins?: string[]; index?: string; sources?: string[] };
-  setBridges({ plugins: b.plugins?.map(String), index: b.index, sources: b.sources?.map(String) });
+  const b = (await req.json().catch(() => ({}))) as { plugins?: string[]; index?: string; sources?: string[]; url?: string; languages?: string[] };
+  for (const k of ["plugins", "sources", "languages"] as const) if (b[k] !== undefined && (!Array.isArray(b[k]) || b[k]!.some((v) => typeof v !== "string"))) throw new ApiError(400, "Неверный список источников");
+  if (b.url !== undefined && typeof b.url !== "string") throw new ApiError(400, "Неверный адрес сервера");
+  setBridges(b);
   return json({ ok: true });
 });
 

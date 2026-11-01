@@ -51,6 +51,12 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     archive = out_dir / f"home-theater-{time.strftime('%Y%m%d-%H%M')}.tar.gz"
 
+    # Календарь: согласованный логический дамп PostgreSQL, включая историю миграций.
+    # Выполняется до остановки БД; файл входит в архив конфигов. Пароль не передаётся в argv.
+    if env.get("DATABASE_DRIVER", "postgres") != "sqlite":
+        subprocess.run(["docker", "compose", "exec", "-T", "anime-calendar", "node", "database/backup.mjs"],
+                       cwd=ROOT, check=True)
+
     # Authentik (учётки, приглашения) — в Postgres на именованном томе: дамп в config/authentik/db.sql, пока база работает.
     # Восстановление: docker exec -i authentik-db psql -U authentik authentik < config/authentik/db.sql
     dump = subprocess.run(["docker", "exec", "authentik-db", "pg_dump", "-U", "authentik", "authentik"], capture_output=True)

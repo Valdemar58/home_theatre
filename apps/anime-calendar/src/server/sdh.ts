@@ -74,7 +74,7 @@ async function fetchFiles(anilistId: number, signal: AbortSignal, onFile: () => 
   const pick = matchFiles(files, titles, d.episodes ?? (d.nextAiringEpisode ? d.nextAiringEpisode.episode - 1 : null));
   const have = new Map(storedFiles(anilistId).map((r) => [r.ep, r]));
   await mkdir(dirOf(anilistId), { recursive: true });
-  const put = db.prepare("INSERT OR REPLACE INTO sdh_file (anilist_id, ep, name, url, path, hash, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
+  const put = db.prepare("INSERT INTO sdh_file (anilist_id, ep, name, url, path, hash, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (anilist_id, ep) DO UPDATE SET name = excluded.name, url = excluded.url, path = excluded.path, hash = excluded.hash, fetched_at = excluded.fetched_at");
   for (const [ep, f] of [...pick].sort((a, b) => a[0] - b[0])) {
     signal.throwIfAborted();
     if (have.get(ep)?.name === f.name) continue;

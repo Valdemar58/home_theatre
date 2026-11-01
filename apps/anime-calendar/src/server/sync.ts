@@ -207,8 +207,7 @@ async function syncReads(user: User, token: string, stats: SyncStats): Promise<v
   }
   // Новое на Shikimori: MAL → AniList (MANGA)
   if (remote.size) {
-    const insert = db.prepare(`INSERT OR IGNORE INTO read_entries (user_id, book_id, mal_id, status, chapters, volumes, score,
-      updated_at, shiki_rate_id, shiki_updated_at, dirty, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)`);
+    const insert = db.prepare("INSERT INTO read_entries (user_id, book_id, mal_id, status, chapters, volumes, score,\n      updated_at, shiki_rate_id, shiki_updated_at, dirty, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0) ON CONFLICT DO NOTHING");
     for (const b of await booksByMalIds([...remote.keys()])) {
       const r = b.idMal ? remote.get(b.idMal) : undefined;
       if (!r) continue;
@@ -272,8 +271,7 @@ export async function syncUser(user: User): Promise<SyncStats> {
       const media = await withShikimori(await mediaByMalIds([...remote.keys()]));
       saveMedia(media);
       const insert = db.prepare(
-        `INSERT OR IGNORE INTO list_entries (user_id, anilist_id, mal_id, status, waiting, episodes, score,
-           updated_at, shiki_rate_id, shiki_updated_at, dirty, deleted) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 0, 0)`);
+        "INSERT INTO list_entries (user_id, anilist_id, mal_id, status, waiting, episodes, score,\n           updated_at, shiki_rate_id, shiki_updated_at, dirty, deleted) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 0, 0) ON CONFLICT DO NOTHING");
       for (const m of media) {
         const r = remote.get(m.idMal!);
         if (!r) continue;

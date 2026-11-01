@@ -73,7 +73,7 @@ export const isMuted = (userId: number, anilistId: number) =>
   Boolean(db.prepare<[number, number], { x: number }>("SELECT 1 x FROM notice_mutes WHERE user_id = ? AND anilist_id = ?").get(userId, anilistId));
 
 export function setMuted(userId: number, anilistId: number, muted: boolean) {
-  if (muted) db.prepare("INSERT OR IGNORE INTO notice_mutes (user_id, anilist_id) VALUES (?, ?)").run(userId, anilistId);
+  if (muted) db.prepare("INSERT INTO notice_mutes (user_id, anilist_id) VALUES (?, ?) ON CONFLICT DO NOTHING").run(userId, anilistId);
   else {
     db.prepare("DELETE FROM notice_mutes WHERE user_id = ? AND anilist_id = ?").run(userId, anilistId);
     // Включили обратно — не присылать всё, что вышло за время тишины

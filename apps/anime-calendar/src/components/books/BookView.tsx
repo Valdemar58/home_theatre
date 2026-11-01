@@ -2,7 +2,7 @@
 import { ArrowPathIcon, ArrowTopRightOnSquareIcon, BellAlertIcon, BellSlashIcon, BookOpenIcon, CheckIcon, MagnifyingGlassIcon } from "@heroicons/react/24/outline";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   chapterName, EDITION_LABELS, KIND_LABELS, LANG_LABELS, pickTranslation, READ_LABELS, translationLabel,
   type BookHit, type BookLite, type BookPage, type ChapterSummary, type Edition, type EditionSummary,
@@ -45,7 +45,7 @@ function Loaded({ page, progress }: { page: BookPage; progress: ReturnType<typeo
   const [edition, setEdition] = useState<Edition | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
   const ed = editions.find((e) => e.edition === edition) ?? editions[0];
-  const pref = progress?.pref ?? {};
+  const pref = { languages: page.preferredLanguages, ...progress?.pref };
   // Продолжить: последняя открытая глава (недочитанная — она же, дочитанная — следующая)
   const resume = useMemo(() => {
     const last = progress?.positions[0];
@@ -284,14 +284,23 @@ function ChapterAlerts({ bookId, reading }: { bookId: number; reading: boolean }
 /** Провайдеры: где нашлась книга; не та — скрыть, нет — найти вручную. */
 function Providers({ page, onChange }: { page: BookPage; onChange: () => void }) {
   const [search, setSearch] = useState<string | null>(null);
-  const kinds = page.book.kind === "novel" ? ["ranobelib", "syosetu"] : ["mangalib", "mangadex"];
+  const [sourceFilter, setSourceFilter] = useState<string | undefined>();
+  const kinds = [...new Set([...(page.book.kind === "novel" ? ["ranobelib", "syosetu", "lnreader"] : ["mangalib", "mangadex", "suwayomi"]), ...page.links.map((l) => l.provider)])];
   const refresh = async () => { await api(`/api/books/${page.book.id}/sync`, { method: "POST" }); onChange(); };
   return (
     <section className="space-y-2 rounded-xl bg-gray-800/40 p-3 ring-1 ring-gray-700">
       <div className="flex items-center justify-between">
-        <h2 className="font-semibold">Провайдеры</h2>
+        <h2 className="font-semibold">Доступные источники</h2>
         <button onClick={() => void refresh()} title="Искать заново и обновить главы" className="rounded p-1 text-gray-400 hover:bg-gray-700 hover:text-white"><ArrowPathIcon className="h-4 w-4" /></button>
       </div>
+      {page.sources?.map((s) => <div key={`${s.provider}:${s.sourceId}`} className="flex items-start justify-between gap-2 rounded-lg bg-gray-900/50 p-2 text-xs">
+        <div><span className="font-medium text-gray-200">{s.name}{s.lang ? ` · ${s.lang === "ja" ? "JP" : s.lang.toUpperCase()}` : ""}</span>
+          <p className={s.status === "error" ? "text-warning-300" : "text-gray-400"}>{s.status === "searching" && page.updating ? "Ищу…" : s.status === "found" ? `Доступно: ${s.count}` : s.status === "empty" ? "Совпадений не найдено" : s.message ?? "Ещё не проверен"}</p>
+          {s.checkedAt > 0 && <p className="text-gray-500">{new Date(s.checkedAt * 1000).toLocaleString()}</p>}
+        </div>
+        <div className="shrink-0 space-x-2"><button className="text-accent-300" onClick={() => { setSourceFilter(s.sourceId || undefined); setSearch(s.provider); }}>Найти</button><button className="text-accent-300" disabled={page.updating} onClick={async () => { await api(`/api/books/${page.book.id}/sync`, { method: "POST", json: { provider: s.provider, sourceId: s.sourceId || undefined } }); onChange(); }}>Повторить</button></div>
+      </div>)}
+      {page.book.kind !== "novel" && <Link href="/settings" className="block text-xs text-accent-300">Настроить источники RU / EN / JP</Link>}
       {kinds.map((p) => {
         const links = page.links.filter((l) => l.provider === p);
         const found = links.filter((l) => l.ref);
@@ -299,7 +308,7 @@ function Providers({ page, onChange }: { page: BookPage; onChange: () => void })
           <div key={p} className="space-y-1 text-sm">
             <div className="flex items-center justify-between">
               <span className="text-gray-300">{providerName(p)}</span>
-              <button onClick={() => setSearch(p)} className="flex items-center gap-1 text-xs text-accent-300 hover:text-accent-200"><MagnifyingGlassIcon className="h-3.5 w-3.5" />{found.length ? "другая" : "найти"}</button>
+              <button onClick={() => { setSourceFilter(undefined); setSearch(p); }} className="flex items-center gap-1 text-xs text-accent-300 hover:text-accent-200"><MagnifyingGlassIcon className="h-3.5 w-3.5" />{found.length ? "другая" : "найти"}</button>
             </div>
             {found.map((l) => (
               <div key={l.ref} className="flex items-center gap-2 text-xs">
@@ -314,21 +323,27 @@ function Providers({ page, onChange }: { page: BookPage; onChange: () => void })
           </div>
         );
       })}
-      {search && <ProviderSearch bookId={page.book.id} provider={search} onClose={() => setSearch(null)} onLinked={() => { setSearch(null); onChange(); }} />}
+      {search && <ProviderSearch sourceId={sourceFilter} bookId={page.book.id} provider={search} onClose={() => setSearch(null)} onLinked={() => { setSearch(null); onChange(); }} />}
     </section>
   );
 }
 
-function ProviderSearch({ bookId, provider, onClose, onLinked }: { bookId: number; provider: string; onClose: () => void; onLinked: () => void }) {
+function ProviderSearch({ bookId, provider, sourceId, onClose, onLinked }: { bookId: number; provider: string; sourceId?: string; onClose: () => void; onLinked: () => void }) {
+  const [page, setPage] = useState(1);
+  const controller = useRef<AbortController | null>(null);
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<BookHit[] | null>(null);
   const [err, setErr] = useState<unknown>(null);
-  const run = async (query: string) => {
-    setHits(null); setErr(null);
-    try { setHits((await api<{ hits: BookHit[] }>(`/api/books/${bookId}/search?provider=${provider}${query ? `&q=${encodeURIComponent(query)}` : ""}`)).hits); }
-    catch (e) { setErr(e); setHits([]); }
+  const run = async (query: string, n = 1) => {
+    controller.current?.abort();
+    const abort = new AbortController(); controller.current = abort;
+    if (n === 1) setHits(null); setErr(null); setPage(n);
+    try {
+      const res = await api<{ hits: BookHit[] }>(`/api/books/${bookId}/search?provider=${provider}&page=${n}${sourceId ? `&source=${encodeURIComponent(sourceId)}` : ""}${query ? `&q=${encodeURIComponent(query)}` : ""}`, { signal: abort.signal });
+      if (!abort.signal.aborted) setHits((prev) => n === 1 ? res.hits : [...new Map([...(prev ?? []), ...res.hits].map((h) => [h.ref, h])).values()]);
+    } catch (e) { if (!abort.signal.aborted) { setErr(e); if (n === 1) setHits([]); } }
   };
-  useEffect(() => { void run(""); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { void run(""); return () => controller.current?.abort(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <Modal open onClose={onClose} title={`Найти на ${providerName(provider)}`} wide>
       <form className="mb-3 flex gap-2" onSubmit={(e) => { e.preventDefault(); void run(q); }}>
@@ -351,6 +366,7 @@ function ProviderSearch({ bookId, provider, onClose, onLinked }: { bookId: numbe
           ))}
         </div>
       )}
+      {provider === "suwayomi" && hits && <Button size="sm" onClick={() => void run(q, page + 1)}>Следующая страница поиска</Button>}
     </Modal>
   );
 }

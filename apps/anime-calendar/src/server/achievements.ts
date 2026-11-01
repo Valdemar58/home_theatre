@@ -86,7 +86,7 @@ export function achievementsOf(userId: number, opts: { notify?: boolean } = {}):
   const earned = new Map(db.prepare<[number], Earned>("SELECT id, tier, earned_at FROM user_achievements WHERE user_id = ?").all(userId).map((r) => [r.id, r]));
   // Первый подсчёт — запоминаем заслуги молча (метка _init), дальше — уведомляем о новых уровнях
   const first = !earned.has("_init");
-  if (first) db.prepare("INSERT OR IGNORE INTO user_achievements (user_id, id, tier, earned_at) VALUES (?, '_init', 0, ?)").run(userId, now());
+  if (first) db.prepare("INSERT INTO user_achievements (user_id, id, tier, earned_at) VALUES (?, '_init', 0, ?) ON CONFLICT DO NOTHING").run(userId, now());
   const out: AchievementProgress[] = [];
   const ids = [...ACHIEVEMENTS.map((a) => a.id), ...[...v.keys()].filter((id) => id.startsWith("season:"))];
   for (const id of ids) {

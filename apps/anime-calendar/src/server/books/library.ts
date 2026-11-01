@@ -11,6 +11,7 @@ import { suwayomi } from "./providers/suwayomi";
 import type { Content, Hit, Provider } from "./providers/types";
 import { ordered, providerConfig } from "./provider-config";
 import { aiChapter, aiRows } from "./ai-chapters";
+import { rememberSource, sourceOf, sourceState, sourceStates } from "./source-state";
 import { parseAiCref } from "@/lib/book-translate";
 import { muFind, muSeries } from "./trackers";
 
@@ -38,24 +39,33 @@ export function hitScore(book: BookDetails, h: Hit): number {
 const RELINK_SEC = 7 * 86400;
 
 /** Найти книгу у провайдера (раз в неделю, если не нашли; ручная привязка не трогается). */
-async function linkProvider(book: BookDetails, p: Provider): Promise<void> {
+async function linkProvider(book: BookDetails, p: Provider, sourceId?: string): Promise<void> {
   const rows = linksOf(book.id).filter((l) => l.provider === p.id);
-  if (rows.some((l) => l.how === "manual")) return;
-  if (rows.length && rows.every((l) => now() - l.checked_at < RELINK_SEC)) return;
-  const hits = await p.search(book);
+  const covered = p.id !== "suwayomi" || providerConfig().suwayomi.sources.every((id) => sourceStates(book.id)
+    .some((s) => s.provider === p.id && s.sourceId === id && ["found", "empty"].includes(s.status) && now() - s.checkedAt < RELINK_SEC));
+  if (!sourceId && covered && rows.length && rows.every((l) => now() - l.checked_at < RELINK_SEC)) return;
+  const hits = await p.search(book, undefined, { sourceId });
   // Точные совпадения (у Lib — по изданию: веб и книжная версии — разные книги, обе подходят)
   const good = hits.filter((h) => hitScore(book, h) >= 1);
   const best = good.some((h) => hitScore(book, h) === 2) ? good.filter((h) => hitScore(book, h) === 2) : good;
   const t = now();
   db.transaction(() => {
-    db.prepare("DELETE FROM book_links WHERE book_id = ? AND provider = ? AND how IN ('auto', 'none')").run(book.id, p.id);
+    db.prepare("DELETE FROM book_links WHERE book_id = ? AND provider = ? AND how = 'none'").run(book.id, p.id);
     const hidden = new Set(rows.filter((l) => l.how === "hidden").map((l) => l.ref));
-    const keep = best.filter((h) => !hidden.has(h.ref)).slice(0, 3);
+    const counts = new Map<string, number>();
+    const keep = best.filter((h) => {
+      const scope = h.sourceId ?? h.edition;
+      const n = counts.get(scope) ?? 0;
+      if (hidden.has(h.ref) || n >= 3) return false;
+      counts.set(scope, n + 1); return true;
+    });
     for (const h of keep) {
-      db.prepare("INSERT OR IGNORE INTO book_links (book_id, provider, ref, title, edition, how, checked_at) VALUES (?, ?, ?, ?, ?, 'auto', ?)")
+      db.prepare("INSERT INTO book_links (book_id, provider, ref, title, edition, how, checked_at) VALUES (?, ?, ?, ?, ?, 'auto', ?) ON CONFLICT DO NOTHING")
         .run(book.id, p.id, h.ref, h.title, h.edition, t);
+      if (h.sourceId) rememberSource(p.id, h.ref, h.sourceId);
     }
-    if (!keep.length) db.prepare("INSERT OR IGNORE INTO book_links (book_id, provider, ref, title, edition, how, checked_at) VALUES (?, ?, '', NULL, 'main', 'none', ?)").run(book.id, p.id, t);
+    if (!keep.length && !rows.some((l) => l.ref) && !sourceStates(book.id).some((s) => s.provider === p.id && s.status === "error")) db.prepare("INSERT INTO book_links (book_id, provider, ref, title, edition, how, checked_at) VALUES (?, ?, '', NULL, 'main', 'none', ?) ON CONFLICT DO NOTHING").run(book.id, p.id, t);
+    db.prepare("UPDATE book_links SET checked_at = ? WHERE book_id = ? AND provider = ?").run(t, book.id, p.id);
   })();
 }
 
@@ -81,8 +91,7 @@ async function refreshChapters(l: LinkRow): Promise<void> {
   const rows = await p.chapters(l.ref, l.edition);
   db.transaction(() => {
     db.prepare("DELETE FROM book_chapters WHERE provider = ? AND ref = ?").run(l.provider, l.ref);
-    const ins = db.prepare(`INSERT OR REPLACE INTO book_chapters (provider, ref, cref, edition, lang, team, vol, num, num_text, title, date)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const ins = db.prepare("INSERT INTO book_chapters (provider, ref, cref, edition, lang, team, vol, num, num_text, title, date)\n      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (provider, ref, cref) DO UPDATE SET edition = excluded.edition, lang = excluded.lang, team = excluded.team, vol = excluded.vol, num = excluded.num, num_text = excluded.num_text, title = excluded.title, date = excluded.date");
     for (const r of rows) ins.run(r.provider, r.ref, r.cref, r.edition, r.lang, r.team, r.vol, r.num, r.numText, r.title, r.date);
     db.prepare("UPDATE book_links SET chapters_at = ? WHERE provider = ? AND ref = ?").run(now(), l.provider, l.ref);
   })();
@@ -92,11 +101,15 @@ type ChRow = { provider: string; ref: string; cref: string; edition: Edition; la
 
 /** Главы всех привязанных книг (как ChapterRow). */
 export function chapterRows(bookId: number): ChapterRow[] {
-  const off = providerConfig().disabled;
-  const links = linksOf(bookId).filter((l) => l.ref && l.how !== "hidden" && !off.includes(l.provider));
+  const cfg = providerConfig();
+  const off = cfg.disabled;
+  const links = linksOf(bookId).filter((l) => l.ref && l.how !== "hidden" && !off.includes(l.provider) &&
+    (l.provider !== "suwayomi" || !sourceOf(l.provider, l.ref) || cfg.suwayomi.sources.includes(sourceOf(l.provider, l.ref)!)));
   if (!links.length) return aiRows(bookId);
   const rows = db.prepare<string[], ChRow>(
     `SELECT * FROM book_chapters WHERE ${links.map(() => "(provider = ? AND ref = ?)").join(" OR ")}`).all(...links.flatMap((l) => [l.provider, l.ref]));
+  const rank = (r: ChRow) => r.provider === "suwayomi" ? cfg.suwayomi.sources.indexOf(sourceOf(r.provider, r.ref) ?? "") : 0;
+  rows.sort((a, b) => rank(a) - rank(b));
   return [...rows.map((r) => ({ provider: r.provider, ref: r.ref, cref: r.cref, edition: r.edition, lang: r.lang, team: r.team, vol: r.vol, num: r.num, numText: r.num_text, title: r.title, date: r.date })),
     ...aiRows(bookId)];
 }
@@ -106,19 +119,34 @@ const g = globalThis as unknown as { __bookSync?: Map<number, Promise<void>> };
 const syncing = (g.__bookSync ??= new Map());
 
 /** Найти книгу у провайдеров и обновить устаревшие оглавления (в фоне; ошибки провайдеров — в лог). */
-export function syncBook(book: BookDetails, force = false): Promise<void> {
+export function syncBook(book: BookDetails, force = false, only?: { provider: string; sourceId?: string }): Promise<void> {
   const cur = syncing.get(book.id);
   if (cur) return cur;
   const live = book.status === "RELEASING" || book.status === "HIATUS";
   const job = (async () => {
-    await Promise.all(providersFor(book).map(async (p) => {
+    await Promise.all(providersFor(book).filter((p) => !only || p.id === only.provider).map(async (p) => {
+      const state = { provider: p.id, sourceId: "", name: p.name, lang: null, count: 0 };
+      sourceState(book.id, { ...state, status: "searching", message: null });
       try {
         if (force) db.prepare("UPDATE book_links SET checked_at = 0 WHERE book_id = ? AND provider = ? AND how IN ('auto', 'none')").run(book.id, p.id);
-        await linkProvider(book, p);
-        for (const l of linksOf(book.id).filter((x) => x.provider === p.id && x.ref && x.how !== "hidden")) {
-          if (force || chaptersStale(l, live)) await refreshChapters(l);
+        await linkProvider(book, p, only?.sourceId);
+        let failed = false;
+        for (const l of linksOf(book.id).filter((x) => x.provider === p.id && x.ref && x.how !== "hidden" &&
+          (p.id !== "suwayomi" || !sourceOf(p.id, x.ref) || providerConfig().suwayomi.sources.includes(sourceOf(p.id, x.ref)!)) &&
+          (!only?.sourceId || sourceOf(p.id, x.ref) === only.sourceId))) {
+          try {
+            if (force || chaptersStale(l, live)) await refreshChapters(l);
+          } catch (e) {
+            failed = true;
+            const sid = sourceOf(p.id, l.ref) ?? "";
+            const old = sourceStates(book.id).find((s) => s.provider === p.id && s.sourceId === sid);
+            sourceState(book.id, { ...state, ...old, sourceId: sid, status: "error", message: `Главы: ${String(e).split("\n")[0].slice(0, 250)}` });
+          }
         }
+        const count = chapterRows(book.id).filter((r) => r.provider === p.id).length;
+        sourceState(book.id, { ...state, status: failed ? "error" : count ? "found" : "empty", count, message: failed ? "Не все оглавления обновлены. Сохранённые главы доступны." : null });
       } catch (e) {
+        sourceState(book.id, { ...state, status: "error", message: e instanceof Error ? e.message : String(e) });
         console.warn(`[books] ${p.name} — «${book.title.romaji}»: ${String(e).slice(0, 200)}`);
       }
     }));
@@ -156,14 +184,20 @@ export async function bookPage(id: number): Promise<BookPage> {
   const links = linksOf(id);
   const stale = providersFor(book).some((p) => {
     const ls = links.filter((l) => l.provider === p.id);
-    return !ls.length || ls.some((l) => l.ref && l.how !== "hidden" && chaptersStale(l, live));
+    const lastError = sourceStates(id).find((s) => s.provider === p.id && s.sourceId === "" && s.status === "error");
+    if (lastError && now() - lastError.checkedAt < 300) return false;
+    return !ls.length || ls.some((l) => now() - l.checked_at >= RELINK_SEC || (l.ref && l.how !== "hidden" && chaptersStale(l, live)));
   });
   if (stale && !isSyncing(id)) void syncBook(book);
   const order = activeProviders().map((p) => p.id);
   const rank = (id: string) => order.indexOf(id);
   const origin = await originOf(book).catch((): Origin => ({ status: null, chapters: null, volumes: null, ended: null, source: "AniList", url: null }));
   return {
-    book, origin,
+    book, origin, preferredLanguages: providerConfig().suwayomi.languages,
+    sources: providersFor(book).flatMap((p) => {
+      const states = sourceStates(id).filter((s) => s.provider === p.id && (!s.sourceId || p.id !== "suwayomi" || providerConfig().suwayomi.sources.includes(s.sourceId)));
+      return states.length ? states : [{ provider: p.id, sourceId: "", name: p.name, lang: null, status: "setup" as const, message: p.id === "suwayomi" && !providerConfig().suwayomi.sources.length ? "Настройте источники в расширениях" : "Ещё не проверен", count: 0, checkedAt: 0 }];
+    }),
     links: linksOf(id).filter((l) => l.how !== "hidden" && !providerConfig().disabled.includes(l.provider))
       .sort((a, b) => rank(a.provider) - rank(b.provider)).map((l) => {
       const p = providerById(l.provider);
@@ -175,16 +209,16 @@ export async function bookPage(id: number): Promise<BookPage> {
 }
 
 /** Поиск книги у провайдера для ручной привязки (с оценкой похожести). */
-export async function providerSearch(bookId: number, provider: string, query?: string) {
+export async function providerSearch(bookId: number, provider: string, query?: string, options?: { sourceId?: string; page?: number; signal?: AbortSignal }) {
   const book = await bookDetails(bookId);
   const p = providerById(provider);
   if (!p) throw new Error("Нет такого провайдера");
-  const hits = await p.search(book, query);
+  const hits = await p.search(book, query, options);
   return hits.map((h) => ({ ...h, score: hitScore(book, h) })).sort((a, b) => b.score - a.score);
 }
 
 /** Глава для ридера: сохранённая или с провайдера (только из привязанных книг). Текст и страницы — без срока. */
-export async function chapterContent(bookId: number, provider: string, cref: string): Promise<Content> {
+export async function chapterContent(bookId: number, provider: string, cref: string, refresh = false): Promise<Content> {
   if (provider === "ai") {
     const { edition, key } = parseAiCref(cref);
     const k = aiChapter(bookId, edition as Edition, key);
@@ -197,12 +231,12 @@ export async function chapterContent(bookId: number, provider: string, cref: str
     `SELECT ref FROM book_chapters WHERE provider = ? AND cref = ? AND ref IN (${refs.map(() => "?").join(",")})`).get(provider, cref, ...refs) : undefined;
   if (!ch) throw new Error("Этой главы нет у книги");
   const saved = db.prepare<[string, string, string], { kind: string; body: string }>("SELECT kind, body FROM chapter_body WHERE provider = ? AND ref = ? AND cref = ?").get(provider, ch.ref, cref);
-  if (saved) return { kind: saved.kind, ...JSON.parse(saved.body) } as Content;
+  if (saved && !refresh) return { kind: saved.kind, ...JSON.parse(saved.body) } as Content;
   const p = providerById(provider)!;
   const c = await p.content(ch.ref, cref);
   if (c.kind !== "external") {
     const { kind, ...body } = c;
-    db.prepare("INSERT OR REPLACE INTO chapter_body (provider, ref, cref, kind, body, fetched_at) VALUES (?, ?, ?, ?, ?, ?)")
+    db.prepare("INSERT INTO chapter_body (provider, ref, cref, kind, body, fetched_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (provider, ref, cref) DO UPDATE SET kind = excluded.kind, body = excluded.body, fetched_at = excluded.fetched_at")
       .run(provider, ch.ref, cref, kind, JSON.stringify(body), now());
   }
   return c;

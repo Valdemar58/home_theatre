@@ -329,12 +329,12 @@ export async function materializeGraph(id: number): Promise<{ entities: number; 
     const e = old !== undefined && !claimed.has(old) ? old : newEntity.get("place", pl.name_en || pl.name_ru, pl.name_ru || null, null, t, t)!.id;
     entityOf.set(pl.key, e);
     claimed.add(e);
-    if (old !== e) db.prepare("INSERT OR REPLACE INTO plot_key (root_id, key, entity_id) VALUES (?, ?, ?)").run(root, pl.key, e);
+    if (old !== e) db.prepare("INSERT INTO plot_key (root_id, key, entity_id) VALUES (?, ?, ?) ON CONFLICT (root_id, key) DO UPDATE SET entity_id = excluded.entity_id").run(root, pl.key, e);
     db.prepare("UPDATE plot_entity SET kind = 'place', name = ?, name_ru = ?, updated_at = ? WHERE id = ?").run(pl.name_en || pl.name_ru, pl.name_ru, t, e);
   }
   for (const p of personas) {
     const e = entityOf.get(p.key)!;
-    if (keyRows.get(p.key) !== e) db.prepare("INSERT OR REPLACE INTO plot_key (root_id, key, entity_id) VALUES (?, ?, ?)").run(root, p.key, e);
+    if (keyRows.get(p.key) !== e) db.prepare("INSERT INTO plot_key (root_id, key, entity_id) VALUES (?, ?, ?) ON CONFLICT (root_id, key) DO UPDATE SET entity_id = excluded.entity_id").run(root, p.key, e);
     // Своё имя — у сущностей без AniList (и английское: по нему ищется страница вики, старое имя прошлой сборки
     // уводило «генерала орков» на страницу Гельда); у AniList-персонажей русское имя Shikimori, иначе из графа
     db.prepare(`UPDATE plot_entity SET name_ru = CASE WHEN anilist_char_id IS NULL OR name_ru IS NULL THEN ? ELSE name_ru END,
@@ -367,24 +367,24 @@ export async function materializeGraph(id: number): Promise<{ entities: number; 
     const app = db.prepare(`INSERT INTO plot_appearance (entity_id, anilist_id, role, first_ep, source) VALUES (?, ?, ?, ?, ?)
       ON CONFLICT (entity_id, anilist_id) DO UPDATE SET first_ep = excluded.first_ep, role = COALESCE(plot_appearance.role, excluded.role)`);
     for (const [key, ep] of firstHere) if (entityOf.has(key)) app.run(E(key), id, ROLE[g.personas.get(key)?.importance ?? "второй план"], ep, SOURCE);
-    const place = db.prepare("INSERT OR REPLACE INTO plot_place (entity_id, anilist_id, kind, inside_id, from_ep, source) VALUES (?, ?, ?, ?, ?, ?)");
+    const place = db.prepare("INSERT INTO plot_place (entity_id, anilist_id, kind, inside_id, from_ep, source) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (entity_id, anilist_id) DO UPDATE SET kind = excluded.kind, inside_id = excluded.inside_id, from_ep = excluded.from_ep, source = excluded.source");
     for (const pl of mine(g.places.values())) place.run(E(pl.key), id, pl.kind, pl.inside && entityOf.has(pl.inside) && pl.inside !== pl.key ? E(pl.inside) : null, pl.first_ep, SOURCE);
     const plink = db.prepare("INSERT INTO plot_place_link (a, b, kind, distance, anilist_id, revealed_ep, source) VALUES (?, ?, ?, ?, ?, ?, ?)");
     for (const l of mine(g.placeLinks)) plink.run(E(l.a), E(l.b), l.kind, l.distance_ru || null, id, l.revealed, SOURCE);
 
-    const note = db.prepare("INSERT OR REPLACE INTO plot_note (entity_id, anilist_id, up_to, description, goal) VALUES (?, ?, ?, ?, ?)");
+    const note = db.prepare("INSERT INTO plot_note (entity_id, anilist_id, up_to, description, goal) VALUES (?, ?, ?, ?, ?) ON CONFLICT (entity_id, anilist_id, up_to) DO UPDATE SET description = excluded.description, goal = excluded.goal");
     for (const n of mine(g.notes)) note.run(E(n.key), id, n.upTo, n.description_ru, n.goal_ru || null);
     const name = db.prepare("INSERT INTO plot_name (entity_id, anilist_id, name, from_ep, source) VALUES (?, ?, ?, ?, ?)");
     for (const n of mine(g.names)) name.run(E(n.key), id, n.name_ru, n.from, SOURCE);
-    const alias = db.prepare("INSERT OR IGNORE INTO plot_alias (entity_id, alias, lang, anilist_id, from_ep, revealed_ep, source, kind, who, look) VALUES (?, ?, 'ru', ?, ?, ?, ?, ?, ?, ?)");
+    const alias = db.prepare("INSERT INTO plot_alias (entity_id, alias, lang, anilist_id, from_ep, revealed_ep, source, kind, who, look) VALUES (?, ?, 'ru', ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING");
     for (const a of mine(g.aliases)) alias.run(E(a.key), a.alias, id, a.ep, a.revealed, SOURCE, a.kind, a.who_ru || null, a.look ? slug(a.look) : null);
-    const look = db.prepare("INSERT OR IGNORE INTO plot_look (entity_id, anilist_id, look, label, label_en, appearance, kind, from_ep, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    const look = db.prepare("INSERT INTO plot_look (entity_id, anilist_id, look, label, label_en, appearance, kind, from_ep, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING");
     for (const l of mine(g.looks)) look.run(E(l.key), id, l.look, l.label_ru, l.label_en || null, l.appearance_en || null, l.kind, l.revealed, SOURCE);
     // Картинка, сверенная с обликом, которого у персонажа больше нет (прошлая сборка, другой персонаж), — сверить заново
     db.prepare(`UPDATE plot_image SET look = NULL, label = CASE WHEN source = 'fandom' THEN label ELSE NULL END, anilist_id = NULL, from_ep = NULL, checked = NULL
       WHERE source != 'frame' AND look IS NOT NULL AND entity_id IN (SELECT entity_id FROM plot_appearance WHERE anilist_id = ?)
       AND look NOT IN (SELECT look FROM plot_look l WHERE l.entity_id = plot_image.entity_id)`).run(id);
-    const ident = db.prepare("INSERT OR IGNORE INTO plot_identity (a, b, anilist_id, revealed_ep, note, source) VALUES (?, ?, ?, ?, ?, ?)");
+    const ident = db.prepare("INSERT INTO plot_identity (a, b, anilist_id, revealed_ep, note, source) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING");
     for (const i of mine(g.identities)) ident.run(E(i.a), E(i.b), id, i.revealed, i.note_ru || null, SOURCE);
     const member = db.prepare("INSERT INTO plot_member (entity_id, group_id, anilist_id, role, from_ep, to_ep, source) VALUES (?, ?, ?, ?, ?, ?, ?)");
     for (const m of mine(g.members)) member.run(E(m.key), E(m.group), id, m.role_ru || null, m.from_ep, m.to_ep || null, SOURCE);
@@ -398,7 +398,7 @@ export async function materializeGraph(id: number): Promise<{ entities: number; 
     const ev = db.prepare<[number, string, string, string, number, number, number, string, number, string, number, number | null], { id: number }>(`
       INSERT INTO plot_event (anilist_id, level, kind, title, summary, ep_from, ep_to, revealed_ep, source, data, created_at, key, major, place_id)
       VALUES (?, 'event', ?, ?, ?, ?, ?, ?, '${SOURCE}', ?, ?, ?, ?, ?) RETURNING id`);
-    const part = db.prepare("INSERT OR IGNORE INTO plot_event_participant (event_id, entity_id, role) VALUES (?, ?, ?)");
+    const part = db.prepare("INSERT INTO plot_event_participant (event_id, entity_id, role) VALUES (?, ?, ?) ON CONFLICT DO NOTHING");
     for (const e of mine(g.events.values())) {
       const data = JSON.stringify({ course: e.course_ru, arc: e.arc_ru, motives: Object.fromEntries(e.participants.filter((p) => p.motive_ru).map((p) => [E(p.key), p.motive_ru])) });
       const row = ev.get(id, e.kind, e.title_ru, e.summary_ru, e.ep_from, e.ep_to, e.revealed, data, t, e.key, Number(e.major), e.where && entityOf.has(e.where) ? E(e.where) : null)!;
@@ -410,7 +410,7 @@ export async function materializeGraph(id: number): Promise<{ entities: number; 
     const earlier = titles.slice(0, -1).map((x) => x.d.id);
     const anyEvent = (key: string) => evId.get(key) ?? (earlier.length ? db.prepare<[string], { id: number }>(
       `SELECT id FROM plot_event WHERE key = ? AND source = '${SOURCE}' AND anilist_id IN (${earlier.join(",")}) ORDER BY id DESC`).get(key)?.id : undefined);
-    const link = db.prepare("INSERT OR IGNORE INTO plot_event_link (from_event, to_event, kind, revealed_ep, source) VALUES (?, ?, ?, ?, ?)");
+    const link = db.prepare("INSERT INTO plot_event_link (from_event, to_event, kind, revealed_ep, source) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING");
     for (const l of mine(g.links)) {
       const a = anyEvent(l.from), b = anyEvent(l.to);
       if (a && b) link.run(a, b, l.kind, l.revealed, SOURCE);

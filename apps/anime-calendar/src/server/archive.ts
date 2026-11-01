@@ -45,7 +45,7 @@ export function enqueue(ids: number[], level: ArchiveLevel, reason: Reason | `op
     ON CONFLICT (anilist_id) DO UPDATE SET
       level = CASE WHEN excluded.level = 'full' OR archive_queue.level = 'full' THEN 'full'
                    WHEN excluded.level = 'page' OR archive_queue.level = 'page' THEN 'page' ELSE 'card' END,
-      priority = MAX(archive_queue.priority, excluded.priority), depth = MIN(archive_queue.depth, excluded.depth)`);
+      priority = GREATEST(archive_queue.priority, excluded.priority), depth = LEAST(archive_queue.depth, excluded.depth)`);
   for (const id of new Set(ids)) {
     const st = stateOf(id);
     if (st && RANK[st.level] >= RANK[level] && st.next_check > t) continue;

@@ -1,7 +1,8 @@
 import "server-only";
 import { pluginIndex, pluginLang } from "./providers/lnreader";
-import { suwa, suwaSources } from "./providers/suwayomi";
+import { suwa, suwaSources, suwaCapabilities } from "./providers/suwayomi";
 import { providerConfig, saveProviderConfig } from "./provider-config";
+import { bridgeUrl, repositoryUrl } from "@/lib/manga-sources";
 
 // Управление мостами (TASKS 5.9, карточка «Провайдеры глав», только админ): плагины LNReader — какие включены;
 // Suwayomi — репозиторий расширений (пишется и в сам Suwayomi), установка расширений, источники для поиска.
@@ -14,7 +15,8 @@ export async function bridgesState() {
   let suwayomi: { up: boolean; version: string | null; extensions: SExt[]; sources: { id: string; name: string; lang: string; nsfw: boolean }[]; error: string | null };
   try {
     const about = await suwa<{ aboutServer: { version: string } }>(`{ aboutServer { version } }`, undefined, 5000);
-    const ext = await suwa<{ extensions: { nodes: SExt[] } }>(`{ extensions { nodes { pkgName name lang versionName isInstalled hasUpdate isNsfw } } }`);
+    const { modern } = await suwaCapabilities();
+    const ext = await suwa<{ extensions: { nodes: SExt[] } }>(`{ extensions { nodes { pkgName name lang versionName isInstalled hasUpdate ${modern ? "" : "isNsfw"} } } }`);
     const sources = (await suwaSources()).map((s) => ({ id: s.id, name: s.displayName, lang: s.lang, nsfw: s.isNsfw }));
     suwayomi = { up: true, version: about.aboutServer.version, extensions: ext.extensions.nodes, sources, error: null };
   } catch (e) {
@@ -22,16 +24,24 @@ export async function bridgesState() {
   }
   return {
     lnreader: { index: cfg.lnreader.index, enabled: cfg.lnreader.plugins, plugins },
-    suwayomi: { ...suwayomi, url: cfg.suwayomi.url, repo: cfg.suwayomi.repo, enabled: cfg.suwayomi.sources },
+    suwayomi: { ...suwayomi, url: cfg.suwayomi.url, repo: cfg.suwayomi.repo, enabled: cfg.suwayomi.sources, languages: cfg.suwayomi.languages },
   };
 }
 
 /** Репозиторий расширений: в настройки календаря и в Suwayomi; после — обновить список расширений. */
 export async function setSuwayomiRepo(repo: string) {
+  repo = repositoryUrl(repo);
   const cfg = providerConfig();
-  saveProviderConfig({ suwayomi: { ...cfg.suwayomi, repo } });
-  await suwa(`mutation ($repos: [String!]!) { setSettings(input: { settings: { extensionRepos: $repos } }) { settings { extensionRepos } } }`, { repos: repo ? [repo] : [] });
+  const { modern } = await suwaCapabilities();
+  if (modern) {
+    if (!repo) throw new Error("Укажите адрес репозитория");
+    await suwa(`mutation ($url: String!) { addExtensionStore(input: { indexUrl: $url }) { __typename } }`, { url: repo }, 120_000);
+  } else {
+    const legacyRepo = repo.replace(/\/repo\/index\.(?:pb|min\.json|json)$/, "");
+    await suwa(`mutation ($repos: [String!]!) { setSettings(input: { settings: { extensionRepos: $repos } }) { settings { extensionRepos } } }`, { repos: legacyRepo ? [legacyRepo] : [] });
+  }
   await suwa(`mutation { fetchExtensions(input: {}) { extensions { pkgName } } }`, undefined, 120_000);
+  saveProviderConfig({ suwayomi: { ...cfg.suwayomi, repo } });
 }
 
 export async function suwayomiExtension(pkgName: string, action: "install" | "uninstall" | "update") {
@@ -39,10 +49,12 @@ export async function suwayomiExtension(pkgName: string, action: "install" | "un
     { id: pkgName, patch: { [action]: true } }, 180_000);
 }
 
-export function setBridges(patch: { plugins?: string[]; index?: string; sources?: string[] }) {
+export function setBridges(patch: { plugins?: string[]; index?: string; sources?: string[]; url?: string; languages?: string[] }) {
   const cfg = providerConfig();
   saveProviderConfig({
     lnreader: { index: patch.index?.trim() || cfg.lnreader.index, plugins: patch.plugins ?? cfg.lnreader.plugins },
-    suwayomi: { ...cfg.suwayomi, sources: patch.sources ?? cfg.suwayomi.sources },
+    suwayomi: { ...cfg.suwayomi, sources: patch.sources ?? cfg.suwayomi.sources,
+      url: patch.url ? bridgeUrl(patch.url) : cfg.suwayomi.url,
+      languages: patch.languages?.filter((l) => ["ru", "en", "ja", "ko", "zh", "multi"].includes(l)) ?? cfg.suwayomi.languages },
   });
 }

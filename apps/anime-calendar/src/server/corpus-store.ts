@@ -44,7 +44,7 @@ export function putTexts(anilistId: number, source: string, lang: string, depth:
 export function putMeta(anilistId: number, source: string, found: Found[]) {
   if (!found.length) return;
   db.prepare("DELETE FROM episode_meta WHERE anilist_id = ? AND source = ?").run(anilistId, source);
-  const ins = db.prepare("INSERT OR REPLACE INTO episode_meta (anilist_id, ep, source, aired, title, title_ja, filler) VALUES (?, ?, ?, ?, ?, ?, ?)");
+  const ins = db.prepare("INSERT INTO episode_meta (anilist_id, ep, source, aired, title, title_ja, filler) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (anilist_id, ep, source) DO UPDATE SET aired = excluded.aired, title = excluded.title, title_ja = excluded.title_ja, filler = excluded.filler");
   for (const f of found) ins.run(anilistId, f.ep, source, f.aired ?? null, f.title, f.titleJa ?? null, f.filler === undefined ? null : Number(f.filler));
 }
 

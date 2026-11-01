@@ -18,6 +18,22 @@ x-common: &common
       max-file: "3"
 
 services:
+  # База календаря. Именованный том нужен в том числе для Docker Desktop/Windows.
+  calendar-db:
+    image: ${CALENDAR_POSTGRES_IMAGE:-postgres:17-alpine}
+    container_name: calendar-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${CALENDAR_DB_NAME:-calendar}
+      POSTGRES_USER: ${CALENDAR_DB_USER:-calendar}
+      POSTGRES_PASSWORD: ${CALENDAR_DB_PASSWORD:?Run python scripts/init.py to generate the database password}
+    volumes:
+      - calendar-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
   # ---------- Просмотр ----------
   jellyfin:
     <<: *common
@@ -73,6 +89,16 @@ services:
     user: "${PUID}:${PGID}"
     environment:
       TZ: ${TZ}
+      DATABASE_DRIVER: ${DATABASE_DRIVER:-postgres}
+      DATABASE_URL: ${DATABASE_URL:-}
+      PGHOST: ${CALENDAR_DB_HOST:-calendar-db}
+      PGPORT: ${CALENDAR_DB_PORT:-5432}
+      PGDATABASE: ${CALENDAR_DB_NAME:-calendar}
+      PGUSER: ${CALENDAR_DB_USER:-calendar}
+      PGPASSWORD: ${CALENDAR_DB_PASSWORD}
+      PGSSLMODE: ${CALENDAR_DB_SSLMODE:-disable}
+      DATABASE_MIGRATE: ${DATABASE_MIGRATE:-true}
+      DATABASE_IMPORT_SQLITE: ${DATABASE_IMPORT_SQLITE:-auto}
       JELLYFIN_URL: http://jellyfin:8096
       SEERR_URL: http://seerr:5055
       SEERR_PUBLIC_URL: ${SEERR_PUBLIC_URL:-http://localhost:5055}
@@ -153,9 +179,12 @@ services:
     ports:
       - "5056:5056"
     depends_on:
-      - jellyfin
+      jellyfin:
+        condition: service_started
+      calendar-db:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:5056/login"]
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:5056/api/health/database"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -496,6 +525,7 @@ services:
       start_period: 30s
 
 volumes:
+  calendar-db:
   authentik-db:
 
 networks:

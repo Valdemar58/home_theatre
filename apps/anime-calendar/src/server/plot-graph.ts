@@ -278,7 +278,7 @@ export async function characterDetails(param: string, cursor: Map<number, number
   // Появления: AniList + тайтлы, где персонаж есть только по разбору серий
   const appearances = base?.appearances ?? [];
   const graphApps = ids.length ? db.prepare<[], { anilist_id: number; role: CharacterRole | null; first_ep: number | null }>(
-    `SELECT anilist_id, role, MIN(first_ep) AS first_ep FROM plot_appearance WHERE entity_id IN (${ids.join(",")}) GROUP BY anilist_id`).all() : [];
+    `SELECT anilist_id, MIN(role) AS role, MIN(first_ep) AS first_ep FROM plot_appearance WHERE entity_id IN (${ids.join(",")}) GROUP BY anilist_id`).all() : [];
   for (const a of graphApps) {
     if (appearances.some((x) => x.media.id === a.anilist_id)) continue;
     const d = await getDetails(a.anilist_id).catch(() => null);

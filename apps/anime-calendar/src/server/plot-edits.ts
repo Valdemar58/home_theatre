@@ -54,8 +54,7 @@ export async function addEdit(user: User, body: { entityId: number; anilistId: n
   const id = Number(db.prepare("INSERT INTO plot_edit (root_id, key, anilist_id, kind, data, from_ep, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
     .run(root, key, body.anilistId, kind, JSON.stringify(clean), body.fromEp, user.id, now()).lastInsertRowid);
   if (kind === "image") {
-    db.prepare(`INSERT OR REPLACE INTO plot_image (entity_id, url, source, label, look, anilist_id, from_ep, checked, updated_at)
-      VALUES (?, ?, 'manual', ?, NULL, ?, ?, 'manual', ?)`).run(body.entityId, clean.url as string, (clean.label as string) || null, body.anilistId, body.fromEp, now());
+    db.prepare("INSERT INTO plot_image (entity_id, url, source, label, look, anilist_id, from_ep, checked, updated_at)\n      VALUES (?, ?, 'manual', ?, NULL, ?, ?, 'manual', ?) ON CONFLICT (entity_id, url) DO UPDATE SET source = excluded.source, label = excluded.label, look = excluded.look, anilist_id = excluded.anilist_id, from_ep = excluded.from_ep, checked = excluded.checked, updated_at = excluded.updated_at").run(body.entityId, clean.url as string, (clean.label as string) || null, body.anilistId, body.fromEp, now());
   }
   await rewrite(root, kind, body.anilistId);
   const e = entityOfKey(root, key);

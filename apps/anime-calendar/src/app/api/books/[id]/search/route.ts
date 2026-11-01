@@ -6,5 +6,7 @@ export const GET = authed<{ id: string }>(async (req, _user, { id }) => {
   const u = new URL(req.url);
   const provider = u.searchParams.get("provider");
   if (!provider) throw new ApiError(400, "Нужен provider");
-  return json({ hits: await providerSearch(Number(id), provider, u.searchParams.get("q") ?? undefined) });
+  return json({ hits: await providerSearch(Number(id), provider, u.searchParams.get("q") ?? undefined, {
+    page: Math.min(20, Math.max(1, Number(u.searchParams.get("page")) || 1)), sourceId: u.searchParams.get("source") ?? undefined, signal: req.signal,
+  }) });
 });

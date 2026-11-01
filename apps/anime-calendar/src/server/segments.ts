@@ -71,7 +71,7 @@ async function fpOf(i: JfEpisodeItem, ep: number, signal: AbortSignal): Promise<
   try {
     const head = await fingerprint(i, 0, HEAD, dir, signal);
     const tail = await fingerprint(i, Math.max(0, dur - TAIL), TAIL, dir, signal);
-    db.prepare("INSERT OR REPLACE INTO episode_fp (item_key, dur, head, tail, created_at) VALUES (?, ?, ?, ?, ?)")
+    db.prepare("INSERT INTO episode_fp (item_key, dur, head, tail, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (item_key) DO UPDATE SET dur = excluded.dur, head = excluded.head, tail = excluded.tail, created_at = excluded.created_at")
       .run(key, dur, JSON.stringify(head), JSON.stringify(tail), now());
     return { key, ep, dur, head, tail };
   } finally {

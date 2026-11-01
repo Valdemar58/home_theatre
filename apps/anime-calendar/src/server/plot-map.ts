@@ -190,7 +190,7 @@ function cleanLegend(rootId: number) {
  * будущего места, тогда сливается с бумагой или сушей, а не выглядит размытой кляксой.
  */
 async function labelColors(rootId: number) {
-  const todo = db.prepare<[number], MapLabel & { rowid: number }>("SELECT rowid, text, x, y, w, h FROM plot_map_label WHERE root_id = ? AND color IS NULL").all(rootId);
+  const todo = db.prepare<[number], MapLabel>("SELECT text, x, y, w, h FROM plot_map_label WHERE root_id = ? AND color IS NULL").all(rootId);
   if (!todo.length) return;
   const map = db.prepare<[number], { url: string; width: number; height: number; crop: string | null }>("SELECT url, width, height, crop FROM plot_map WHERE root_id = ?").get(rootId)!;
   const crop: Box = map.crop ? JSON.parse(map.crop) : { x: 0, y: 0, w: map.width, h: map.height };
@@ -200,7 +200,7 @@ async function labelColors(rootId: number) {
     const i = (yi * info.width + xi) * 3;
     return [data[i], data[i + 1], data[i + 2]];
   };
-  const set = db.prepare("UPDATE plot_map_label SET color = ? WHERE rowid = ?");
+  const set = db.prepare("UPDATE plot_map_label SET color = ? WHERE root_id = ? AND text = ? AND x = ? AND y = ? AND w = ? AND h = ?");
   for (const l of todo) {
     const x0 = crop.x + l.x * crop.w, y0 = crop.y + l.y * crop.h, w = l.w * crop.w, h = l.h * crop.h, pad = Math.max(6, h * 0.6);
     const sum = [0, 0, 0];
@@ -209,7 +209,7 @@ async function labelColors(rootId: number) {
       const c = at(x, y);
       sum[0] += c[0]; sum[1] += c[1]; sum[2] += c[2]; n++;
     }
-    set.run(`#${sum.map((v) => Math.round(v / n).toString(16).padStart(2, "0")).join("")}`, l.rowid);
+    set.run(`#${sum.map((v) => Math.round(v / n).toString(16).padStart(2, "0")).join("")}`, rootId, l.text, l.x, l.y, l.w, l.h);
   }
 }
 
@@ -227,7 +227,7 @@ const NONE = "нет подписи";
 async function placePositions(rootId: number): Promise<number> {
   const places = db.prepare<[number], PlaceRow>(`
     SELECT e.id, e.name, e.name_ru, p.kind, p.inside_id FROM plot_key k JOIN plot_entity e ON e.id = k.entity_id
-    JOIN plot_place p ON p.entity_id = e.id WHERE k.root_id = ? AND k.key LIKE 'place-%' GROUP BY e.id`).all(rootId);
+    JOIN plot_place p ON p.entity_id = e.id WHERE k.root_id = ? AND k.key LIKE 'place-%' GROUP BY e.id, p.kind, p.inside_id`).all(rootId);
   const labels = db.prepare<[number], MapLabel>("SELECT text, x, y, w, h FROM plot_map_label WHERE root_id = ?").all(rootId);
   if (!places.length || !labels.length) return 0;
   // Одна подпись — одному месту (Филтвуда на карте нет — он не должен сесть на подпись Фальмуса)
@@ -281,7 +281,7 @@ async function placePositions(rootId: number): Promise<number> {
   db.exec("BEGIN");
   try {
     db.prepare("DELETE FROM plot_place_pos WHERE root_id = ? AND how != 'manual'").run(rootId);
-    const ins = db.prepare("INSERT OR IGNORE INTO plot_place_pos (entity_id, root_id, x, y, how, label) VALUES (?, ?, ?, ?, ?, ?)");
+    const ins = db.prepare("INSERT INTO plot_place_pos (entity_id, root_id, x, y, how, label) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING");
     for (const [id, p] of pos) ins.run(id, rootId, p.x, p.y, p.how, p.label);
     db.exec("COMMIT");
   } catch (e) {

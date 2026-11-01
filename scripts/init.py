@@ -25,6 +25,7 @@ MEDIA_KINDS = ["movies", "tv", "anime"]
 STREAM_DIR = "stream"
 
 GENERATED = {
+    "CALENDAR_DB_PASSWORD": lambda: secrets.token_urlsafe(32),
     "SONARR_API_KEY": lambda: secrets.token_hex(16),
     "RADARR_API_KEY": lambda: secrets.token_hex(16),
     "PROWLARR_API_KEY": lambda: secrets.token_hex(16),
