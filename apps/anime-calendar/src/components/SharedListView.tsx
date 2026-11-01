@@ -231,7 +231,7 @@ export function SharedListView({ id }: { id: number }) {
           <div className="relative">
             <Button size="sm" variant="ghost" onClick={() => setInvite(!invite)}><UserPlusIcon className="h-4 w-4" />Пригласить</Button>
             {invite && (
-              <div className="absolute left-0 top-full z-30 mt-1 w-56 rounded-lg bg-gray-800 py-1 shadow-2xl ring-1 ring-gray-600" onMouseLeave={() => setInvite(false)}>
+              <div className="mobile-popover absolute left-0 top-full z-30 mt-1 w-56 rounded-lg bg-gray-800 py-1 shadow-2xl ring-1 ring-gray-600" onMouseLeave={() => setInvite(false)}>
                 {friendsOut.map((f) => (
                   <button key={f.id} onClick={() => { setInvite(false); void action({ action: "invite", userId: f.id }); }}
                     className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-gray-700">

@@ -25,6 +25,7 @@ import {
   IdentificationIcon,
   UsersIcon,
   UserGroupIcon,
+  Bars3Icon,
 } from "@heroicons/react/24/outline";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -36,6 +37,7 @@ import { HoverCardHost } from "./HoverCard";
 import { ModeProvider, ModeSwitch, sectionHref, sectionOf, useMode, type Section } from "./Mode";
 import { Notifications } from "./Notifications";
 import { SearchBox } from "./SearchBox";
+import { Drawer } from "./Drawer";
 import { useGroupInvites } from "./SharedListsView";
 import { StaleBanner } from "./StaleBanner";
 import { cx } from "./ui";
@@ -72,7 +74,7 @@ const SERVICE_ICONS: Record<string, React.ComponentType<{ className?: string }>>
 const browserUrl = (url: string) =>
   typeof window !== "undefined" && window.location.hostname !== "localhost" ? url.replace("//localhost", `//${window.location.hostname}`) : url;
 
-// На телефоне внизу помещается пять пунктов; друзья, настройки и загрузки — значками в шапке
+// Основные разделы — внизу; полный набор ссылок доступен в мобильном меню.
 const MOBILE_NAV = NAV.filter((n) => !["/settings", "/downloads", "/friends"].includes(n.href));
 
 /** Пункты меню в режиме: разделы книг — свои адреса и подписи; active — пункт текущей страницы. */
@@ -163,6 +165,8 @@ function Shell({ userName, sidebar = "auto", children }: ShellProps) {
   const nav = useNav(pathname);
   const { data: me } = useMe();
   const bar = useSidebar(sidebar);
+  const [mobileMenu, setMobileMenu] = useState(false);
+  useEffect(() => setMobileMenu(false), [pathname]);
   // Приглашения в группы — значком у пункта меню
   const groupInvites = useGroupInvites();
   const logout = async () => {
@@ -259,36 +263,44 @@ function Shell({ userName, sidebar = "auto", children }: ShellProps) {
 
       <div className={cx("transition-[padding] duration-200", bar.pad)}>
         {/* Верхняя панель с поиском */}
-        <header className="sticky top-0 z-20 flex h-16 items-center gap-1.5 border-b md:gap-3 border-gray-800 bg-gray-900/85 px-4 backdrop-blur lg:px-8">
+        <header className="app-header sticky top-0 z-40 flex flex-wrap items-center gap-1.5 border-b md:h-16 md:flex-nowrap md:gap-3 border-gray-800 bg-gray-900 px-4 py-2 md:py-0 lg:px-8">
           <div className="md:hidden">
             <Logo compact />
           </div>
           <ModeSwitch className="hidden md:flex" />
           <SearchBox />
-          <div className="shrink-0 md:ml-auto"><Notifications /></div>
-          <Link href="/friends" className="rounded-md p-2 text-gray-400 hover:bg-gray-800 hover:text-white md:hidden" aria-label="Друзья">
-            <UsersIcon className="h-6 w-6" />
-          </Link>
-          {me?.isAdmin && (
-            <Link href="/downloads" className="rounded-md p-2 text-gray-400 hover:bg-gray-800 hover:text-white md:hidden" aria-label="Загрузки">
-              <ArrowDownTrayIcon className="h-6 w-6" />
-            </Link>
-          )}
-          <Link href="/settings" className="rounded-md p-2 text-gray-400 hover:bg-gray-800 hover:text-white md:hidden" aria-label="Настройки">
-            <Cog6ToothIcon className="h-6 w-6" />
-          </Link>
+          <div className="ml-auto shrink-0"><Notifications /></div>
+          <button onClick={() => setMobileMenu(true)} aria-label="Открыть меню" aria-expanded={mobileMenu}
+            className="rounded-md p-2 text-gray-400 hover:bg-gray-800 hover:text-white md:hidden">
+            <Bars3Icon className="h-6 w-6" />
+          </button>
         </header>
 
         {/* На телефоне режимы — отдельной строкой под шапкой */}
-        <div className="px-4 pt-3 md:hidden"><ModeSwitch wide /></div>
-        <main className="px-4 pb-24 pt-4 md:pb-10 md:pt-6 lg:px-8"><StaleBanner /><HoverCardHost>{children}</HoverCardHost></main>
+        <div className="relative z-10 bg-gray-900 px-4 pt-3 md:hidden"><ModeSwitch wide /></div>
+        <main className="app-main min-w-0 px-4 pb-24 pt-4 md:pb-10 md:pt-6 lg:px-8"><StaleBanner /><HoverCardHost>{children}</HoverCardHost></main>
       </div>
 
+      <Drawer open={mobileMenu} onClose={() => setMobileMenu(false)} title="Меню">
+        <nav aria-label="Все разделы" className="space-y-1">
+          {nav(NAV.filter((n) => me?.isAdmin || n.href !== "/downloads")).map(({ href, label, icon: Icon, active }) => (
+            <Link key={href} href={href} onClick={() => setMobileMenu(false)}
+              className={cx("flex items-center gap-3 rounded-lg px-3 py-3", active ? "bg-indigo-600 text-white" : "hover:bg-gray-800")}>
+              <Icon className="h-6 w-6 shrink-0" />{label}
+            </Link>
+          ))}
+          {me && <Link href={`/users/${me.id}`} onClick={() => setMobileMenu(false)} className="flex items-center gap-3 rounded-lg px-3 py-3 hover:bg-gray-800"><Avatar user={me} />Мой профиль</Link>}
+          {me?.services.map((sv) => <a key={sv.id} href={browserUrl(sv.url)} target="_blank" rel="noreferrer" className="flex items-center gap-3 rounded-lg px-3 py-3 hover:bg-gray-800"><ArrowTopRightOnSquareIcon className="h-5 w-5 shrink-0" />{sv.name}</a>)}
+          {me?.isAdmin && <div className="border-t border-gray-700 pt-2">{ADMIN_NAV.map(({ href, label }) => <Link key={href} href={href} onClick={() => setMobileMenu(false)} className="block rounded-lg px-3 py-3 hover:bg-gray-800">{label}</Link>)}</div>}
+          <button onClick={logout} className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-gray-400 hover:bg-gray-800"><ArrowRightStartOnRectangleIcon className="h-5 w-5" />Выйти</button>
+        </nav>
+      </Drawer>
+
       {/* Нижняя навигация (мобильные) */}
-      <nav className="fixed inset-x-0 bottom-0 z-30 flex border-t border-gray-800 bg-gray-900/95 backdrop-blur md:hidden">
+      <nav aria-label="Основная навигация" className="mobile-nav fixed inset-x-0 bottom-0 z-30 flex border-t border-gray-800 bg-gray-900/95 backdrop-blur md:hidden">
         {nav(MOBILE_NAV).map(({ href, label, icon: Icon, active }) => (
           <Link key={href} href={href}
-            className={cx("flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px]", active ? "text-indigo-400" : "text-gray-400")}>
+            className={cx("flex min-w-0 flex-1 flex-col items-center gap-0.5 py-2 text-[10px] sm:text-[11px]", active ? "text-indigo-400" : "text-gray-400")}>
             <Icon className="h-6 w-6" />
             {label}
           </Link>

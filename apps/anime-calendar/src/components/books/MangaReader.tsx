@@ -310,10 +310,10 @@ function AiLayer({ page }: { page: MangaAiPage }) {
 }
 
 export function MangaSettingsPanel({ s, set, scope }: { s: MangaSettings; set: (x: Partial<MangaSettings>) => void; scope?: { bookOnly: boolean; setBookOnly: (on: boolean) => void } }) {
-  const row = "flex items-center justify-between gap-3";
+  const row = "flex flex-wrap items-center justify-between gap-3";
   const btn = (on: boolean) => cx("rounded-md px-2.5 py-1 text-sm ring-1", on ? "tone-accent solid ring-transparent" : "ring-gray-500/40");
   return (
-    <div className="fixed right-4 top-[7.25rem] z-30 max-h-[75dvh] w-[min(28rem,calc(100%-2rem))] space-y-3 overflow-y-auto rounded-xl bg-gray-900/95 p-4 text-sm text-gray-100 shadow-2xl ring-1 ring-gray-700">
+    <div className="fixed right-4 top-[10rem] md:top-[7.25rem] z-30 max-h-[calc(100dvh-15rem)] md:max-h-[75dvh] w-[min(28rem,calc(100%-2rem))] space-y-3 overflow-y-auto rounded-xl bg-gray-900/95 p-4 text-sm text-gray-100 shadow-2xl ring-1 ring-gray-700">
       {scope && <label className={row}><span>Настройки только для этой книги</span><input type="checkbox" checked={scope.bookOnly} onChange={(e) => scope.setBookOnly(e.target.checked)} /></label>}
       <div className={row}><span>Режим</span><span className="flex gap-1">
         <button className={btn(s.mode === "paged")} onClick={() => set({ mode: "paged" })}>Страницы</button>

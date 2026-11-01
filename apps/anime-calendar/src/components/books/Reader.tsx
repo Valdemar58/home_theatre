@@ -136,9 +136,9 @@ export function Reader({ id }: { id: number }) {
   const bookName = page ? page.book.title.ru || page.book.title.romaji || "" : "";
 
   return (
-    <div ref={readerRoot} className="-mx-4 -mt-6 min-h-screen overflow-y-auto lg:-mx-8" style={{ background: theme.bg, color: theme.fg }}>
+    <div ref={readerRoot} className="-mx-4 -mt-4 md:-mt-6 min-h-screen overflow-y-auto lg:-mx-8" style={{ background: theme.bg, color: theme.fg }}>
       {/* Шапка ридера */}
-      <div className={cx("sticky top-16 z-10 flex items-center gap-2 border-b px-3 py-2 backdrop-blur", !tools && "hidden")} style={{ background: `${theme.bg}e6`, borderColor: `${theme.dim}40` }}>
+      <div className={cx("sticky top-[calc(6.5rem+env(safe-area-inset-top))] z-10 flex flex-wrap items-center md:top-16 gap-2 border-b px-3 py-2 backdrop-blur", !tools && "hidden")} style={{ background: `${theme.bg}e6`, borderColor: `${theme.dim}40` }}>
         <Link href={`/manga/${id}`} className="flex min-w-0 items-center gap-1.5 text-sm" style={{ color: theme.dim }} title="К книге">
           <ArrowLeftIcon className="h-4 w-4 shrink-0" /><span className="hidden truncate sm:inline">{bookName}</span>
         </Link>
@@ -147,7 +147,7 @@ export function Reader({ id }: { id: number }) {
           <select value={`${provider}|${cref}`} onChange={(e) => {
             const [p, r] = e.target.value.split("|");
             if (chapter) router.replace(readHref(id, edition, chapter, { provider: p, cref: r }));
-          }} className="max-w-[14rem] rounded-md border bg-transparent px-2 py-1 text-xs" style={{ borderColor: `${theme.dim}60` }} title="Перевод главы">
+          }} className="max-w-full sm:max-w-[14rem] rounded-md border bg-transparent px-2 py-1 text-xs" style={{ borderColor: `${theme.dim}60` }} title="Перевод главы">
             {translations.map((t) => <option key={`${t.provider}|${t.cref}`} value={`${t.provider}|${t.cref}`} style={{ color: "#111" }}>{translationLabel(t, providerName)}</option>)}
           </select>
         )}
@@ -158,7 +158,7 @@ export function Reader({ id }: { id: number }) {
           qc.setQueryData(["book-chapter", id, provider, cref], refreshed);
         }} title="Обновить истёкшие ссылки на страницы">Обновить страницы</button>}
       </div>
-      {!tools && <button onClick={() => setTools(true)} className="fixed right-4 top-20 z-20 rounded-lg bg-gray-900/90 px-3 py-2 text-xs text-white">Панели</button>}
+      {!tools && <button onClick={() => setTools(true)} className="fixed right-4 top-28 md:top-20 z-20 rounded-lg bg-gray-900/90 px-3 py-2 text-xs text-white">Панели</button>}
       {panel && (pages ? <MangaSettingsPanel s={manga} set={setManga} scope={mangaScope} /> : <SettingsPanel s={settings} set={set} />)}
 
       {pages && provider && cref && (current?.lang !== "ru" || mangaAi.data?.pages) && (
@@ -316,7 +316,7 @@ function Body({ content, restore, onPos, onEnd, dim }: { content: ChapterContent
 }
 
 function SettingsPanel({ s, set }: { s: Settings; set: (x: Partial<Settings>) => void }) {
-  const row = "flex items-center justify-between gap-3";
+  const row = "flex flex-wrap items-center justify-between gap-3";
   const btn = (on: boolean) => cx("rounded-md px-2.5 py-1 text-sm ring-1", on ? "tone-accent solid ring-transparent" : "ring-gray-500/40");
   return (
     <div className="sticky top-[7.25rem] z-10 mx-auto mt-2 w-[min(24rem,calc(100%-2rem))] space-y-3 rounded-xl bg-gray-900/95 p-4 text-sm text-gray-100 shadow-2xl ring-1 ring-gray-700">

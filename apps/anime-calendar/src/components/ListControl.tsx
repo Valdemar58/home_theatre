@@ -70,7 +70,7 @@ export function ListControl({ media, compact }: { media: MediaLite; compact?: bo
           <ChevronDownIcon className="h-4 w-4 opacity-70" />
         </button>
         {open && (
-          <div className="absolute left-0 z-40 mt-1 w-52 overflow-hidden rounded-lg bg-gray-800 py-1 shadow-xl ring-1 ring-gray-600">
+          <div className="mobile-popover absolute left-0 z-40 mt-1 w-52 overflow-hidden rounded-lg bg-gray-800 py-1 shadow-xl ring-1 ring-gray-600">
             {OPTIONS.map((o) => (
               <button
                 key={o.key}

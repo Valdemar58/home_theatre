@@ -144,7 +144,7 @@ export function SettingsView() {
                   });
                 }}>
                 <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Код авторизации"
-                  className="min-w-64 flex-1 rounded-md border border-gray-600 bg-gray-900 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
+                  className="w-full min-w-0 flex-1 sm:min-w-64 rounded-md border border-gray-600 bg-gray-900 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
                 <Button type="submit" disabled={!code.trim() || Boolean(busy)}>{busy === "code" ? "Импорт…" : "Подтвердить"}</Button>
               </form>
             )}

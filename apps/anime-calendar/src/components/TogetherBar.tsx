@@ -76,7 +76,7 @@ export function TogetherBar({ media, together, undo }: { media: MediaLite; toget
         <div className="relative">
           <Button size="sm" onClick={() => setMenu(!menu)}><QueueListIcon className="h-4 w-4" />В общий список</Button>
           {menu && (
-            <div className="absolute left-0 top-full z-30 mt-1 w-64 overflow-hidden rounded-lg bg-gray-800 py-1 shadow-2xl ring-1 ring-gray-600" onMouseLeave={() => setMenu(false)}>
+            <div className="mobile-popover absolute left-0 top-full z-30 mt-1 w-64 overflow-hidden rounded-lg bg-gray-800 py-1 shadow-2xl ring-1 ring-gray-600" onMouseLeave={() => setMenu(false)}>
               {state.lists.map((l) => (
                 <button key={l.id} onClick={() => toggleList(l.id, l.has)} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-gray-700">
                   <CheckIcon className={cx("h-4 w-4", l.has ? "text-green-400" : "invisible")} />

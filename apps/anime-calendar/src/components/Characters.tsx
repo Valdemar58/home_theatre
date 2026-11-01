@@ -48,7 +48,7 @@ export function EpisodePicker({ anilistId, cursor }: { anilistId: number; cursor
         <ChevronDownIcon className="h-4 w-4" />
       </button>
       {open && (
-        <div className="absolute right-0 z-40 mt-2 w-80 max-w-[calc(100vw-2rem)] space-y-3 rounded-xl bg-gray-800 p-3 shadow-2xl ring-1 ring-gray-600">
+        <div className="mobile-popover absolute right-0 z-40 mt-2 w-80 max-w-[calc(100vw-2rem)] space-y-3 rounded-xl bg-gray-800 p-3 shadow-2xl ring-1 ring-gray-600">
           <button onClick={() => pick({ mode: "progress" })} className={cx("block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-gray-700", cursor.mode === "progress" && "bg-gray-700")}>
             Мой прогресс <span className="text-gray-400">· {cursor.inList ? (cursor.watched ? `${cursor.watched} серия` : "ещё не начал") : "тайтла нет в списке"}</span>
           </button>

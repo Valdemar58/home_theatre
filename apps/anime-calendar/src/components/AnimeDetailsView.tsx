@@ -47,12 +47,12 @@ function Fact({ name, children }: { name: string; children: React.ReactNode }) {
 /** Страница тайтла до загрузки — та же раскладка: фон, постер, бейджи, название, факты, кнопки, описание, колонка справа. */
 function TitlePageSkeleton() {
   return (
-    <div className="-mx-4 -mt-6 lg:-mx-8" aria-busy>
+    <div className="-mx-4 -mt-4 md:-mt-6 lg:-mx-8" aria-busy>
       <div className="h-64 bg-gray-800/60 sm:h-96" />
       <div className="relative -mt-40 px-4 lg:px-8">
         <div className="flex flex-col gap-6 sm:flex-row">
           <Skel className="aspect-2/3 w-48 shrink-0 rounded-xl shadow-2xl sm:w-72" />
-          <div className="flex-1 space-y-3 sm:pt-20">
+          <div className="min-w-0 flex-1 space-y-3 sm:pt-20">
             <div className="flex gap-2"><Skel className="h-5 w-16 rounded-full" /><Skel className="h-5 w-20 rounded-full" /></div>
             <Skel className="h-10 w-3/4 max-w-xl" />
             <Skel className="h-4 w-1/2 max-w-sm" />
@@ -111,7 +111,7 @@ export function AnimeDetailsView({ id, openVoices, together, undo, comment }: {
     .filter((r) => r.entry && r.entry.status !== "planned");
 
   return (
-    <div className="-mx-4 -mt-6 lg:-mx-8">
+    <div className="-mx-4 -mt-4 md:-mt-6 lg:-mx-8">
       {/* Фон: баннер AniList, фон TMDB или кадр; если ничего нет — размытый постер */}
       <div className="relative h-64 overflow-hidden sm:h-96" style={{ backgroundColor: a.coverImage.color ?? "#1f2937" }}>
         {(backdrop || a.coverImage.large) && (
@@ -138,7 +138,7 @@ export function AnimeDetailsView({ id, openVoices, together, undo, comment }: {
               </span>
             )}
           </button>
-          <div className="flex-1 space-y-3 sm:pt-20">
+          <div className="min-w-0 flex-1 space-y-3 sm:pt-20">
             <div className="flex flex-wrap gap-2">
               <Badge tone="neutral">{label(FORMAT_LABELS, a.format)}</Badge>
               <Badge tone={a.status === "RELEASING" ? "positive" : "neutral"}>{label(STATUS_LABELS, a.status)}</Badge>

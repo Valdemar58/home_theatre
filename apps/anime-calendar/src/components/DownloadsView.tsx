@@ -137,7 +137,7 @@ function RowSkeleton() {
     <div aria-busy className="flex gap-4 rounded-xl bg-gray-800/50 p-3 ring-1 ring-gray-700">
       <Skel className="h-20 w-14 shrink-0" />
       <div className="min-w-0 flex-1 space-y-1.5">
-        <div className="flex items-start gap-3"><Skel className="h-5 flex-1" /><Skel className="h-7 w-24 rounded-lg" /></div>
+        <div className="flex flex-wrap items-start gap-3"><Skel className="h-5 flex-1" /><Skel className="h-7 w-24 rounded-lg" /></div>
         <Skel className="h-3 w-64 max-w-full" />
         <Skel className="h-3 w-40" />
       </div>
@@ -198,8 +198,8 @@ export function DownloadsView() {
           <div key={s.hash} className="flex gap-4 rounded-xl bg-gray-800/50 p-3 ring-1 ring-gray-700">
             <Thumb src={s.poster} id={s.anilistId} />
             <div className="min-w-0 flex-1 space-y-1.5">
-              <div className="flex items-start gap-3">
-                <div className="min-w-0 flex-1"><TitleLink id={s.anilistId} className="block truncate font-semibold" title={s.title}>{s.title}</TitleLink></div>
+              <div className="flex flex-wrap items-start gap-3">
+                <div className="min-w-0 basis-full sm:basis-0 flex-1"><TitleLink id={s.anilistId} className="block truncate font-semibold" title={s.title}>{s.title}</TitleLink></div>
                 <JellyfinLink url={s.jellyfinUrl} />
                 <Button size="sm" variant="ghost" disabled={busy === s.hash}
                   onClick={() => act(s.hash, { title: `Убрать «${s.title}» из онлайн-просмотра?`, text: "Серии пропадут из библиотеки «Стрим» в Jellyfin.", confirm: "Убрать" }, `/api/downloads/streams/${s.hash}`)}>
@@ -247,7 +247,7 @@ export function DownloadsView() {
             <div key={q.id} className={cx("flex gap-4 rounded-xl bg-gray-800/50 p-3 ring-1", q.problem ? "ring-amber-500/40" : "ring-gray-700")}>
               <Thumb src={q.poster} id={q.anilistId} />
               <div className="min-w-0 flex-1 space-y-1.5">
-                <div className="flex items-start gap-3">
+                <div className="flex flex-wrap items-start gap-3">
                   <div className="min-w-0 flex-1">
                     <TitleLink id={q.anilistId} className="block truncate font-semibold">{q.series ?? q.title}{q.episode && <span className="ml-2 text-sm font-normal text-gray-400">{q.episode}</span>}</TitleLink>
                     <p className="truncate text-xs text-gray-500" title={q.title}>{q.title}</p>

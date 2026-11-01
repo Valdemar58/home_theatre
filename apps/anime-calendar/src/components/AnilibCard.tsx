@@ -95,7 +95,7 @@ export function AnilibCard() {
           void call(() => api("/api/anilib", { method: "POST", json: { profile } }));
         }}>
           <input value={profile} onChange={(e) => setProfile(e.target.value)} placeholder="https://v5.animelib.org/ru/user/…"
-            className="min-w-64 flex-1 rounded-md border border-gray-600 bg-gray-900 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
+            className="min-w-0 w-full flex-1 sm:min-w-64 rounded-md border border-gray-600 bg-gray-900 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
           <Button type="submit" variant="primary" disabled={!profile.trim() || busy}>{busy ? "Проверяю…" : "Подключить"}</Button>
         </form>
       </div>

@@ -41,7 +41,7 @@ export function BooksHome() {
       <div className="space-y-3">
         <h1 className="text-2xl font-bold">{kind === "novel" ? "Ранобэ" : "Манга"}</h1>
         <div className="flex flex-wrap items-center gap-2">
-          <label className="flex min-w-64 flex-1 items-center gap-2 rounded-lg bg-gray-800/70 px-3 ring-1 ring-gray-700 focus-within:ring-accent-500">
+          <label className="flex min-w-0 w-full flex-1 sm:min-w-64 items-center gap-2 rounded-lg bg-gray-800/70 px-3 ring-1 ring-gray-700 focus-within:ring-accent-500">
             <MagnifyingGlassIcon className="h-5 w-5 text-gray-500" />
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={kind === "novel" ? "Ранобэ — по-русски или в оригинале" : "Манга, манхва, маньхуа — по-русски или в оригинале"}
               className="h-10 w-full bg-transparent text-sm outline-none placeholder:text-gray-500" />

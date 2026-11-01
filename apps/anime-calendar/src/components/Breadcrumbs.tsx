@@ -43,7 +43,7 @@ function CrumbMenu({ c }: { c: Crumb }) {
         <span className="truncate">{c.label}</span><ChevronDownIcon className="h-3.5 w-3.5 shrink-0" />
       </button>
       {open && (
-        <span role="menu" className="absolute left-0 z-40 mt-1.5 block w-80 max-w-[calc(100vw-2rem)] rounded-xl bg-gray-800 p-1.5 shadow-2xl ring-1 ring-gray-600">
+        <span role="menu" className="mobile-popover absolute left-0 z-40 mt-1.5 block w-80 max-w-[calc(100vw-2rem)] rounded-xl bg-gray-800 p-1.5 shadow-2xl ring-1 ring-gray-600">
           {c.options!.map((o) => (
             <Link key={o.href} role="menuitem" href={o.href} onClick={() => setOpen(false)}
               className={cx("flex items-baseline gap-2 rounded-lg px-3 py-2 hover:bg-gray-700", o.current && "bg-gray-700/60")}>

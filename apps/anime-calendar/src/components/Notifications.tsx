@@ -122,7 +122,7 @@ export function Notifications() {
           )}
         </button>
         {open && (
-          <div className="fixed inset-x-2 top-16 z-40 flex max-h-[calc(100dvh-5rem)] flex-col overflow-hidden rounded-xl bg-gray-800 shadow-2xl ring-1 ring-gray-700 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 sm:w-104">
+          <div className="fixed inset-x-2 top-[calc(6.5rem+env(safe-area-inset-top))] z-40 flex max-h-[calc(100dvh-12rem)] flex-col overflow-hidden rounded-xl bg-gray-800 shadow-2xl ring-1 ring-gray-700 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 sm:max-h-[calc(100dvh-5rem)] sm:w-104">
             <div className="flex items-center gap-2 px-4 pb-2 pt-3">
               <p className="mr-auto text-sm font-semibold">Уведомления</p>
               <button onClick={() => act.read(undefined, tab)} disabled={!(unread?.[tab as keyof NoticeCounts] ?? 0)}

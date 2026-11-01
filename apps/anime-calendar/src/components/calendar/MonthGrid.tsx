@@ -47,12 +47,15 @@ function DayCell({ day, items, today, past, onOpen, loading }: {
         </span>
         {/* Не влезло — счётчик в заголовке, а не отдельной строкой: так в дне видно больше тайтлов */}
         {hidden > 0 && (
-          <span className="rounded-full bg-gray-800 px-1.5 text-[10px] font-semibold text-indigo-300 group-hover:bg-indigo-600 group-hover:text-white">
+          <span className="hidden rounded-full bg-gray-800 px-1.5 text-[10px] font-semibold text-indigo-300 group-hover:bg-indigo-600 group-hover:text-white sm:inline">
             +{hidden}
           </span>
         )}
       </button>
-      <div className={cx("min-h-0 space-y-0.5", (!day.inMonth || past) && "opacity-60")}>
+      {items.length > 0 && <button onClick={() => onOpen(day.key)} aria-label={`${day.day}: ${items.length} выпусков, открыть день`}
+        className="flex min-h-9 flex-1 items-center justify-center rounded-md bg-indigo-500/15 text-xs font-semibold text-indigo-200 sm:hidden">{items.length}</button>}
+      {loading && <Skel className="h-9 w-full sm:hidden" />}
+      <div className={cx("hidden min-h-0 space-y-0.5 sm:block", (!day.inMonth || past) && "opacity-60")}>
         {/* Пока расписание грузится — строки-заглушки разной длины, число дня уже настоящее */}
         {loading && Array.from({ length: Math.min(capacity, 1 + (day.day % 3)) }, (_, i) => <Skel key={i} className={cx("h-5.5", i % 2 ? "w-2/3" : "w-full")} />)}
         {shown.map((item) => (

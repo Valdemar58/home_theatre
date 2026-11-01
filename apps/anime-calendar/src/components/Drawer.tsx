@@ -2,6 +2,7 @@
 import { XMarkIcon } from "@heroicons/react/24/outline";
 import { useEffect } from "react";
 import { cx } from "./ui";
+import { useBodyScrollLock } from "@/lib/useBodyScrollLock";
 
 /** Выезжающая справа панель (на телефоне — снизу на весь экран). */
 export function Drawer({ open, onClose, title, subtitle, actions, children, width = "sm:w-[36rem]" }: {
@@ -13,15 +14,13 @@ export function Drawer({ open, onClose, title, subtitle, actions, children, widt
   children: React.ReactNode;
   width?: string;
 }) {
+  useBodyScrollLock(open);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     return () => {
       window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = overflow;
     };
   }, [open, onClose]);
 
@@ -46,7 +45,7 @@ export function Drawer({ open, onClose, title, subtitle, actions, children, widt
             <XMarkIcon className="h-5 w-5" />
           </button>
         </header>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{open && children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">{open && children}</div>
       </aside>
     </div>
   );

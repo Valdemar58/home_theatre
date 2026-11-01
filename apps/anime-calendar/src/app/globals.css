@@ -151,6 +151,52 @@ body {
   @apply bg-gray-900 text-gray-100 antialiased;
 }
 
+/* Keep grid/flex content shrinkable without clipping horizontal carousels. */
+.app-main > *, .app-main .grid > * { min-width: 0; }
+.app-main { overflow-wrap: anywhere; }
+.mobile-nav { padding-bottom: env(safe-area-inset-bottom); }
+
+
+@media (max-width: 767px) {
+  .app-header { padding-top: calc(0.5rem + env(safe-area-inset-top)); }
+  /* Safari zooms focused controls smaller than 16px, moving the visual viewport. */
+  input:not([type="range"]):not([type="checkbox"]):not([type="radio"]), select, textarea {
+    font-size: 16px;
+  }
+  .app-main { padding-bottom: calc(6rem + env(safe-area-inset-bottom)); }
+  .mobile-nav a { overflow-wrap: normal; text-align: center; }
+  /* Menus can be opened by a button anywhere in a wrapping row. */
+  .mobile-popover {
+    position: fixed;
+    inset-inline: 1rem;
+    top: auto;
+    bottom: calc(5.5rem + env(safe-area-inset-bottom));
+    z-index: 50;
+    width: auto;
+    max-width: none;
+    max-height: calc(100dvh - 13rem - env(safe-area-inset-bottom));
+    margin-top: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
+
+@media (max-width: 1023px) {
+  .player { min-height: 15rem; container-type: size; }
+  .player-controls { gap: 0.125rem; }
+  .player-controls button { width: 2rem; height: 2.5rem; }
+  .player-settings { position: static; }
+  .player-settings-menu {
+    inset-inline: 0.5rem;
+    bottom: 4.5rem;
+    width: auto;
+    max-height: calc(100cqh - 5rem);
+  }
+  .player-settings-menu button { width: 100%; height: auto; min-height: 2.5rem; }
+}
+
+:fullscreen .player { height: 100dvh; border-radius: 0; }
+
 /* Тонкий скроллбар как в Seerr */
 * {
   scrollbar-width: thin;

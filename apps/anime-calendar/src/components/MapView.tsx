@@ -800,8 +800,8 @@ function neighborsOf(g: Graph | null, key: string): string[] {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="-mx-4 -mb-24 -mt-6 lg:-mx-8 lg:-mb-10">
-      <div className="relative h-[calc(100dvh-4rem)] overflow-hidden" style={{ background: `radial-gradient(ellipse at center, #0b1220 0%, ${BG} 70%)` }}>{children}</div>
+    <div className="-mx-4 -mb-24 -mt-4 md:-mt-6 lg:-mx-8 lg:-mb-10">
+      <div className="relative h-[calc(100dvh-14rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] md:h-[calc(100dvh-4rem)] overflow-hidden" style={{ background: `radial-gradient(ellipse at center, #0b1220 0%, ${BG} 70%)` }}>{children}</div>
     </div>
   );
 }

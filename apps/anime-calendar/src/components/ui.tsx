@@ -3,6 +3,7 @@
 import { XMarkIcon } from "@heroicons/react/24/outline";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { useBodyScrollLock } from "@/lib/useBodyScrollLock";
 
 export const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 
@@ -81,6 +82,7 @@ export function Modal({ open, onClose, title, children, wide }: {
   open: boolean; onClose: () => void; title: string; children: React.ReactNode; wide?: boolean;
 }) {
   const [mounted, setMounted] = useState(false);
+  useBodyScrollLock(open);
   useEffect(() => setMounted(true), []);
   useEffect(() => {
     if (!open) return;
@@ -94,16 +96,17 @@ export function Modal({ open, onClose, title, children, wide }: {
   return createPortal(
     <div className="fixed inset-0 z-[60] flex items-end justify-center bg-gray-900/80 p-0 backdrop-blur-sm sm:items-center sm:p-4" onClick={onClose}>
       <div
-        className={cx("w-full overflow-hidden rounded-t-xl bg-gray-800 shadow-2xl ring-1 ring-gray-700 sm:rounded-xl", wide ? "sm:max-w-3xl" : "sm:max-w-lg")}
+        role="dialog" aria-modal="true" aria-label={title}
+        className={cx("flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-t-xl bg-gray-800 shadow-2xl ring-1 ring-gray-700 sm:rounded-xl", wide ? "sm:max-w-3xl" : "sm:max-w-lg")}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-gray-700 px-5 py-3">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-700 px-5 py-3">
           <h3 className="text-lg font-semibold">{title}</h3>
           <button onClick={onClose} className="rounded p-1 text-gray-400 hover:bg-gray-700 hover:text-white" aria-label="Закрыть">
             <XMarkIcon className="h-5 w-5" />
           </button>
         </div>
-        <div className="max-h-[75vh] overflow-y-auto p-5">{children}</div>
+        <div className="min-h-0 overflow-y-auto overscroll-contain p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))]">{children}</div>
       </div>
     </div>,
     document.body,

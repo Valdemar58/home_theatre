@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   description: "Календарь выхода аниме, списки и запросы в домашний кинотеатр",
 };
 
-export const viewport: Viewport = { themeColor: "#111827" };
+export const viewport: Viewport = { themeColor: "#111827", width: "device-width", initialScale: 1, viewportFit: "cover" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

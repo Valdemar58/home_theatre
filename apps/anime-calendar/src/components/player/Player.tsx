@@ -674,9 +674,17 @@ export function Player({ anilistId, ep, source, title, onEnded, next, onReport, 
   }, [flash]);
 
   const fullscreen = useCallback(() => {
-    if (document.fullscreenElement) void document.exitFullscreen();
-    else void (fullscreenRoot?.current ?? box.current)?.requestFullscreen();
-  }, [fullscreenRoot]);
+    const target = fullscreenRoot?.current ?? box.current;
+    const v = video.current as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null;
+    const native = () => {
+      if (v?.webkitEnterFullscreen) {
+        try { v.webkitEnterFullscreen(); } catch { flash("Полный экран доступен после начала воспроизведения"); }
+      } else flash("Браузер не поддерживает полноэкранный режим");
+    };
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    else if (target?.requestFullscreen) void target.requestFullscreen().catch(native);
+    else native();
+  }, [fullscreenRoot, flash]);
   const setVol = (x: number) => {
     const v = video.current;
     if (!v) return;
@@ -689,10 +697,19 @@ export function Player({ anilistId, ep, source, title, onEnded, next, onReport, 
 
   useEffect(() => {
     // Следующая серия открылась уже во весь экран (обёртка развёрнута) — сразу в этом виде
+    const v = video.current;
     const onFs = () => setFull(Boolean(document.fullscreenElement));
+    const onNativeBegin = () => setFull(true);
+    const onNativeEnd = () => setFull(false);
     onFs();
     document.addEventListener("fullscreenchange", onFs);
-    return () => document.removeEventListener("fullscreenchange", onFs);
+    v?.addEventListener("webkitbeginfullscreen", onNativeBegin);
+    v?.addEventListener("webkitendfullscreen", onNativeEnd);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFs);
+      v?.removeEventListener("webkitbeginfullscreen", onNativeBegin);
+      v?.removeEventListener("webkitendfullscreen", onNativeEnd);
+    };
   }, []);
 
   // Перевести кадр: пауза (если шло) → сервер берёт кадр у этой секунды, модель со зрением читает надписи
@@ -782,8 +799,8 @@ export function Player({ anilistId, ep, source, title, onEnded, next, onReport, 
   const pct = (t: number) => `${duration ? Math.min(100, (t / duration) * 100) : 0}%`;
 
   return (
-    <div ref={box} onMouseMove={wake} onMouseLeave={() => setIdle(true)}
-      className={cx("group relative w-full overflow-hidden bg-black", full ? "h-screen" : "aspect-video rounded-xl ring-1 ring-gray-700", hidden && "cursor-none")}>
+    <div ref={box} onPointerMove={wake} onPointerDown={wake} onMouseLeave={() => setIdle(true)}
+      className={cx("player group relative w-full overflow-hidden bg-black", full ? "h-dvh" : "aspect-video rounded-xl ring-1 ring-gray-700", hidden && "cursor-none")}>
       {/* Размер текстовых субтитров (реплики <track>) */}
       <style>{`.ac-video::cue { font-size: ${subSize}%; }`}</style>
       <video ref={video} className="ac-video h-full w-full" playsInline
@@ -837,25 +854,31 @@ export function Player({ anilistId, ep, source, title, onEnded, next, onReport, 
       <div className={cx("absolute inset-x-0 bottom-0 z-10 bg-linear-to-t from-black/85 to-transparent px-3 pb-2 pt-10 transition-opacity", hidden && "pointer-events-none opacity-0")}>
         <SeekBar duration={duration} time={time} buffered={buffered} chapters={info?.chapters ?? []} onSeek={seek} pct={pct}
           cached={status?.stream?.cached ?? []} trick={info?.trickplay ?? null} segments={info?.segments ?? []} video={video} />
-        <div className="mt-1 flex items-center gap-1 text-white">
+        <div className="player-controls mt-1 flex items-center gap-1 text-white">
           <Ctl onClick={toggle} label={playing ? "Пауза (пробел)" : "Смотреть (пробел)"}>
             {playing ? <PauseIcon className="h-6 w-6" /> : <PlayIcon className="h-6 w-6" />}
           </Ctl>
           <Ctl onClick={() => seek(time - 10)} label="Назад 10 с (←)"><BackwardIcon className="h-5 w-5" /></Ctl>
           <Ctl onClick={() => seek(time + 10)} label="Вперёд 10 с (→)"><ForwardIcon className="h-5 w-5" /></Ctl>
-          <Ctl onClick={() => setVol(muted || volume === 0 ? 1 : 0)} label="Звук (M)">
+          <div className="hidden lg:contents"><Ctl onClick={() => setVol(muted || volume === 0 ? 1 : 0)} label="Звук (M)">
             {muted || volume === 0 ? <SpeakerXMarkIcon className="h-5 w-5" /> : <SpeakerWaveIcon className="h-5 w-5" />}
-          </Ctl>
+          </Ctl></div>
           <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={(e) => setVol(Number(e.target.value))}
-            aria-label="Громкость" className="w-20 accent-white" />
-          <span className="ml-2 text-xs tabular-nums text-white/80">{clock(time)} / {clock(duration)}</span>
+            aria-label="Громкость" className="hidden w-20 accent-white lg:block" />
+          <span className="player-time ml-1 shrink-0 whitespace-nowrap text-[10px] tabular-nums text-white/80 lg:ml-2 lg:text-xs">{clock(time)} / {clock(duration)}</span>
           <span className="flex-1" />
           {next && (
-            <button onClick={next.go} className="rounded-md px-2 py-1 text-xs font-medium text-white/90 hover:bg-white/15" title="Следующая серия (N)">
+            <button onClick={next.go} className="hidden rounded-md px-2 py-1 text-xs font-medium text-white/90 hover:bg-white/15 lg:block" title="Следующая серия (N)">
               {next.label} ›
             </button>
           )}
           <Settings open={menu} onToggle={() => setMenu(!menu)} onClose={() => setMenu(false)} info={info} sub={sub}
+            mobileActions={<>
+              <Row label="Звук" value={muted || volume === 0 ? "Выключен" : "Включён"} onClick={() => setVol(muted || volume === 0 ? 1 : 0)} />
+              {next && <Row label="Следующая серия" value={next.label} onClick={next.go} />}
+              {started && <Row label="Перевести надписи в кадре" value="" onClick={() => { setMenu(false); void translateFrame(); }} />}
+              <Row label="Состояние потока" value="" onClick={() => { setMenu(false); setShowStatus((x) => !x); }} />
+            </>}
             speed={inRoom ? 1 : speed} speedLocked={inRoom} onSpeed={changeSpeed}
             quality={Number(store.get(QUALITY_KEY)) || 0} compat={compat} autoSkip={autoSkip} delay={subDelay}
             onQuality={(v) => { store.set(QUALITY_KEY, String(v)); void open({ audio: info?.audioIndex ?? null, start: video.current?.currentTime ?? 0 }); }}
@@ -864,8 +887,8 @@ export function Player({ anilistId, ep, source, title, onEnded, next, onReport, 
             onAutoSkip={() => { store.set(AUTOSKIP_KEY, autoSkip ? "0" : "1"); setAutoSkip(!autoSkip); }}
             onAudio={(i) => { if (info && i !== info.audioIndex) void open({ audio: i, start: video.current?.currentTime ?? 0 }); }}
             onSub={chooseSub} onDelay={changeDelay} />
-          {started && <Ctl onClick={() => void translateFrame()} label="Перевести надписи в кадре (T)"><ViewfinderCircleIcon className="h-5 w-5" /></Ctl>}
-          <Ctl onClick={() => setShowStatus((x) => !x)} label="Состояние потока"><InformationCircleIcon className="h-5 w-5" /></Ctl>
+          <div className="hidden lg:contents">{started && <Ctl onClick={() => void translateFrame()} label="Перевести надписи в кадре (T)"><ViewfinderCircleIcon className="h-5 w-5" /></Ctl>}</div>
+          <div className="hidden lg:contents"><Ctl onClick={() => setShowStatus((x) => !x)} label="Состояние потока"><InformationCircleIcon className="h-5 w-5" /></Ctl></div>
           <Ctl onClick={fullscreen} label="Во весь экран (F)">
             {full ? <ArrowsPointingInIcon className="h-5 w-5" /> : <ArrowsPointingOutIcon className="h-5 w-5" />}
           </Ctl>
@@ -888,9 +911,9 @@ function Preview({ preview, start, ready, onPlay }: {
           <PlayIcon className="ml-1 h-10 w-10" />
         </button>
       </div>
-      <div className="absolute inset-x-0 bottom-0 space-y-1.5 p-5 sm:p-8">
-        {preview && <p className="text-lg font-semibold text-white sm:text-2xl">{preview.heading}</p>}
-        {preview?.text && <p className="line-clamp-3 max-w-3xl text-sm text-gray-200 sm:text-base">{preview.text}</p>}
+      <div className="absolute inset-x-0 bottom-0 space-y-1.5 p-3 sm:p-8">
+        {preview && <p className="truncate text-sm font-semibold text-white sm:text-2xl">{preview.heading}</p>}
+        {preview?.text && <p className="hidden line-clamp-3 max-w-3xl text-sm text-gray-200 sm:block sm:text-base">{preview.text}</p>}
         <p className="text-sm text-gray-300">
           {start > 5 ? `Продолжить с ${clock(start)}` : ready ? "С начала" : "Готовлю поток…"}
         </p>
@@ -901,7 +924,7 @@ function Preview({ preview, start, ready, onPlay }: {
 
 function Ctl({ onClick, label, children }: { onClick: () => void; label: string; children: React.ReactNode }) {
   return (
-    <button onClick={onClick} title={label} aria-label={label} className="grid h-9 w-9 place-items-center rounded-md text-white/90 hover:bg-white/15 hover:text-white">
+    <button onClick={onClick} title={label} aria-label={label} className="grid h-9 w-9 shrink-0 place-items-center rounded-md text-white/90 hover:bg-white/15 hover:text-white">
       {children}
     </button>
   );
@@ -914,7 +937,8 @@ type SettingsPage = "main" | "speed" | "quality" | "audio" | "sub";
  * переключатели — на главной. Закрывается кнопкой, Esc или щелчком мимо.
  */
 function Settings({ open, onToggle, onClose, info, sub, speed, speedLocked, onSpeed, quality, compat, autoSkip, delay,
-  onQuality, onCompat, onAutoSkip, onAudio, onSub, onDelay }: {
+  onQuality, onCompat, onAutoSkip, onAudio, onSub, onDelay, mobileActions }: {
+  mobileActions?: React.ReactNode;
   open: boolean; onToggle: () => void; onClose: () => void; info: PlayInfo | null; sub: number | null;
   speed: number; speedLocked: boolean; onSpeed: (s: number) => void;
   quality: number; compat: boolean; autoSkip: boolean; delay: number;
@@ -938,12 +962,13 @@ function Settings({ open, onToggle, onClose, info, sub, speed, speedLocked, onSp
   const pick = (fn: () => void) => { fn(); setPage("main"); };
 
   return (
-    <div ref={root} className="relative">
+    <div ref={root} className="player-settings relative shrink-0">
       <Ctl onClick={onToggle} label="Настройки"><Cog6ToothIcon className={cx("h-5 w-5 transition-transform", open && "rotate-45")} /></Ctl>
       {open && (
-        <div className="absolute bottom-11 right-0 z-10 max-h-[min(24rem,70vh)] w-72 overflow-y-auto rounded-lg bg-gray-900/95 p-1 text-sm text-gray-100 shadow-xl ring-1 ring-gray-700">
+        <div className="player-settings-menu absolute bottom-11 right-0 z-10 max-h-[min(24rem,70dvh)] w-72 overflow-y-auto overscroll-contain rounded-lg bg-gray-900/95 p-1 text-sm text-gray-100 shadow-xl ring-1 ring-gray-700">
           {page === "main" && (
             <>
+              <div className="lg:hidden">{mobileActions}</div>
               <Row label="Скорость" value={speedLocked ? "1× · в комнате" : speedLabel(speed)} onClick={speedLocked ? undefined : () => setPage("speed")} />
               <Row label="Качество" value={`${QUALITIES.find((q) => q.value === quality)?.label ?? "Авто"}${compat ? " · H.264" : ""}`} onClick={() => setPage("quality")} />
               {info && info.audio.length > 1 && <Row label="Озвучка" value={audio?.label ?? "—"} onClick={() => setPage("audio")} />}

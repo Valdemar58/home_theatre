@@ -231,7 +231,7 @@ function Picker({ item, onPick }: { item: AgItem; onPick: (anilistId: number | n
     <div className="mt-2 space-y-2 rounded-md bg-gray-800/60 p-3 md:ml-7">
       <div className="flex flex-wrap gap-2">
         <input value={q} onChange={(e) => setQ(e.target.value)} autoFocus placeholder="Название, ссылка или id AniList"
-          className="min-w-64 flex-1 rounded-md border border-gray-600 bg-gray-900 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none" />
+          className="min-w-0 w-full flex-1 sm:min-w-64 rounded-md border border-gray-600 bg-gray-900 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none" />
         {byId > 0 && <Button size="sm" variant="primary" onClick={() => onPick(byId)}>Привязать AniList {byId}</Button>}
         <a href={`https://anilist.co/search/anime?search=${encodeURIComponent(item.original ?? item.title)}`} target="_blank" rel="noreferrer"
           className="inline-flex items-center gap-1 text-xs text-indigo-300 hover:text-indigo-200">искать на AniList <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" /></a>

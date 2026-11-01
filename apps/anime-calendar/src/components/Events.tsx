@@ -57,7 +57,7 @@ function Participants({ list, shown = 4 }: { list: EventBrief["participants"]; s
         {rest > 0 ? `+${rest} ${rest === 1 ? "участник" : "участников"}` : "участники"}
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-40 mt-1 w-72 max-w-[calc(100vw-2rem)] space-y-2 rounded-xl bg-gray-800 p-3 shadow-2xl ring-1 ring-gray-600">
+        <div className="mobile-popover absolute left-0 top-full z-40 mt-1 w-72 max-w-[calc(100vw-2rem)] space-y-2 rounded-xl bg-gray-800 p-3 shadow-2xl ring-1 ring-gray-600">
           {list.length > 8 && (
             <label className="flex h-8 items-center gap-2 rounded-lg bg-gray-900 px-2 ring-1 ring-gray-700">
               <MagnifyingGlassIcon className="h-4 w-4 text-gray-500" />

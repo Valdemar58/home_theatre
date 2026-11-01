@@ -83,7 +83,7 @@ export function SearchBox() {
 
   const show = open && q.trim().length >= 2;
   return (
-    <form ref={box} onSubmit={submit} className="relative ml-auto w-full max-w-md lg:ml-0">
+    <form ref={box} onSubmit={submit} role="search" className="relative order-last w-full min-w-0 md:order-none md:ml-auto md:max-w-md lg:ml-0">
       <label className="relative block">
         <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-500" />
         <input
@@ -93,6 +93,7 @@ export function SearchBox() {
           onKeyDown={onKey}
           placeholder={mode === "anime" ? "Поиск аниме" : mode === "novel" ? "Поиск ранобэ" : "Поиск манги"}
           role="combobox"
+          aria-label={mode === "anime" ? "Поиск аниме" : mode === "novel" ? "Поиск ранобэ" : "Поиск манги"}
           aria-expanded={show}
           aria-controls="search-suggest"
           className="w-full rounded-full border border-gray-700 bg-gray-800/80 py-2 pl-10 pr-9 text-sm text-white placeholder-gray-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -102,7 +103,7 @@ export function SearchBox() {
 
       {show && (
         <div id="search-suggest" role="listbox"
-          className="absolute inset-x-0 top-full z-40 mt-2 overflow-hidden rounded-xl bg-gray-800 shadow-2xl ring-1 ring-gray-700">
+          className="absolute inset-x-0 top-full z-40 mt-2 max-h-[min(28rem,55dvh)] overflow-y-auto overscroll-contain rounded-xl bg-gray-800 shadow-2xl ring-1 ring-gray-700">
           {items.length === 0 ? (
             <p className="px-4 py-3 text-sm text-gray-400">{isFetching || dq !== q.trim() ? "Ищу…" : "Ничего не нашлось"}</p>
           ) : (
@@ -120,12 +121,12 @@ export function SearchBox() {
                     )}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium text-white">{m.title}</span>
+                    <span className="line-clamp-2 block text-sm font-medium text-white md:truncate">{m.title}</span>
                     {alt && <span className="block truncate text-xs text-gray-400">{alt}</span>}
                     <span className="block text-xs text-gray-500">{m.meta}</span>
                   </span>
                   {entry && (
-                    <span className={cx("shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold text-white", STATUS_COLORS[entryKey(entry)])}>
+                    <span className={cx("hidden shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold text-white sm:inline", STATUS_COLORS[entryKey(entry)])}>
                       {LIST_LABELS[entryKey(entry)]}
                     </span>
                   )}
