@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { api, useMe } from "@/lib/client";
 import { formatDateTime } from "@/lib/time";
+import { WatchHistorySettings } from "./WatchHistorySettings";
 import { AnilibCard } from "./AnilibCard";
 import { ADMIN_NAV } from "./AppShell";
 import { LlmCard } from "./LlmCard";
@@ -15,7 +16,7 @@ type SyncStats = { pushed: number; pulled: number; imported: number; removed: nu
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-xl bg-gray-800/60 p-6 ring-1 ring-gray-700">
+    <section className="rounded-xl bg-gray-800/60 p-4 sm:p-6 ring-1 ring-gray-700">
       <h2 className="mb-4 text-lg font-semibold">{title}</h2>
       {children}
     </section>
@@ -38,6 +39,7 @@ export function SettingsView() {
       <Card title="AniLib"><AnilibCard /></Card>
       <Card title="Seerr"><SkelText lines={2} /></Card>
       <TimeCard />
+      <WatchHistorySettings />
     </div>
   );
   const s = me.shikimori;
@@ -74,6 +76,7 @@ export function SettingsView() {
   return (
     <div className="max-w-3xl space-y-6">
       <h1 className="text-2xl font-bold sm:text-3xl">Настройки</h1>
+      <Link href="/devices" className="inline-flex min-h-9 items-center rounded-lg bg-gray-800 px-3 py-2 text-sm text-gray-200 hover:bg-gray-700">Мои устройства и доступ к раздаче</Link>
       {me.isAdmin && (
         // На телефоне нет бокового меню — служебные страницы здесь
         <div className="lg:hidden">
@@ -113,7 +116,7 @@ export function SettingsView() {
               Изменения отправляются в Shikimori сразу, а изменения с Shikimori подтягиваются каждые 15 минут.
               Статус «Жду выхода» хранится только здесь; в Shikimori он виден как «Запланировано».
             </p>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button variant="primary" disabled={Boolean(busy)}
                 onClick={() => run("sync", async () => describe(await api<SyncStats>("/api/shikimori/sync", { method: "POST" })))}>
                 {busy === "sync" ? "Синхронизация…" : "Синхронизировать сейчас"}
@@ -188,6 +191,7 @@ export function SettingsView() {
       </Card>
 
       <TimeCard />
+      <WatchHistorySettings />
     </div>
   );
 }

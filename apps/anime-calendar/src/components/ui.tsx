@@ -57,8 +57,8 @@ export function Badge({ tone = "neutral", variant = "soft", className, children 
   tone?: Tone; variant?: "soft" | "solid" | "outline"; className?: string; children: React.ReactNode;
 }) {
   return (
-    // Фиксированная высота: бейджи в одной строке (и обёрнутые в ссылку) одного размера
-    <span className={cx("inline-flex h-6 max-w-full items-center rounded-full px-2.5 text-xs leading-none font-medium whitespace-nowrap",
+    // Short statuses stay compact; long labels wrap inside the available width.
+    <span className={cx("inline-flex min-h-6 max-w-full items-center rounded-full px-2.5 py-1 text-xs leading-tight font-medium whitespace-normal",
       TONE_CLASS[tone], variant === "outline" ? "outline-tone" : variant, className)}>
       {children}
     </span>
@@ -127,7 +127,7 @@ export function EmptyState({ title, children }: { title: string; children?: Reac
  * что не зависит от данных (заголовки, ссылки, кнопки, раскладка), рисуется сразу; заглушкой — только место под данные.
  */
 export function Skel({ className }: { className?: string }) {
-  return <span aria-hidden className={cx("block animate-pulse rounded-md bg-gray-700/50", className ?? "h-4 w-24")} />;
+  return <span aria-hidden className={cx("block max-w-full animate-pulse rounded-md bg-gray-700/50", className ?? "h-4 w-24")} />;
 }
 
 /** Абзац-заглушка: строки разной длины, последняя короче. */
@@ -184,10 +184,10 @@ export function Segmented<T extends string>({ value, onChange, options }: {
   options: [T, string][];
 }) {
   return (
-    <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-inset ring-gray-600">
+    <div className="inline-flex max-w-full flex-wrap gap-1 rounded-lg bg-gray-800 p-1 ring-1 ring-inset ring-gray-600">
       {options.map(([v, text]) => (
         <button key={v} type="button" onClick={() => onChange(v)}
-          className={cx("h-9 px-3 text-sm transition", value === v ? "bg-indigo-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700")}>
+          className={cx("min-h-9 shrink-0 whitespace-nowrap rounded-md px-3 py-2 text-sm transition", value === v ? "bg-indigo-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700")}>
           {text}
         </button>
       ))}

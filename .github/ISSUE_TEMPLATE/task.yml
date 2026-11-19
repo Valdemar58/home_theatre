@@ -1,0 +1,27 @@
+name: Функциональный инкремент
+description: Проверяемый результат для релиза
+labels: [enhancement]
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Ожидаемый результат
+      description: Пользовательский сценарий и границы изменения
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Критерии приёмки
+      description: Что должно работать; какие существующие сценарии сохранить
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Зависимости, миграция и риски
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Доказательства проверки
+      description: Заполняется при выполнении — сборка, CI, проверки и ограничения

@@ -1,6 +1,6 @@
 "use client";
-import { ChatBubbleLeftRightIcon } from "@heroicons/react/24/outline";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { UserGroupIcon, ChatBubbleLeftRightIcon } from "@heroicons/react/24/outline";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, useMe } from "@/lib/client";
@@ -8,7 +8,7 @@ import { buildTree, MAX_DEPTH, type CommentNode } from "@/lib/comments-tree";
 import { ago } from "@/lib/time";
 import type { CommentItem } from "@/lib/types";
 import { Avatar } from "./Avatar";
-import { Button, cx } from "./ui";
+import { Button, cx, ErrorBox } from "./ui";
 import { useConfirm } from "./Dialogs";
 
 // Обсуждение под тайтлом: комментарии друзей (и открытых профилей) с ветками ответов,
@@ -26,6 +26,7 @@ function Composer({ onSubmit, initial, autoFocus, submitText = "Отправит
   const [spoiler, setSpoiler] = useState(initial?.spoiler ?? false);
   const [episode, setEpisode] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error,setError]=useState<unknown>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
   // Поле растёт по тексту
   useEffect(() => {
@@ -33,20 +34,22 @@ function Composer({ onSubmit, initial, autoFocus, submitText = "Отправит
     if (el) { el.style.height = "auto"; el.style.height = `${Math.min(el.scrollHeight, 320)}px`; }
   }, [body]);
   const send = async () => {
-    if (!body.trim()) return;
+    if (!body.trim()||busy) return;
+    setError(null);
     setBusy(true);
     try {
       await onSubmit({ body, spoiler, episode: Number(episode) || null });
       setBody("");
       setSpoiler(false);
       setEpisode("");
-    } finally {
+    } catch(e) {setError(e);} finally {
       setBusy(false);
     }
   };
   return (
     <div className="space-y-2">
-      <textarea ref={ref} value={body} onChange={(e) => setBody(e.target.value)} autoFocus={autoFocus} rows={2}
+      {Boolean(error)&&<ErrorBox error={error}/>}
+      <textarea aria-label="Комментарий" ref={ref} value={body} onChange={(e) => setBody(e.target.value)} autoFocus={autoFocus} rows={2}
         onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) void send(); }}
         placeholder="Что думаете?" maxLength={4000}
         className="w-full resize-none rounded-lg border border-gray-600 bg-gray-900/70 px-3 py-2 text-sm leading-relaxed focus:border-indigo-500 focus:outline-none" />
@@ -84,7 +87,8 @@ function Spoiler({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Comment({ node, anilistId, isAdmin, highlight, onFocus, refresh }: {
+function Comment({ node, anilistId, isAdmin, highlight, onFocus, refresh, active, setActive }: {
+  active:number|null;setActive:(id:number|null)=>void;
   node: CommentNode; anilistId: number; isAdmin: boolean; highlight: number | null; onFocus: (id: number) => void; refresh: () => void;
 }) {
   const [reply, setReply] = useState(false);
@@ -102,10 +106,10 @@ function Comment({ node, anilistId, isAdmin, highlight, onFocus, refresh }: {
     await api(`/api/comments/${c.id}`, { method: "DELETE" });
     refresh();
   };
-  const deep = c.depth >= MAX_DEPTH && c.children.length > 0;
+  const deep = false;
 
   return (
-    <li id={`c${c.id}`} className="scroll-mt-24">
+    <li id={`c${c.id}`} onMouseEnter={e=>{e.stopPropagation();setActive(c.id);}} onMouseLeave={()=>setActive(null)} className={cx("relative scroll-mt-24 before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-px before:transition-colors",c.depth<2?"pl-2":"pl-0",active===c.id||reply?"before:bg-accent-400":"before:bg-transparent")}>
       <div className={cx("flex gap-3 rounded-lg p-2 transition", highlight === c.id && "bg-indigo-500/10 ring-1 ring-indigo-500/40")}>
         {c.deleted ? <span className="h-8 w-8 shrink-0 rounded-full bg-gray-800" /> : <Link href={`/users/${c.user.id}`}><Avatar user={c.user} /></Link>}
         <div className="min-w-0 flex-1">
@@ -113,6 +117,7 @@ function Comment({ node, anilistId, isAdmin, highlight, onFocus, refresh }: {
             <>
               <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
                 <Link href={`/users/${c.user.id}`} className="font-semibold hover:text-indigo-300">{c.user.name}</Link>
+                {c.friend&&<UserGroupIcon className="h-3.5 w-3.5 text-special-300" aria-label="Друг"/>}
                 {c.score !== null && <span className="text-xs font-semibold text-amber-300" title="Его оценка тайтла">★ {c.score}</span>}
                 {c.episode !== null && <span className="rounded bg-gray-700 px-1.5 text-[11px] text-gray-300">серия {c.episode}</span>}
                 <span className="text-xs text-gray-500" title={new Date(c.createdAt * 1000).toLocaleString("ru-RU")}>
@@ -128,12 +133,12 @@ function Comment({ node, anilistId, isAdmin, highlight, onFocus, refresh }: {
               )}
             </>
           )}
-          <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-gray-500">
-            {!c.deleted && <button onClick={() => setReply(!reply)} className="hover:text-gray-200">Ответить</button>}
-            {canEdit && !edit && <button onClick={() => setEdit(true)} className="hover:text-gray-200">Изменить</button>}
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-400">
+            {!c.deleted && <button onClick={() => setReply(!reply)} className="min-h-8 rounded px-2 text-xs text-gray-400 hover:bg-gray-800 hover:text-accent-200 focus-visible:outline-2 focus-visible:outline-accent-300">Ответить</button>}
+            {canEdit && !edit && <button onClick={() => setEdit(true)} className="min-h-8 rounded px-2 text-xs text-gray-400 hover:bg-gray-800 hover:text-accent-200 focus-visible:outline-2 focus-visible:outline-accent-300">Изменить</button>}
             {canEdit && <button onClick={remove} className="hover:text-red-300">Удалить</button>}
             {c.children.length > 0 && !deep && (
-              <button onClick={() => setCollapsed(!collapsed)} className="hover:text-gray-200">
+              <button onClick={() => setCollapsed(!collapsed)} className="min-h-8 rounded px-2 text-xs text-gray-400 hover:bg-gray-800 hover:text-accent-200 focus-visible:outline-2 focus-visible:outline-accent-300">
                 {collapsed ? `Показать ответы (${c.total})` : "Свернуть ветку"}
               </button>
             )}
@@ -144,8 +149,8 @@ function Comment({ node, anilistId, isAdmin, highlight, onFocus, refresh }: {
       {deep ? (
         <button onClick={() => onFocus(c.id)} className="ml-11 mt-1 text-xs text-indigo-300 hover:text-indigo-200">Продолжить ветку ({c.total}) →</button>
       ) : c.children.length > 0 && !collapsed && (
-        <ul className="ml-4 space-y-1 border-l border-gray-700/70 pl-3 sm:ml-6 sm:pl-4">
-          {c.children.map((ch) => <Comment key={ch.id} node={ch} anilistId={anilistId} isAdmin={isAdmin} highlight={highlight} onFocus={onFocus} refresh={refresh} />)}
+        <ul className={cx("space-y-1",c.depth<2?"ml-3 border-l border-gray-800 pl-1 sm:ml-6 sm:pl-2":"ml-0")}>
+          {c.children.map((ch) => <Comment key={ch.id} node={ch} anilistId={anilistId} isAdmin={isAdmin} highlight={highlight} onFocus={onFocus} refresh={refresh} active={active} setActive={setActive} />)}
         </ul>
       )}
     </li>
@@ -156,20 +161,14 @@ function Comment({ node, anilistId, isAdmin, highlight, onFocus, refresh }: {
  * Обсуждение тайтла; episode — только ветки этой серии (по первому комментарию ветки, ответы — вместе с ней),
  * новый комментарий сразу помечается серией. Данные общие с обсуждением на странице тайтла.
  */
-export function Discussion({ anilistId, highlight, episode }: { anilistId: number; highlight?: number; episode?: number }) {
+export function Discussion({ anilistId, highlight, episode, compact=false }: { anilistId: number; highlight?: number; episode?: number; compact?:boolean }) {
   const qc = useQueryClient();
   const { data: me } = useMe();
-  const { data: all } = useQuery({ queryKey: ["comments", anilistId], queryFn: () => api<CommentItem[]>(`/api/anime/${anilistId}/comments`), staleTime: 30_000 });
-  const data = useMemo(() => {
-    if (!all || !episode) return all;
-    const byId = new Map(all.map((c) => [c.id, c]));
-    const root = (c: CommentItem) => {
-      let r = c;
-      while (r.parentId !== null && byId.has(r.parentId)) r = byId.get(r.parentId)!;
-      return r;
-    };
-    return all.filter((c) => root(c).episode === episode);
-  }, [all, episode]);
+  const feed=useInfiniteQuery({queryKey:["comments",anilistId,episode??"all","paged",highlight??null],initialPageParam:null as number|null,queryFn:({pageParam})=>highlight?api<CommentItem[]>(`/api/anime/${anilistId}/comments`).then(items=>({items,next:null as number|null})):api<{items:CommentItem[];next:number|null}>(`/api/anime/${anilistId}/comments?paged=1${episode?`&episode=${episode}`:""}${pageParam?`&before=${pageParam}`:""}`),getNextPageParam:last=>last.next??undefined,staleTime:30000});
+  const data=useMemo(()=>feed.data?.pages.flatMap(p=>p.items),[feed.data]);
+  const [active,setActive]=useState<number|null>(null);
+  const sentinel=useRef<HTMLDivElement>(null);
+  useEffect(()=>{const el=sentinel.current;if(!el||!feed.hasNextPage||feed.isFetchNextPageError||feed.isFetchingNextPage)return;const observer=new IntersectionObserver(([e])=>{if(e.isIntersecting)void feed.fetchNextPage();},{rootMargin:"240px"});observer.observe(el);return()=>observer.disconnect();},[feed.hasNextPage,feed.isFetchNextPageError,feed.isFetchingNextPage,feed.fetchNextPage]);
   const [focus, setFocusState] = useState<number | null>(null);
   const top = useRef<HTMLElement>(null);
   // Ветка открывается вместо всего обсуждения — вернуть взгляд к его началу
@@ -193,10 +192,11 @@ export function Discussion({ anilistId, highlight, episode }: { anilistId: numbe
   const count = data?.filter((c) => !c.deleted).length ?? 0;
   return (
     <section ref={top} className="scroll-mt-20">
-      <h2 className="mb-3 flex items-center gap-2 text-xl font-bold">
+      {!compact&&<h2 className="mb-3 flex items-center gap-2 text-xl font-bold">
         <ChatBubbleLeftRightIcon className="h-6 w-6 text-gray-400" />{episode ? `Обсуждение ${episode} серии` : "Обсуждение"} {count > 0 && <span className="text-base font-normal text-gray-500">{count}</span>}
-      </h2>
-      <div className="space-y-4 rounded-xl bg-gray-800/40 p-4 ring-1 ring-gray-700">
+      </h2>}
+      <div className={cx("space-y-5",!compact&&"rounded-xl bg-gray-800/40 p-4")}>
+        {feed.error&&<><ErrorBox error={feed.error}/><Button size="sm" onClick={()=>void(feed.isFetchNextPageError?feed.fetchNextPage():feed.refetch())}>Повторить загрузку</Button></>}
         {focus === null ? (
           <Composer withEpisode={!episode} onSubmit={(p) => api(`/api/anime/${anilistId}/comments`, { method: "POST", json: { ...p, episode: episode ?? p.episode } }).then(refresh)} />
         ) : (
@@ -204,9 +204,10 @@ export function Discussion({ anilistId, highlight, episode }: { anilistId: numbe
         )}
         {tree.length ? (
           <ul className="space-y-2">
-            {tree.map((n) => <Comment key={n.id} node={n} anilistId={anilistId} isAdmin={Boolean(me?.isAdmin)} highlight={highlight ?? null} onFocus={setFocus} refresh={refresh} />)}
+            {tree.map((n) => <Comment key={n.id} node={n} anilistId={anilistId} isAdmin={Boolean(me?.isAdmin)} highlight={highlight ?? null} onFocus={setFocus} refresh={refresh} active={active} setActive={setActive} />)}
           </ul>
         ) : data && <p className="text-sm text-gray-500">Пока никто ничего не написал. Комментарии видят ваши друзья.</p>}
+        <div ref={sentinel} role="status" className="text-xs text-gray-400">{feed.isFetchingNextPage||feed.isPending?"Загружаем комментарии…":""}</div>
       </div>
     </section>
   );

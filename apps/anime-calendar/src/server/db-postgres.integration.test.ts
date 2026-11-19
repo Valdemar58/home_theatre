@@ -5,6 +5,8 @@ describe.skipIf(process.env.POSTGRES_TEST !== "1")("PostgreSQL adapter", () => {
     process.env.DATABASE_DRIVER = "postgres";
     const { db } = await import("./db-postgres");
     expect(db.prepare<[], { ok: number }>("SELECT 1 ok").get()?.ok).toBe(1);
+    // Other integration fixtures insert explicit IDs; PostgreSQL does not advance their sequence.
+    db.prepare("SELECT setval(pg_get_serial_sequence('users','id'), COALESCE((SELECT MAX(id) FROM users), 0) + 1, false)").get();
     expect(() => db.transaction(() => {
       const r = db.prepare("INSERT INTO users (jellyfin_id,name,created_at) VALUES (?,?,?)").run("pg-test", "Postgres", 0);
       expect(Number(r.lastInsertRowid)).toBeGreaterThan(0);

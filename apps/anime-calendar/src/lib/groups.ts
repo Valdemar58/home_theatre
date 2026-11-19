@@ -8,6 +8,8 @@ import type { ListStatus } from "./types";
 export type Rsvp = "yes" | "maybe" | "no";
 
 export type GroupSession = {
+  plan?: import("./session-plan").SessionDraft;
+  revision?: number;
   id: number;
   anilistId: number;
   /** С какой серии и сколько серий за сеанс */
@@ -16,7 +18,8 @@ export type GroupSession = {
   /** Начало, с (unix) */
   startsAt: number;
   createdBy: number;
-  status: "planned" | "live" | "done" | "cancelled";
+  status: "planned" | "live" | "done" | "cancelled" | "missed" | "interrupted";
+  result?: { results: { anilistId: number; episodes: number[] }[]; attendees: number[]; note: string; source: "online" | "organizer"; journal: { id: string; actor_id: number; created_at: number; payload: { results: { anilistId: number; episodes: number[] }[]; attendees: number[]; note: string } }[] };
   roomId: string | null;
   rsvp: { userId: number; answer: Rsvp }[];
 };
@@ -34,13 +37,18 @@ export type GroupPoll = {
 
 export type GroupQueueItem = {
   anilistId: number;
-  /** Серия, до которой досмотрела вся группа (минимум по участникам) */
+  /** Количество конкретных серий в результатах групповых встреч, не личный минимум. */
   progress: number;
+  watchedEpisodes?: number[];
   /** Озвучка, которую группа выбрала для тайтла */
   voice: string | null;
 };
 
 export type GroupPlan = {
+  permissions: import("./group-policy").GroupPermissions;
+  capabilities: Record<import("./group-policy").GroupCapability, boolean>;
+  canPoll: boolean;
+  legacyPermissions: boolean;
   preset: RoomPreset;
   /** Кому организатор дал пульт (пресет «организатор») */
   control: number[];
@@ -54,7 +62,7 @@ export type GroupPlan = {
 /** За сколько до начала готовить серии, напоминать; сколько ждать начала, прежде чем считать сеанс пропущенным. */
 export const PREP_BEFORE = 60 * 60;
 export const REMIND_BEFORE = 15 * 60;
-export const SESSION_GRACE = 3 * 3600;
+export const SESSION_GRACE = 2 * 3600;
 export const SESSION_MAX_EPS = 12;
 
 /**

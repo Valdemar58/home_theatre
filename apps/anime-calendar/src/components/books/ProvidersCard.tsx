@@ -56,7 +56,7 @@ export function ProvidersCard() {
                 <button disabled={i === 0} onClick={() => move(i, -1)} className="rounded p-0.5 text-gray-400 hover:text-white disabled:opacity-30" aria-label="Выше"><ArrowUpIcon className="h-3.5 w-3.5" /></button>
                 <button disabled={i === list.length - 1} onClick={() => move(i, 1)} className="rounded p-0.5 text-gray-400 hover:text-white disabled:opacity-30" aria-label="Ниже"><ArrowDownIcon className="h-3.5 w-3.5" /></button>
               </span>
-              <span className="min-w-0 flex-1">
+              <span className="min-w-0 basis-[calc(100%-2rem)] sm:basis-0 sm:flex-1">
                 <span className="font-medium text-gray-100">{p.name}</span>
                 <span className="ml-2 text-xs text-gray-500">{p.kinds.map((k) => (k === "novel" ? "ранобэ" : "манга")).join(", ")} · {p.langs.map((l) => LANG_LABELS[l] ?? l).join(", ")}</span>
                 <span className="block text-xs">

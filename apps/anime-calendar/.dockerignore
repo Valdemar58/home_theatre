@@ -2,3 +2,6 @@ node_modules
 .next
 data
 *.log
+.npm-cache
+.pg-planning-test
+.browser-review

@@ -12,11 +12,13 @@ import type { PlayerControls, SignsState, SubSettings } from "./Player";
 // «Стрима» отдельными файлами (звук серии качается по выбору) и другие раздачи (окно «Озвучки»: «Смотреть»). Субтитры — дорожки файла, японские с Jimaku
 // (найти, если их нет), сдвиг по времени и размер текста.
 
-export function WatchSidebar({ media, info, sub, subs: settings, signs, signsState, controls }: {
+export function WatchSidebar({ media, info, sub, subs: settings, signs, signsState, controls, mode }: {
   media: AnimeDetails; info: PlayInfo | null; sub: number | null; subs: SubSettings; signs: number | null; signsState: SignsState;
+  mode?: "audio" | "sub";
   controls: React.MutableRefObject<PlayerControls | null>;
 }) {
-  const [tab, setTab] = useState<"audio" | "sub">("audio");
+  const [localTab, setTab] = useState<"audio" | "sub">("audio");
+  const tab=mode??localTab;
   // Какую озвучку раздачи сейчас качаем (до нового потока)
   const [pending, setPending] = useState<string | null>(null);
   useEffect(() => setPending(null), [info?.sid]);
@@ -29,17 +31,19 @@ export function WatchSidebar({ media, info, sub, subs: settings, signs, signsSta
   const layers = (info?.subs ?? []).filter((s) => s.ass && (s.signs || s.fromSub));
   return (
     <aside className="flex max-h-[min(36rem,70vh)] flex-col overflow-hidden rounded-xl bg-gray-800/40 ring-1 ring-gray-700">
-      <div className="flex border-b border-gray-700">
+      {!mode && <div className="flex border-b border-gray-700">
         {([["audio", "Озвучка", audio.length], ["sub", "Субтитры", subs.length]] as const).map(([k, l, n]) => (
           <button key={k} onClick={() => setTab(k)}
             className={cx("flex-1 border-b-2 px-3 py-2.5 text-sm font-medium transition", tab === k ? "border-accent-400 text-white" : "border-transparent text-gray-400 hover:text-gray-200")}>
             {l} <span className="text-xs text-gray-500">{n}</span>
           </button>
         ))}
-      </div>
+      </div>}
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {!info ? (
-          <p className="p-2 text-sm text-gray-500">Готовлю поток…</p>
+          <p className="p-2 text-sm text-gray-500">Дорожки появятся после выбора и подготовки источника.</p>
+        ) : info.desktop ? (
+          <p className="p-2 text-sm text-gray-400">{tab === "audio" ? "Воспроизводится звуковая дорожка подготовленного файла хоста. Выбор других дорожек пока не поддерживается." : "Отдельные субтитры desktop-хоста пока не передаются. Используйте подготовленный файл со встроенными в изображение субтитрами или серверный источник."}</p>
         ) : tab === "audio" ? (
           <div className="space-y-3">
             <div>

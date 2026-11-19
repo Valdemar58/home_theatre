@@ -6,7 +6,8 @@ import {
 } from "@/lib/player";
 import { ApiError } from "./route";
 import { db, now } from "./db";
-import { markWatched } from "./jellyfin-sync";
+import { applyCoverage } from "./watch-history";
+import { recordMeetingCoverage } from "./meeting-history";
 import { episodeItems } from "./playback";
 import { guarded } from "./sources";
 import { segmentsFromChapters } from "@/lib/fingerprint";
@@ -19,6 +20,8 @@ import { isPrepared, preparedPath } from "./prep";
 import { ensureThumbs, thumbsKey, thumbsOf } from "./thumbs";
 import { dropTorrentCache, jellyfin, torrentCached, torrentStats } from "./stream";
 import { episodeStatus } from "./availability";
+import { coverageAttempt, recordCoverage } from "./watch-coverage";
+import { openLease, closeLease } from "./desktop-stream";
 
 // Плеер календаря: сессия просмотра серии. Jellyfin решает по профилю браузера, что отдать как есть, а что
 // перекодировать (HEVC 10 бит → копия, если браузер умеет; FLAC → AAC), и отдаёт HLS. Браузер ходит только
@@ -35,6 +38,7 @@ type MediaSource = {
 };
 
 export type PlaySession = {
+  desktopLease?: string;
   sid: string;
   userId: number;
   anilistId: number;
@@ -56,6 +60,8 @@ export type PlaySession = {
   subs: PlaySub[];
   itemKey: string;
   marked: boolean;
+  coverageId?: string;
+  marking?: Promise<boolean>;
   /** Когда последний раз сообщили позицию в Jellyfin */
   jfAt: number;
   seenAt: number;
@@ -65,6 +71,17 @@ const g = globalThis as unknown as { __playSessions?: Map<string, PlaySession> }
 const sessions = (g.__playSessions ??= new Map());
 // Плеер шлёт позицию раз в 10 с (и на паузе): дольше 3 мин тишины — вкладку закрыли
 const IDLE_MS = 3 * 60_000;
+export function startDesktopPlayback(userId: number, room: string, anilistId: number, ep: number, start?: number | null): PlayInfo {
+  const l = openLease(userId, room, anilistId, ep), sid = l.id;
+  if (start == null && room.startsWith("device:")) {
+    const saved = db.prepare<[number, number, number], {pos:number;dur:number|null}>("SELECT pos,dur FROM playback_pos WHERE user_id=? AND anilist_id=? AND ep=?").get(userId,anilistId,ep);
+    start = saved && (!saved.dur || saved.pos < saved.dur * WATCHED_SHARE) ? saved.pos : 0;
+  }
+  start ??= 0;
+  const coverageId = coverageAttempt({ sid, userId, anilistId, ep, duration: l.duration }, l.version);
+  sessions.set(sid, { sid, userId, anilistId, ep, itemId: "", jfOwn: false, mediaSourceId: "", playSessionId: "", deviceId: l.device, stream: null, hlsPath: null, duration: l.duration, audio: [], subs: [], itemKey: l.version, marked: false, coverageId, jfAt: 0, seenAt: Date.now(), desktopLease: l.id });
+  return { sid, src: `/desktop-media/${l.id}/file.mp4`, hls: false, stream: false, duration: l.duration, start: Math.max(0, Math.min(l.duration, Number.isFinite(start) ? start : 0)), audio: [], audioIndex: null, subs: [], subIndex: null, fonts: [], chapters: [], extVoices: [], segments: [], trickplay: null, transcode: [], desktop: { lease: l.id, device: l.device, version: l.version } };
+}
 /** Выбор озвучки «оригинал» в voice_pref: «lang:jpn». */
 const ORIG = "lang:";
 
@@ -83,6 +100,7 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
   const item = opts.source ? items.find((i) => i.hash === opts.source) : items.find((i) => i.where === "library") ?? items[0];
   if (!item) throw new ApiError(404, "Этой серии нет ни в библиотеке, ни в «Стриме»");
   // Сменили озвучку — старое перекодирование больше не нужно
+  const replaced = opts.replace ? sessions.get(opts.replace) : undefined;
   const prev = opts.replace && opts.audio != null ? sessions.get(opts.replace)?.audio.find((a: PlayTrack) => a.index === opts.audio) : undefined;
   if (opts.replace) await stopPlayback(opts.replace, user.id).catch(() => undefined);
 
@@ -137,10 +155,14 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
       .replace(/([?&])AudioStreamIndex=\d+/i, audioIndex !== null ? `$1AudioStreamIndex=${audioIndex}` : "$&")
     : null;
   const duration = (ms.RunTimeTicks ?? 0) / 1e7 || (item.runtimeSec ?? 0);
+  const sameAttempt = replaced?.userId === user.id && replaced.anilistId === anilistId && replaced.ep === ep
+    && replaced.itemKey === itemKey(item) && replaced.duration === duration;
+  const coverageId = sameAttempt && replaced.coverageId ? replaced.coverageId
+    : duration > 0 ? coverageAttempt({ sid, userId: user.id, anilistId, ep, duration }, itemKey(item)) : sid;
   sessions.set(sid, {
     sid, userId: user.id, anilistId, ep, itemId: item.itemId, jfOwn: jf === user.jellyfin_id, mediaSourceId: ms.Id, playSessionId, deviceId, hlsPath,
     stream: item.hash && item.index ? { hash: item.hash, index: item.index } : null,
-    duration, audio, subs: [], itemKey: itemKey(item), marked: false, jfAt: 0, seenAt: Date.now(),
+    duration, audio, subs: [], itemKey: itemKey(item), marked: Boolean(sameAttempt && replaced?.marked), coverageId, jfAt: 0, seenAt: Date.now(),
   });
 
   const base = `/api/play/${sid}`;
@@ -315,22 +337,27 @@ export function upstreamPath(s: PlaySession, rest: string, search: string): stri
   return `${dir}${rest}${search.replace(/([?&])ApiKey=[^&]*/i, "$1")}`;
 }
 
-/** Позиция просмотра: сохранить, после 85% — серия просмотрена; в Jellyfin — раз в 30 с (ТВ-клиенты продолжат). */
-export async function reportProgress(user: { id: number; name: string; jellyfin_id: string }, s: PlaySession, pos: number) {
+/** Resume position is not watch evidence. Only actual played intervals can mark an episode. */
+export async function reportProgress(user: { id: number; name: string; jellyfin_id: string }, s: PlaySession, pos: number, played?: unknown, room?: { id: string; revision: number }) {
   const dur = s.duration || null;
   db.prepare(`INSERT INTO playback_pos (user_id, anilist_id, ep, pos, dur, updated_at) VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT (user_id, anilist_id, ep) DO UPDATE SET pos = excluded.pos, dur = excluded.dur, updated_at = excluded.updated_at`)
     .run(user.id, s.anilistId, s.ep, pos, dur, now());
-  const done = Boolean(dur && pos >= dur * WATCHED_SHARE);
-  if (done && !s.marked) {
-    s.marked = true;
-    await markWatched(user, s.anilistId, s.ep, "player");
+  let done = s.marked;
+  if (dur) {
+    const attempt = s.coverageId ?? s.sid;
+    const evidence = recordCoverage({ ...s, sid: attempt }, played);
+    done = applyCoverage(user.id,s.anilistId,s.ep,attempt,dur,evidence.changed);
+    if (room) recordMeetingCoverage(user.id,room.id,room.revision,s.anilistId,s.ep,s.sid,dur,played);
+    s.marked = done;
   }
-  if (s.jfOwn && (done || Date.now() - s.jfAt > 30_000)) {
+  if (s.jfOwn && Date.now() - s.jfAt > 30_000) {
     s.jfAt = Date.now();
+    if (done) db.prepare("INSERT INTO watch_sync_receipts (key) VALUES (?) ON CONFLICT DO NOTHING")
+      .run(`jellyfin:${user.id}:${s.itemId}:${Math.floor(s.jfAt/1000)}`);
     await jellyfin(`/UserItems/${s.itemId}/UserData?userId=${user.jellyfin_id}`, {
       method: "POST",
-      body: JSON.stringify(done ? { Played: true, PlaybackPositionTicks: 0, LastPlayedDate: new Date().toISOString() } : { PlaybackPositionTicks: Math.round(pos * 1e7) }),
+      body: JSON.stringify(done ? { Played: true, PlaybackPositionTicks: 0, LastPlayedDate: new Date(s.jfAt).toISOString() } : { PlaybackPositionTicks: Math.round(pos * 1e7) }),
     }).catch((e) => console.warn(`[player] позиция в Jellyfin: ${String(e)}`));
   }
   return { marked: s.marked };
@@ -367,6 +394,7 @@ export async function stopPlayback(sid: string, userId: number) {
   const s = sessions.get(sid);
   if (!s || s.userId !== userId) return;
   sessions.delete(sid);
+  if (s.desktopLease) closeLease(s.desktopLease, userId);
   if (s.hlsPath) {
     await jellyfin(`/Videos/ActiveEncodings?deviceId=${encodeURIComponent(s.deviceId)}&playSessionId=${s.playSessionId}`, { method: "DELETE" })
       .catch(() => undefined);

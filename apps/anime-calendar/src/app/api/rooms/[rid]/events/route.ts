@@ -16,8 +16,8 @@ export const GET = authed<{ rid: string }>(async (req, user, { rid }) => {
           try { ctl.enqueue(enc.encode(`data: ${JSON.stringify({ id: rid, ended: true })}\n\n`)); } catch { /* закрыт */ }
         }
       };
-      // Комментарий раз в 25 с — прокси и браузер не рвут «молчащее» соединение
-      const ping = setInterval(() => ctl.enqueue(enc.encode(": ping\n\n")), 25_000);
+      // Reconcile authoritative state even if a job event was missed. This also keeps the connection alive.
+      const ping = setInterval(send, 1000);
       roomEvents.on(rid, send);
       // В сети — только вошедшие (приглашённый пока смотрит со стороны)
       const joined = m.status === "joined";

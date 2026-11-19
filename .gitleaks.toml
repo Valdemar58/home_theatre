@@ -1,0 +1,10 @@
+title = "home_theater secret scanning"
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Fandom fixture image filenames, not API credentials (reviewed 2026-11-19)"
+condition = "AND"
+paths = ['''apps/anime-calendar/src/lib/fixtures/fandom-frieren-ep1\.html$''']
+regexTarget = "match"
+regexes = ['''data-image-key="(?:Aged_Himmel_greets_Frieren_EP1|Fern_greets_Frieren_EP1|Fern_prepares_to_fire_at_the_rock_EP1)\.png"''']

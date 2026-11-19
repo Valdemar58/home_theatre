@@ -8,13 +8,13 @@ import { api, useMe, usePeople, useSharedList, useTogether } from "@/lib/client"
 import { LIST_LABELS } from "@/lib/labels";
 import { displayTitle } from "@/lib/schedule";
 import { ago } from "@/lib/time";
-import type { MediaLite, SharedItem, SharedListDetail } from "@/lib/types";
+import type { ListEntryWithMedia, ListStatus, MediaLite, SharedItem, SharedListDetail } from "@/lib/types";
 import { useUrlState } from "@/lib/useUrlState";
 import { Avatar } from "./Avatar";
 import { useHoverCard } from "./HoverCard";
 import { Img } from "./Img";
 import { useConfirm } from "./Dialogs";
-import { GroupPlan } from "./GroupPlan";
+import { GroupPlan, AvatarStack } from "./GroupPlan";
 import { GroupsTitle } from "./SharedListsView";
 import { Button, EmptyState, ErrorBox, Skel, cx } from "./ui";
 import { WatchTogetherDialog } from "./WatchTogetherDialog";
@@ -22,7 +22,7 @@ import { WatchTogetherDialog } from "./WatchTogetherDialog";
 // Группа (общий список): участники, план группы (сеансы, очередь, голосование, пульт — GroupPlan), тайтлы с живыми
 // статусами каждого, «Посмотрели вместе», добавление поиском.
 
-const TABS = [["watching", "Смотрим"], ["planned", "В планах"], ["done", "Все посмотрели"]] as const;
+const TABS = [["proposed", "Предложено"], ["watching", "Смотрим"], ["planned", "В планах"], ["done", "Просмотрено группой"]] as const;
 type Tab = (typeof TABS)[number][0];
 
 function memberText(s: SharedItem["members"][number], total: number | null) {
@@ -45,7 +45,7 @@ function ItemRow({ item, list, onTogether, onRemove }: { item: SharedItem; list:
       <div className="min-w-0 flex-1 space-y-2">
         <div className="flex items-start gap-2">
           <Link href={`/anime/${m.id}`} className="min-w-0 flex-1 font-semibold leading-snug hover:text-indigo-300">{displayTitle(m.title)}</Link>
-          <button onClick={onRemove} title="Убрать из списка" className="rounded p-1 text-gray-500 hover:bg-gray-700 hover:text-gray-200"><TrashIcon className="h-4 w-4" /></button>
+          <button disabled={!list.capabilities?.queue} onClick={onRemove} aria-label="Убрать из списка" title="Убрать из списка" className="rounded p-1 text-gray-500 hover:bg-gray-700 hover:text-gray-200 disabled:hidden"><TrashIcon className="h-4 w-4" /></button>
         </div>
         <div className="flex flex-wrap gap-1.5">
           {item.members.map((s) => {
@@ -63,7 +63,7 @@ function ItemRow({ item, list, onTogether, onRemove }: { item: SharedItem; list:
           })}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {item.state !== "done" && <Button size="sm" onClick={onTogether}><UsersIcon className="h-4 w-4" />Посмотрели вместе</Button>}
+          {item.state !== "proposed" && item.state !== "done" && <Button size="sm" onClick={onTogether}><UsersIcon className="h-4 w-4" />Личные отметки с друзьями</Button>}
           <span className="text-xs text-gray-500">добавил{name(item.addedBy) ? ` ${name(item.addedBy)}` : "и"} {ago(item.addedAt)}</span>
         </div>
       </div>
@@ -81,26 +81,31 @@ function TogetherFor({ media, onClose }: { media: MediaLite; onClose: () => void
 function AddTitle({ listId, onAdded }: { listId: number; onAdded: () => void }) {
   const [q, setQ] = useState("");
   const [dq, setDq] = useState("");
+  const [err, setErr] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
   useEffect(() => { const t = setTimeout(() => setDq(q.trim()), 300); return () => clearTimeout(t); }, [q]);
   const { data } = useQuery({
     queryKey: ["search", dq], enabled: dq.length >= 2,
     queryFn: () => api<{ media: MediaLite[] }>(`/api/search?q=${encodeURIComponent(dq)}`),
   });
   const add = async (m: MediaLite) => {
-    await api(`/api/shared-lists/${listId}/items`, { method: "POST", json: { anilistId: m.id } });
-    setQ("");
-    onAdded();
+    setBusy(true); setErr(null);
+    try {
+      await api(`/api/shared-lists/${listId}/items`, { method: "POST", json: { anilistId: m.id } });
+      setQ(""); onAdded();
+    } catch (e) { setErr(e); } finally { setBusy(false); }
   };
   return (
-    <div className="relative max-w-md">
+    <div className="relative w-full max-w-md">
+      {Boolean(err) && <ErrorBox error={err} />}
       <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-gray-500" />
-      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Добавить тайтл: название…"
+      <input value={q} onChange={(e) => setQ(e.target.value)} aria-label="Найти аниме для предложения" placeholder="Предложить аниме: название…"
         className="h-9 w-full rounded-lg border border-gray-600 bg-gray-900 pl-9 pr-3 text-sm focus:border-indigo-500 focus:outline-none" />
       {dq.length >= 2 && q && data && (
         <ul className="absolute inset-x-0 top-full z-30 mt-1 max-h-80 overflow-y-auto rounded-lg bg-gray-800 py-1 shadow-2xl ring-1 ring-gray-600">
           {data.media.length ? data.media.map((m) => (
             <li key={m.id}>
-              <button onClick={() => add(m)} className="flex w-full items-center gap-3 px-3 py-1.5 text-left text-sm hover:bg-gray-700">
+              <button disabled={busy} onClick={() => add(m)} className="flex w-full items-center gap-3 px-3 py-1.5 text-left text-sm hover:bg-gray-700">
                 <span className="relative h-10 w-7 shrink-0 overflow-hidden rounded">{m.coverImage.large && <Img src={m.coverImage.large} size="thumb" className="absolute inset-0 h-full w-full object-cover" />}</span>
                 <span className="min-w-0 flex-1 truncate">{displayTitle(m.title)}</span>
                 <span className="text-xs text-gray-500">{m.seasonYear}</span>
@@ -162,6 +167,7 @@ export function SharedListView({ id }: { id: number }) {
   const [together, setTogether] = useState<MediaLite | null>(null);
   const [rename, setRename] = useState<string | null>(null);
   const [invite, setInvite] = useState(false);
+  const [err, setErr] = useState<unknown>(null);
 
   if (isLoading) return <SharedListSkeleton tab={(params.get("tab") as Tab) || "watching"} onTab={(t) => setParams({ tab: t })} />;
   if (error || !list) return <ErrorBox error={error} />;
@@ -169,16 +175,18 @@ export function SharedListView({ id }: { id: number }) {
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ["shared-list", id] });
     void qc.invalidateQueries({ queryKey: ["shared-lists"] });
+    void qc.invalidateQueries({ queryKey: ["group", id] });
   };
   const action = async (body: { action: string; userId?: number }) => {
-    await api(`/api/shared-lists/${id}`, { method: "POST", json: body });
+    setErr(null);
+    try { await api(`/api/shared-lists/${id}`, { method: "POST", json: body }); } catch (e) { setErr(e); return; }
     if (body.action === "leave" || body.action === "decline") { router.push("/groups"); return; }
     refresh();
   };
   const owner = list.role === "owner";
   const friendsOut = (people ?? []).filter((p) => p.state === "friends" && !list.members.some((m) => m.id === p.id));
   const counts = Object.fromEntries(TABS.map(([t]) => [t, list.items.filter((i) => i.state === t).length])) as Record<Tab, number>;
-  const tab = (params.get("tab") as Tab) || (counts.watching ? "watching" : counts.planned ? "planned" : "watching");
+  const tab = (params.get("tab") as Tab) || (counts.watching ? "watching" : counts.proposed ? "proposed" : counts.planned ? "planned" : "watching");
   const items = list.items.filter((i) => i.state === tab);
 
   return (
@@ -213,21 +221,14 @@ export function SharedListView({ id }: { id: number }) {
         </div>
       </div>
 
+      {Boolean(err) && <ErrorBox error={err} />}
       {/* Участники */}
       <div className="flex flex-wrap items-center gap-2">
-        {list.members.map((m) => (
-          <span key={m.id} className={cx("inline-flex items-center gap-2 rounded-full bg-gray-800 py-1 pl-1 pr-3 text-sm ring-1 ring-gray-700", m.status === "invited" && "opacity-60")}>
-            <Avatar user={m} className="h-6 w-6 text-xs" />
-            <Link href={`/users/${m.id}`} className="hover:text-indigo-300">{m.id === me?.id ? "Вы" : m.name}</Link>
-            {m.status === "invited" && <span className="text-xs text-gray-400">приглашён</span>}
-            {owner && m.id !== me?.id && (
-              <button onClick={async () => { if (await confirm({ title: `Убрать ${m.name} из группы?`, confirm: "Убрать", danger: true })) void action({ action: "remove", userId: m.id }); }} className="text-gray-500 hover:text-white" aria-label="Убрать">
-                <XMarkIcon className="h-4 w-4" />
-              </button>
-            )}
-          </span>
-        ))}
-        {list.role !== "invited" && friendsOut.length > 0 && (
+        <AvatarStack members={list.members} label="Участники комнаты" />
+        {owner && <details className="relative"><summary className="cursor-pointer text-xs text-gray-400 hover:text-white">Управление участниками</summary>
+          <div className="absolute left-0 top-full z-20 mt-2 w-64 rounded-xl bg-gray-800 p-3 shadow-xl">{list.members.filter(m => m.id !== me?.id).map(m => <div key={m.id} className="flex items-center gap-2 py-2"><Avatar user={m} className="h-6 w-6 text-xs" /><span className="min-w-0 flex-1 truncate text-sm">{m.name}{m.status === "invited" ? " · приглашён" : ""}</span><button aria-label={`Убрать ${m.name}`} className="rounded p-2 text-gray-400 hover:bg-gray-700 hover:text-white" onClick={async () => { if (await confirm({ title: `Убрать ${m.name} из группы?`, confirm: "Убрать", danger: true })) void action({ action: "remove", userId: m.id }); }}><XMarkIcon className="h-4 w-4" /></button></div>)}</div>
+        </details>}
+        {list.capabilities?.invite && friendsOut.length > 0 && (
           <div className="relative">
             <Button size="sm" variant="ghost" onClick={() => setInvite(!invite)}><UserPlusIcon className="h-4 w-4" />Пригласить</Button>
             {invite && (
@@ -252,8 +253,10 @@ export function SharedListView({ id }: { id: number }) {
         </div>
       ) : (
         <>
-          <GroupPlan list={list} />
-          <AddTitle listId={id} onAdded={refresh} />
+          <GroupPlan list={list} legacy={process.env.NEXT_PUBLIC_GROUP_PLANNING_UI === "0"}>
+          <section className="space-y-4 pt-3">
+          <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-lg font-semibold">Списки комнаты</h3></div>
+          {list.capabilities?.suggest && <div className="flex flex-wrap items-start gap-3"><AddTitle listId={id} onAdded={refresh} /><PersonalTitles list={list} onAdded={refresh} /></div>}
           <div className="flex gap-1 overflow-x-auto border-b border-gray-700">
             {TABS.map(([t, text]) => (
               <button key={t} onClick={() => setParams({ tab: t })}
@@ -267,17 +270,51 @@ export function SharedListView({ id }: { id: number }) {
             <ul className="grid gap-3 xl:grid-cols-2">
               {items.map((i) => (
                 <ItemRow key={i.media.id} item={i} list={list} onTogether={() => setTogether(i.media)}
-                  onRemove={async () => { await api(`/api/shared-lists/${id}/items?anilistId=${i.media.id}`, { method: "DELETE" }); refresh(); }} />
+                  onRemove={async () => { try { await api(`/api/shared-lists/${id}/items?anilistId=${i.media.id}`, { method: "DELETE" }); refresh(); } catch(e) { setErr(e); } }} />
               ))}
             </ul>
           ) : (
             <EmptyState title="Здесь пока пусто">
-              {tab === "planned" ? "Добавьте тайтл поиском выше или кнопкой «В общий список» на странице тайтла." : tab === "watching" ? "Начатое кем-то из участников появится здесь." : "Тайтлы, которые досмотрели все, — здесь."}
+              {tab === "proposed" ? "Предложите аниме из своих списков или найдите его по названию. Организатор сможет включить его в очередь или голосование." : tab === "planned" ? "Добавьте тайтл поиском выше или кнопкой «В общий список» на странице тайтла." : tab === "watching" ? "Начатое кем-то из участников появится здесь." : "Тайтлы, которые досмотрели все, — здесь."}
             </EmptyState>
           )}
+          </section>
+          </GroupPlan>
         </>
       )}
       {together && <TogetherFor media={together} onClose={() => { setTogether(null); refresh(); }} />}
     </div>
   );
+}
+
+function PersonalTitles({ list, onAdded }: { list: SharedListDetail; onAdded: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [status, setStatus] = useState<ListStatus | "all">("all");
+  const [query, setQuery] = useState("");
+  const [adding, setAdding] = useState<number | null>(null);
+  const [err, setErr] = useState<unknown>(null);
+  const [added, setAdded] = useState<Set<number>>(new Set());
+  const { data, error, isLoading } = useQuery({ queryKey: ["list"], queryFn: () => api<ListEntryWithMedia[]>("/api/list"), enabled: open });
+  const entries = (data ?? []).filter(e => e.media && (status === "all" || e.status === status) && displayTitle(e.media.title).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  return <div className="w-full sm:w-auto sm:min-w-72">
+    <Button size="sm" aria-expanded={open} onClick={() => setOpen(!open)}>Мои списки</Button>
+    {open && <div className="mt-3 space-y-3 rounded-xl bg-gray-800/50 p-4">
+      <div className="flex flex-wrap gap-2">
+        <select aria-label="Статус в личном списке" value={status} onChange={e => setStatus(e.target.value as ListStatus | "all")} className="h-9 rounded-lg bg-gray-900 px-2 text-sm ring-1 ring-gray-600"><option value="all">Все статусы</option>{Object.entries(LIST_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
+        <input aria-label="Поиск в моих списках" placeholder="Название аниме" value={query} onChange={e => setQuery(e.target.value)} className="h-9 min-w-0 rounded-lg bg-gray-900 px-3 text-sm ring-1 ring-gray-600" />
+      </div>
+      {Boolean(error || err) && <ErrorBox error={error || err} />}
+      {isLoading ? <p role="status" className="text-sm text-gray-400">Загружаем ваши списки…</p> : <ul className="max-h-80 space-y-1 overflow-y-auto">{entries.map(e => {
+        const m = e.media!; const exists = added.has(m.id) || list.items.some(i => i.media.id === m.id);
+        return <li key={m.id}><button disabled={exists || adding !== null} onClick={async () => {
+          setAdding(m.id); setErr(null);
+          try { await api(`/api/shared-lists/${list.id}/items`, { method: "POST", json: { anilistId: m.id } }); setAdded(prev => new Set([...prev, m.id])); onAdded(); } catch(e) { setErr(e); } finally { setAdding(null); }
+        }} className="flex w-full items-center gap-3 rounded-lg p-2 text-left hover:bg-gray-700 disabled:opacity-60">
+          <span className="relative h-12 w-8 shrink-0 overflow-hidden rounded bg-gray-700">{m.coverImage.large && <Img src={m.coverImage.large} size="thumb" className="h-full w-full object-cover" />}</span>
+          <span className="min-w-0 flex-1 text-sm">{displayTitle(m.title)}</span><span className="text-xs text-gray-400">{exists ? "В комнате" : adding === m.id ? "Добавляем…" : "Предложить"}</span>
+        </button></li>;
+      })}</ul>}
+      {!isLoading && !error && !entries.length && <p className="text-sm text-gray-400">В этом списке ничего не найдено.</p>}
+    </div>}
+  </div>;
 }

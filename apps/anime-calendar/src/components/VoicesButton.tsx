@@ -30,9 +30,10 @@ function episodesText(r: RuRelease): string | null {
  * autoFetch (страница тайтла) — начать поиск сразу при открытии страницы; ушли, не нажав, — отмена.
  * initialOpen — открыть окно сразу; число — открыть при каждом его изменении («Найти серию» у кнопки «Смотреть»).
  */
-export function VoicesButton({ media, size = "md", autoFetch, initialOpen, onSubs }: {
+export function VoicesButton({ media, size = "md", autoFetch, initialOpen, onSubs, watchEpisode }: {
   media: MediaLite;
   /** Взяли субтитры из раздачи — плеер подхватит их (страница просмотра) */
+  watchEpisode?:number;
   onSubs?: () => void;
   size?: "sm" | "md";
   autoFetch?: boolean;
@@ -69,7 +70,7 @@ export function VoicesButton({ media, size = "md", autoFetch, initialOpen, onSub
         {busy ? <Spinner className="h-4 w-4 text-gray-300" /> : <SpeakerWaveIcon className="h-4 w-4" />} Озвучки
         {count ? <span className="text-gray-400">· {count}</span> : null}
       </Button>
-      {open && <VoicesDialog media={media} onClose={() => setOpen(false)} onSubs={onSubs} />}
+      {open && <VoicesDialog watchEpisode={watchEpisode} media={media} onClose={() => setOpen(false)} onSubs={onSubs} />}
     </>
   );
 }
@@ -79,7 +80,7 @@ const ago = (unix: number) => {
   return m < 1 ? "только что" : m < 60 ? `${m} мин назад` : m < 1440 ? `${Math.round(m / 60)} ч назад` : `${Math.round(m / 1440)} д назад`;
 };
 
-function VoicesDialog({ media, onClose, onSubs }: { media: MediaLite; onClose: () => void; onSubs?: () => void }) {
+function VoicesDialog({ media, onClose, onSubs, watchEpisode }: { media: MediaLite; onClose: () => void; onSubs?: () => void; watchEpisode?:number }) {
   const qc = useQueryClient();
   const router = useRouter();
   const { byId } = useList();
@@ -132,7 +133,7 @@ function VoicesDialog({ media, onClose, onSubs }: { media: MediaLite; onClose: (
           if (!active.current) return;
           if (episodes.length) {
             const watched = byId.get(media.id)?.episodes ?? 0;
-            const ep = episodes.find((n) => n > watched) ?? episodes[0];
+            const ep = watchEpisode && episodes.includes(watchEpisode) ? watchEpisode : episodes.find((n) => n > watched) ?? episodes[0];
             void qc.invalidateQueries({ queryKey: ["episode-status", media.id] });
             router.push(`/anime/${media.id}/watch/${ep}?play=1&source=${res.hash}`);
             onClose();

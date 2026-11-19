@@ -5,6 +5,7 @@
 export type EpisodeState = "library" | "stream" | "downloading" | "aired" | "upcoming";
 
 export type EpisodeStatus = {
+  desktop?: boolean;
   ep: number;
   state: EpisodeState;
   /** Серия в Jellyfin (библиотека или «Стрим») — её и играет плеер */

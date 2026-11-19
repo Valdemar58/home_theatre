@@ -1,0 +1,207 @@
+:root {
+  color-scheme: dark;
+  --canvas: oklch(21% 0.034 264.665);
+  --surface: oklch(27.8% 0.033 256.848);
+  --text: oklch(96.7% 0.003 264.542);
+  --muted: oklch(70.7% 0.022 261.325);
+  --accent: oklch(0.53 0.162 277);
+  --line: oklch(44.6% 0.03 256.802);
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--text);
+  font:
+    14px/1.5 Inter,
+    system-ui,
+    sans-serif;
+}
+main {
+  max-width: 1100px;
+  margin: auto;
+  padding: 32px;
+}
+h1 {
+  font-size: 25px;
+  margin: 0;
+}
+h2 {
+  font-size: 18px;
+  margin: 0 0 16px;
+}
+p {
+  margin: 8px 0;
+  color: var(--muted);
+}
+header,
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+section {
+  margin-top: 32px;
+}
+#connection {
+  padding: 20px;
+  background: var(--surface);
+  border-radius: 12px;
+}
+form {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+#pair-form label {
+  flex: 1;
+  min-width: 200px;
+}
+input,
+select,
+button {
+  font: inherit;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  min-height: 40px;
+  padding: 8px 12px;
+  max-width: 100%;
+  color: var(--text);
+  background: var(--canvas);
+}
+input {
+  width: 100%;
+}
+button {
+  cursor: pointer;
+  background: var(--accent);
+  border-color: transparent;
+  white-space: nowrap;
+}
+button:hover {
+  filter: brightness(1.05);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.quiet {
+  background: transparent;
+  border-color: var(--line);
+}
+:focus-visible {
+  outline: 2px solid oklch(0.8 0.119 277);
+  outline-offset: 3px;
+}
+.hint,
+footer {
+  font-size: 12px;
+  color: var(--muted);
+}
+footer {
+  margin-top: 32px;
+}
+#error {
+  color: oklch(0.85 0.08 18);
+  padding: 12px;
+  border: 1px solid oklch(0.64 0.13 18);
+  border-radius: 8px;
+}
+.file {
+  padding: 20px 0;
+  border-bottom: 1px solid var(--line);
+}
+.file h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.file .name {
+  overflow-wrap: anywhere;
+}
+.actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.share {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+progress {
+  width: 100%;
+  height: 5px;
+  accent-color: oklch(0.64 0.17 277);
+}
+#episode {
+  width: 90px;
+}
+::selection {
+  background: var(--accent);
+}
+@media (max-width: 600px) {
+  main {
+    padding: 20px;
+  }
+  form label {
+    flex: 1 1 140px;
+  }
+  #pair-form label {
+    min-width: 0;
+    flex-basis: 100%;
+  }
+  form button {
+    width: 100%;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  button {
+    transition: filter 150ms ease-out;
+  }
+}
+.share button {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#search-form {
+  margin-bottom: 16px;
+}
+#release-form label { flex: 1; min-width: 180px; }
+.release-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.release-row > div { min-width: 0; }
+.release-row h3 { font-size: 14px; margin: 0; overflow-wrap: anywhere; }
+.name, #download-folder-path { overflow-wrap: anywhere; }
+#release-results { max-height: 420px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+#download-selection { padding: 20px; margin-top: 24px; background: var(--surface); border-radius: 12px; scroll-margin-top: 16px; }
+.episode-files { margin: 16px 0; max-height: 420px; overflow-y: auto; scrollbar-width: thin; }
+.episode-file { display: grid; grid-template-columns: minmax(0, 1fr) 80px 80px; align-items: center; gap: 12px; padding: 10px 0; }
+.episode-file > label:first-child, .inline-check { display: flex; align-items: center; gap: 10px; overflow-wrap: anywhere; }
+input[type=checkbox] { width: 18px; height: 18px; min-height: 18px; flex: 0 0 18px; accent-color: var(--accent); }
+.file-size, .download-episode small { color: var(--muted); font-variant-numeric: tabular-nums; }
+.manual-import { margin-top: 24px; }
+.manual-import summary { cursor: pointer; color: var(--muted); padding: 8px 0; }
+.manual-import form { margin-top: 12px; }
+.library-heading { margin-top: 32px; }
+.download-episodes { display: flex; gap: 12px; overflow-x: auto; scrollbar-width: thin; padding: 8px 0; }
+.download-episode { min-width: 130px; display: grid; gap: 4px; }
+.download-error { color: oklch(0.85 0.08 18); }
+@media (max-width: 600px) {
+  .release-row { flex-direction: column; align-items: stretch; }
+  .episode-file { grid-template-columns: minmax(0, 1fr) 70px; }
+  .episode-file .file-size { display: none; }
+  #download-selection { padding: 14px; }
+}

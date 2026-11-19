@@ -1,5 +1,5 @@
 import type { PlayCaps } from "@/lib/player";
-import { startPlayback } from "@/server/player";
+import { startPlayback, startDesktopPlayback, stopPlayback } from "@/server/player";
 import { isRemote } from "@/server/remote";
 import { ApiError, authed, json } from "@/server/route";
 
@@ -8,8 +8,12 @@ const REMOTE_BITRATE = 6e6;
 
 // Начать просмотр серии: { anilistId, ep, caps, audio?, voice? (озвучка раздачи «Стрима»), start?, replace? } → PlayInfo (поток, дорожки, шрифты, главы)
 export const POST = authed(async (req, user) => {
-  const b = (await req.json().catch(() => ({}))) as { anilistId?: number; ep?: number; source?: string; caps?: PlayCaps; audio?: number | null; voice?: string | null; start?: number | null; replace?: string | null };
+  const b = (await req.json().catch(() => ({}))) as { desktopRoom?: string; anilistId?: number; ep?: number; source?: string; caps?: PlayCaps; audio?: number | null; voice?: string | null; start?: number | null; replace?: string | null };
   if (!Number.isInteger(b.anilistId) || !Number.isInteger(b.ep) || !b.caps) throw new ApiError(400, "Неверный запрос");
+  if (b.desktopRoom) {
+    if (b.replace) await stopPlayback(b.replace, user.id);
+    return json(startDesktopPlayback(user.id, b.desktopRoom, b.anilistId!, b.ep!, b.start));
+  }
   // Качество «Авто» (0): дома — исходное, из интернета — 6 Мбит/с (домашний канал на отдачу и сеть друга)
   if (b.source !== undefined && (typeof b.source !== "string" || !/^[a-f0-9]{40}$/i.test(b.source))) throw new ApiError(400, "Некорректный источник");
   const asked = Number(b.caps.maxBitrate) || 0;

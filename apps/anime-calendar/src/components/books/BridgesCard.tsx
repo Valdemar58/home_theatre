@@ -21,7 +21,7 @@ type State = {
 const LANG_CHIPS = ["ru", "en", "ja", "all"];
 const langName = (l: string) => (l === "all" ? "Все" : LANG_LABELS[l] ?? l);
 const row = "flex items-center gap-3 px-3 py-1.5";
-const input = "h-9 min-w-0 flex-1 rounded-lg border border-gray-600 bg-gray-800 px-3 text-sm focus:border-accent-500 focus:outline-none";
+const input = "h-9 min-w-0 max-w-full basis-48 flex-1 rounded-lg border border-gray-600 bg-gray-800 px-3 text-sm focus:border-accent-500 focus:outline-none";
 
 export function BridgesCard() {
   const qc = useQueryClient();
@@ -83,7 +83,7 @@ function Lnreader({ s, busy, save }: { s: State["lnreader"]; busy: string | null
       )}
       <details className="text-xs text-gray-500">
         <summary className="cursor-pointer">Адрес индекса плагинов</summary>
-        <div className="mt-2 flex gap-2">
+        <div className="mt-2 flex flex-wrap gap-2">
           <input value={index} onChange={(e) => setIndex(e.target.value)} className={input} />
           <Button size="sm" disabled={index === s.index} onClick={() => save({ index })}>Сохранить</Button>
         </div>
@@ -104,7 +104,7 @@ function Suwayomi({ s, busy, refreshing, call }: { s: State["suwayomi"]; busy: s
   return (
     <section className="space-y-3">
       <p className="text-xs text-gray-400">1. Подключите сервер → 2. Добавьте репозиторий → 3. Установите расширения → 4. Включите источники. После этого книги ищутся автоматически.</p>
-      <div className="flex gap-2"><input aria-label="Адрес Suwayomi" value={url} onChange={(e) => setUrl(e.target.value)} className={input} />
+      <div className="flex flex-wrap gap-2"><input aria-label="Адрес Suwayomi" value={url} onChange={(e) => setUrl(e.target.value)} className={input} />
         <Button size="sm" disabled={Boolean(busy)} onClick={() => void call("PUT", { url }, "connect")}>Подключить / проверить</Button></div>
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="font-semibold">Suwayomi</h3><span className="text-gray-500">манга</span>
@@ -117,7 +117,7 @@ function Suwayomi({ s, busy, refreshing, call }: { s: State["suwayomi"]; busy: s
         <>
           <div className="space-y-1">
             <p className="text-xs text-gray-500">Репозиторий расширений Mihon — ссылка на репозиторий GitHub или index.min.json, как в Tachimanga. Это не ссылка на отдельную мангу.</p>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <input value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="https://…/index.min.json" className={input} />
               <Button size="sm" disabled={!repo.trim() || Boolean(busy)} onClick={() => void call("POST", { repo }, "repo")}>{busy === "repo" ? "Загружаю…" : "Сохранить / обновить"}</Button>
             </div>

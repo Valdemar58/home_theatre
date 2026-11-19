@@ -42,6 +42,7 @@ export type PlayChapter = { name: string; start: number };
 export type FrameItem = { text: string; ru: string; box: [number, number, number, number] };
 
 export type PlayInfo = {
+  desktop?: { lease: string; device: string; version: string };
   sid: string;
   /** Плейлист HLS (или файл целиком, если браузер играет его сам) */
   src: string;

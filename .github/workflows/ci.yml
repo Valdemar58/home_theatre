@@ -1,0 +1,181 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      server: ${{ steps.diff.outputs.server }}
+      desktop: ${{ steps.diff.outputs.desktop }}
+      database: ${{ steps.diff.outputs.database }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 scripts/ci/changes.py "$BASE"
+
+  secrets:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Gitleaks
+        run: |
+          set -euo pipefail
+          base=https://github.com/gitleaks/gitleaks/releases/download/v8.30.1
+          curl --fail --silent --show-error --location "$base/gitleaks_8.30.1_linux_x64.tar.gz" -o "$RUNNER_TEMP/gitleaks.tar.gz"
+          curl --fail --silent --show-error --location "$base/gitleaks_8.30.1_checksums.txt" -o "$RUNNER_TEMP/checksums.txt"
+          expected=$(awk '$2 == "gitleaks_8.30.1_linux_x64.tar.gz" {print $1}' "$RUNNER_TEMP/checksums.txt")
+          test -n "$expected"
+          echo "$expected  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+      - name: Scan complete reachable history (redacted)
+        run: '"$RUNNER_TEMP/gitleaks" git . --log-opts="--all" --redact=100 --config=.gitleaks.toml'
+
+  server:
+    needs: changes
+    if: needs.changes.outputs.server == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/anime-calendar
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      DATABASE_DRIVER: sqlite
+      DATA_DIR: ${{ runner.temp }}/calendar-ci
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/anime-calendar/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test -- --reporter=default --reporter=junit --outputFile=test-results.xml
+      - run: npm run build
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: server-test-results
+          path: apps/anime-calendar/test-results.xml
+          retention-days: 14
+          if-no-files-found: ignore
+
+  postgres:
+    needs: changes
+    if: needs.changes.outputs.database == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: calendar_test
+          POSTGRES_USER: calendar_test
+          POSTGRES_PASSWORD: isolated-test-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U calendar_test -d calendar_test"
+          --health-interval 2s --health-timeout 3s --health-retries 20
+    defaults:
+      run:
+        working-directory: apps/anime-calendar
+    env:
+      PGHOST: 127.0.0.1
+      PGDATABASE: calendar_test
+      PGUSER: calendar_test
+      PGPASSWORD: isolated-test-only
+      POSTGRES_TEST: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/anime-calendar/package-lock.json
+      - run: npm ci
+      - run: node database/migrate.mjs
+      - run: node database/check-queries.mjs
+      - run: node database/import-check.mjs
+      - run: npm test -- --reporter=default --reporter=junit --outputFile=postgres-results.xml
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: postgres-test-results
+          path: apps/anime-calendar/postgres-results.xml
+          retention-days: 14
+          if-no-files-found: ignore
+
+  desktop:
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: npm install --global pnpm@11.25.0
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: node ../../scripts/ci/desktop-native.cjs
+      - run: pnpm test
+
+  gate:
+    name: CI gate
+    if: always()
+    needs: [changes, secrets, server, postgres, desktop]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every selected check to succeed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          n = json.loads(os.environ['NEEDS'])
+          assert n['changes']['result'] == 'success', 'Change detection failed'
+          assert n['secrets']['result'] == 'success', 'Secret scanning failed'
+          for job in ('server', 'postgres', 'desktop'):
+              key = 'database' if job == 'postgres' else job
+              selected = n['changes']['outputs'][key] == 'true'
+              expected = 'success' if selected else 'skipped'
+              assert n[job]['result'] == expected, f'{job}: {n[job]["result"]}, expected {expected}'
+          PY

@@ -78,7 +78,7 @@ export function AnilibCard() {
   if (isLoading || !st) return (
     <div className="flex flex-wrap items-center justify-between gap-3" aria-busy>
       <Skel className="h-4 w-72 max-w-full" />
-      <div className="flex gap-2">{["w-40", "w-36", "w-24"].map((w) => <Skel key={w} className={cx("h-7 rounded-lg", w)} />)}</div>
+      <div className="flex flex-wrap gap-2">{["w-40", "w-36", "w-24"].map((w) => <Skel key={w} className={cx("h-7 rounded-lg", w)} />)}</div>
     </div>
   );
 
@@ -117,7 +117,7 @@ export function AnilibCard() {
           {" · "}
           {st.syncedAt ? <>синхронизировано {Date.now() / 1000 - st.syncedAt < 60 ? "только что" : relative(st.syncedAt)}, дальше — каждые 30 мин</> : <span className="text-amber-300">ещё не импортировано</span>}
         </p>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button size="sm" onClick={() => sync(false)} disabled={running || busy}>Проверить изменения</Button>
           {!firstRun && <Button size="sm" onClick={() => sync(true)} disabled={running || busy}>Синхронизировать</Button>}
           <Button size="sm" variant="ghost" onClick={() => call(() => api("/api/anilib", { method: "DELETE" }))} disabled={running || busy}>Отключить</Button>

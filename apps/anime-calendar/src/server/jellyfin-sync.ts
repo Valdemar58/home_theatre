@@ -3,9 +3,9 @@ import { mediaByIds } from "./anilist";
 import { db, now } from "./db";
 import { env } from "./env";
 import { anilistEpisodeFromTvdb } from "./idmap";
-import { getMedia, getRows, logWatch, saveMedia, upsertEntry, withShikimori } from "./lists";
+import { getMedia, saveMedia, withShikimori } from "./lists";
 import { jellyfin } from "./stream";
-import { onProgress } from "./together";
+import { markEpisode } from "./watch-history";
 
 // Серии, досмотренные в Jellyfin (и скачанные, и онлайн через TorrServer), отмечаются в списке сами:
 // серия TVDB → тайтл AniList (idmap) → отметка по общим правилам (lib/entry-rules.ts: «Смотрю»,
@@ -45,21 +45,14 @@ export async function syncJellyfinPlays(): Promise<void> {
  * Серия досмотрена (Jellyfin или плеер календаря) — отметить в списке по общим правилам. Уже отмечено дальше —
  * не откатывать (кроме пересмотра просмотренного). true — отметка изменилась.
  */
-export async function markWatched(u: { id: number; name: string }, anilistId: number, episode: number, source: "jellyfin" | "player"): Promise<boolean> {
+export async function markWatched(u: { id: number; name: string }, anilistId: number, episode: number, source: "jellyfin" | "player", key?: string): Promise<boolean> {
   let media = getMedia(anilistId);
   if (!media) {
     saveMedia(await withShikimori(await mediaByIds([anilistId])));
     media = getMedia(anilistId);
   }
   if (!media) return false;
-  const entry = getRows(u.id).find((r) => r.anilist_id === anilistId && !r.deleted);
-  const rewatch = entry?.status === "completed" && media.episodes && episode < media.episodes;
-  if (entry && entry.episodes >= episode && !rewatch && entry.status !== "planned") return false;
-  upsertEntry(u.id, media, { episodes: episode });
-  if (!rewatch) logWatch(u.id, media, entry && entry.status !== "planned" ? entry.episodes : 0, episode);
-  // Смотрели вместе на одном экране — засчитать друзьям (сессия) или подсказать (общий список)
-  if (!rewatch) await onProgress(u, anilistId, entry?.episodes ?? 0, episode, source).catch((e) => console.warn(`[watch] вместе: ${e}`));
-  return true;
+  return markEpisode(u.id, anilistId, episode, source, key);
 }
 
 async function syncUser(u: User): Promise<void> {
@@ -87,11 +80,12 @@ async function syncUser(u: User): Promise<void> {
 
   let marked = 0;
   for (const { e, at } of fresh) {
+    if (db.prepare("SELECT key FROM watch_sync_receipts WHERE key=?").get(`jellyfin:${u.id}:${e.Id}:${at}`)) continue;
     const tvdb = tvdbFromPath(e.Path) ?? (e.SeriesId ? seriesTvdb.get(e.SeriesId) : undefined);
     if (!tvdb || e.ParentIndexNumber == null || !e.IndexNumber) continue;
     const hit = await anilistEpisodeFromTvdb(tvdb, e.ParentIndexNumber, e.IndexNumber).catch(() => null);
     if (!hit || hit.episode < 1) continue;
-    if (await markWatched(u, hit.anilistId, hit.episode, "jellyfin")) marked++;
+    if (await markWatched(u, hit.anilistId, hit.episode, "jellyfin", `jellyfin:${u.id}:${e.Id}:${at}`)) marked++;
     db.prepare("UPDATE users SET jf_played_at = ? WHERE id = ?").run(at, u.id);
   }
   db.prepare("UPDATE users SET jf_played_at = GREATEST(jf_played_at, ?) WHERE id = ?").run(fresh.at(-1)!.at, u.id);

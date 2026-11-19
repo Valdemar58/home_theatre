@@ -25,6 +25,8 @@ import { syncJellyfinPlays } from "./jellyfin-sync";
 import { translateTags } from "./tags-ru";
 import { checkNewEpisodes } from "./episode-notices";
 import { groupTick } from "./groups";
+import { roomSessionTick } from "./rooms";
+import { inactivityTick } from "./watch-history";
 import { syncSignups } from "./accounts";
 import { cleanupPrepared } from "./prep";
 import { archiveInitial, archiveLists, archiveRecheck, archiveTick } from "./archive";
@@ -55,6 +57,7 @@ let started = false;
 export function startJobs() {
   if (started) return;
   started = true;
+  setInterval(() => void safe("session-playback", async () => roomSessionTick()), 1000);
   setTimeout(() => {
     void safe("idmap", ensureIdMap);
     void safe("prewarm", prewarm);
@@ -81,6 +84,8 @@ export function startJobs() {
   setInterval(() => void safe("play-sweep", async () => sweepPlayback()), MINUTE);
   // Группы просмотра: сеансы по расписанию (подготовка, напоминание, комната) и голосования по сроку
   setInterval(() => void safe("groups", groupTick), MINUTE);
+  setInterval(() => void safe("watch-inactivity", async () => inactivityTick()), 60 * MINUTE);
+  setTimeout(() => void safe("watch-inactivity", async () => inactivityTick()), MINUTE);
   // Единый вход: регистрации по приглашениям → заявки админу
   setInterval(() => void safe("signups", syncSignups), MINUTE);
   setInterval(async () => {

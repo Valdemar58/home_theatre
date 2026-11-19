@@ -63,7 +63,7 @@ export function AchievementsPreview() {
           {SHAPES.map(([shape, name, use]) => (
             <div key={shape} className="rounded-xl bg-gray-800/50 p-4 ring-1 ring-gray-700">
               <p className="font-semibold">{name} <span className="text-xs font-normal text-gray-400">— {use}</span></p>
-              <div className="mt-4 flex items-end justify-between gap-2">
+              <div className="mt-4 grid grid-cols-2 items-end gap-4 sm:grid-cols-4">
                 {TIERS.map((t) => (
                   <div key={t} className="flex flex-col items-center gap-2">
                     <AchievementBadge icon={shape === "diamond" ? "fire" : shape === "shield" ? "users" : shape === "hex" ? "heart" : "clock"}

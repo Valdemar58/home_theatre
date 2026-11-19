@@ -52,7 +52,7 @@ export function RecCard({ r }: { r: Recommendation }) {
   return (
     <div {...hover} className="flex gap-4 rounded-xl bg-gray-800/50 p-3 ring-1 ring-gray-700 transition hover:ring-gray-500">
       {/* Постер — во всю высоту карточки (не меньше 2:3), текст рядом не «перерастает» его */}
-      <Link href={`/anime/${r.id}`} className="relative min-h-52 w-36 shrink-0 self-stretch overflow-hidden rounded-lg ring-1 ring-gray-700"
+      <Link href={`/anime/${r.id}`} className="relative min-h-52 w-24 sm:w-36 shrink-0 self-stretch overflow-hidden rounded-lg ring-1 ring-gray-700"
         style={{ backgroundColor: r.color ?? undefined }}>
         {r.cover && <Img src={r.cover} size="card" className="absolute inset-0 h-full w-full object-cover" />}
       </Link>
@@ -126,7 +126,7 @@ export function RecommendationsView() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="flex items-center gap-2 text-2xl font-bold sm:text-3xl"><SparklesIcon className="h-7 w-7 text-indigo-400" /> Для тебя</h1>
-        <div className="ml-auto flex items-center gap-3 text-xs text-gray-400">
+        <div className="ml-auto flex flex-wrap items-center gap-3 text-xs text-gray-400">
           {status && (
             <span title={`Модель ${status.model}`}>
               {status.llm ? "LLM подключена" : "LLM недоступна — рекомендации без объяснений"}
@@ -153,7 +153,7 @@ export function RecommendationsView() {
           <div aria-busy className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
             {Array.from({ length: 6 }, (_, i) => (
               <div key={i} className="flex gap-4 rounded-xl bg-gray-800/50 p-3 ring-1 ring-gray-700">
-                <Skel className="min-h-52 w-36 shrink-0 self-stretch rounded-lg" />
+                <Skel className="min-h-52 w-24 sm:w-36 shrink-0 self-stretch rounded-lg" />
                 <div className="min-w-0 flex-1 space-y-2">
                   <div className="flex items-start justify-between gap-2"><Skel className="h-5 w-3/4" /><Skel className="h-5 w-10 rounded-full" /></div>
                   <Skel className="h-3 w-1/2" />

@@ -6,6 +6,8 @@
 export type RoomPreset = "equal" | "host";
 
 export type RoomState = {
+  generation?: number;
+  session?: import("./session-playback").SessionPlayback;
   ep: number;
   playing: boolean;
   /** Позиция, с, в момент at (мс, часы сервера) */
@@ -17,6 +19,8 @@ export type RoomState = {
 
 /** Связь участника: что сообщает его плеер раз в несколько секунд. */
 export type RoomPresence = {
+  position?: number | null;
+  buffered?: [number, number][];
   online: boolean;
   buffering: boolean;
   /** Оценка скорости потока hls.js, бит/с */
@@ -42,6 +46,8 @@ export type RoomActionKind = "play" | "pause" | "seek" | "ep" | "join" | "leave"
 export type RoomAction = { userId: number; kind: RoomActionKind; pos: number | null; ep?: number; at: number };
 
 export type RoomView = {
+  groupId?: number | null;
+  canInvite?: boolean;
   id: string;
   anilistId: number;
   ownerId: number;

@@ -79,7 +79,7 @@ export function InvitePanel() {
     void qc.invalidateQueries({ queryKey: ["invites"] });
   };
   const mine = (groups ?? []).filter((g) => g.role !== "invited");
-  const input = "h-9 rounded-lg bg-gray-900 px-3 text-sm ring-1 ring-gray-700 focus:outline-none focus:ring-indigo-500";
+  const input = "h-9 max-w-full rounded-lg bg-gray-900 px-3 text-sm ring-1 ring-gray-700 focus:outline-none focus:ring-indigo-500";
 
   return (
     <section className="space-y-3">

@@ -4,19 +4,19 @@ import { authed, json } from "@/server/route";
 // Состояние потока (раздача «Стрима», буфер) — для панели в плеере
 export const GET = authed<{ sid: string }>(async (_req, user, { sid }) => json(await playStatus(playSession(sid, user.id))));
 
-// Позиция просмотра (раз в 10 с и на паузе): сохранить, после 85% — серия просмотрена
+// Position resumes playback; played intervals alone count towards the 80% threshold.
 export const POST = authed<{ sid: string }>(async (req, user, { sid }) => {
-  const { pos } = (await req.json().catch(() => ({}))) as { pos?: number };
+  const { pos, played, room } = (await req.json().catch(() => ({}))) as { pos?: number; played?: unknown; room?: { id: string; revision: number } };
   const s = playSession(sid, user.id);
-  return json(await reportProgress(user, s, Math.max(0, Number(pos) || 0)));
+  return json(await reportProgress(user, s, Number.isFinite(pos) ? Math.max(0, Number(pos)) : 0, played, room));
 });
 
 // Закрыли плеер — запомнить позицию и остановить перекодирование
 export const DELETE = authed<{ sid: string }>(async (req, user, { sid }) => {
-  const { pos } = (await req.json().catch(() => ({}))) as { pos?: number };
+  const { pos, played } = (await req.json().catch(() => ({}))) as { pos?: number; played?: unknown };
   if (Number(pos) > 0) {
     // Сессию могли уже убрать (долго не было вестей) — тогда позиция не важна
-    try { await reportProgress(user, playSession(sid, user.id), Number(pos)); } catch { /* сессии нет */ }
+    try { await reportProgress(user, playSession(sid, user.id), Number(pos), played); } catch { /* сессии нет */ }
   }
   await stopPlayback(sid, user.id);
   return json({ ok: true });

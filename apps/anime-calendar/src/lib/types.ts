@@ -441,7 +441,8 @@ export type SharedItem = {
   addedBy: number | null;
   addedAt: number;
   members: { userId: number; status: ListStatus | null; episodes: number; score: number; updatedAt: number | null; hidden: boolean }[];
-  state: "planned" | "watching" | "done";
+  state: "proposed" | "planned" | "watching" | "done";
+  planningState?: "proposed" | "accepted";
 };
 
 export type SharedListDetail = {
@@ -451,6 +452,7 @@ export type SharedListDetail = {
   role: "owner" | "member" | "invited";
   members: SharedMember[];
   items: SharedItem[];
+  capabilities?: Record<import("./group-policy").GroupCapability, boolean>;
 };
 
 /** Кандидат в окне «Посмотрели вместе». */
@@ -489,6 +491,7 @@ export type TogetherEvent = { actor: string; anilistId: number; from: number; to
 
 /** Комментарий под тайтлом (плоский список; дерево строит клиент — lib/comments-tree.ts). */
 export type CommentItem = {
+  friend?: boolean;
   id: number;
   parentId: number | null;
   user: { id: number; name: string };

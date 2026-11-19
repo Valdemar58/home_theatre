@@ -37,7 +37,7 @@ export function NotificationsView() {
           <input type="checkbox" checked={unreadOnly} onChange={(e) => setParams({ unread: e.target.checked ? "1" : null })} className="accent-indigo-500" />
           только непрочитанные
         </label>
-        <span className="ml-auto flex gap-2">
+        <span className="ml-auto flex flex-wrap gap-2">
           <Button size="sm" disabled={!inTab} onClick={() => act.read(undefined, tab)}><CheckIcon className="h-4 w-4" />Прочитать все</Button>
           <Button size="sm" variant="ghost" onClick={async () => { if (await confirm({ title: "Удалить прочитанные уведомления?", text: "Только в этой вкладке. Непрочитанные останутся.", confirm: "Удалить", danger: true })) void act.removeRead(tab); }}>
             <TrashIcon className="h-4 w-4" />Удалить прочитанные

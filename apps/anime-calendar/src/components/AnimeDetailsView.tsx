@@ -1,9 +1,10 @@
 "use client";
 import { AnimeBooks } from "./books/AnimeBooks";
+import { DesktopDownloadLink } from "./DesktopDownloads";
 import { ArrowTopRightOnSquareIcon, FlagIcon } from "@heroicons/react/24/outline";
 import Link from "next/link";
 import { useState } from "react";
-import { useAnime, useAnimeImages, useList, useMe, useSimilar, useTagLabel } from "@/lib/client";
+import { useAnime, useAnimeImages, useList, useMe, useSimilar, useTagLabel, useTitleCast } from "@/lib/client";
 import {
   COUNTRY_LABELS, FORMAT_LABELS, GENRE_LABELS, label, LIST_LABELS, RELATION_LABELS, SEASON_LABELS, SOURCE_LABELS, STATUS_LABELS,
 } from "@/lib/labels";
@@ -23,23 +24,23 @@ import { Lightbox } from "./Lightbox";
 import { ListControl } from "./ListControl";
 import { NextEpisode, useNow } from "./NextEpisode";
 import { PlotHub } from "./PlotHub";
-import { Description, Episodes } from "./Plot";
+import { Description } from "./Plot";
 import { RequestButton } from "./RequestButton";
 import { TogetherBar } from "./TogetherBar";
 import { Scores } from "./Scores";
 import { VoicesButton } from "./VoicesButton";
-import { WatchButton } from "./WatchButton";
+import { TitleWatchStatus } from "./TitleWatchStatus";
+import { TitleSections } from "./TitleSections";
 import { TitleCard } from "./TitleCard";
 import { Videos } from "./Videos";
 import { Badge, cx, ErrorBox, Segmented, Skel, SkelText } from "./ui";
 import { Img, UpscaleBadge } from "./Img";
 
 function Fact({ name, children }: { name: string; children: React.ReactNode }) {
-  if (children === null || children === undefined || children === "" || children === "—") return null;
   return (
     <div className="flex justify-between gap-4 border-b border-gray-700/60 px-4 py-2.5 text-sm last:border-0">
       <span className="text-gray-400">{name}</span>
-      <span className="text-right font-medium text-gray-200">{children}</span>
+      <span className="min-w-0 text-right font-medium text-gray-200">{children || "—"}</span>
     </div>
   );
 }
@@ -77,6 +78,7 @@ export function AnimeDetailsView({ id, openVoices, together, undo, comment }: {
   const { data: me } = useMe();
   const { data: gallery } = useAnimeImages(id);
   const { data: similar } = useSimilar(id);
+  const { data: cast, error: castError } = useTitleCast(id);
   const tagLabel = useTagLabel();
   const { byId: myList } = useList();
   const now = useNow();
@@ -85,8 +87,6 @@ export function AnimeDetailsView({ id, openVoices, together, undo, comment }: {
   const [simSort, setSimSort] = useState<"similarity" | "match">("similarity");
   // Индекс в полноэкранном просмотре: 0 — постер из шапки, дальше — галерея (shot + 1)
   const [viewer, setViewer] = useState<number | null>(null);
-  // «Найти серию» у кнопки «Смотреть» — открыть окно озвучек
-  const [find, setFind] = useState(0);
 
   if (isLoading) return <TitlePageSkeleton />;
   if (error || !a) return <ErrorBox error={error ?? "Не найдено"} />;
@@ -164,10 +164,12 @@ export function AnimeDetailsView({ id, openVoices, together, undo, comment }: {
             </div>
             <MatchBadge id={a.id} />
             <div className="flex flex-wrap items-center gap-3 pt-2">
-              <WatchButton anilistId={a.id} watched={watched} onFind={() => setFind((n) => n + 1)} />
+              <TitleWatchStatus media={a} watched={watched} now={now} />
               <ListControl media={a} />
+              <details className="relative"><summary className="cursor-pointer rounded-lg px-3 py-2 text-sm text-gray-300 hover:bg-gray-800">Ещё</summary><div className="flex flex-wrap items-center gap-3 py-3">
               <RequestButton media={a} />
-              <VoicesButton media={a} autoFetch initialOpen={openVoices || find} />
+              <DesktopDownloadLink id={a.id} name={displayTitle(a.title)} />
+              <VoicesButton media={a} autoFetch initialOpen={openVoices} /></div></details>
               <EpisodeAlerts id={a.id} airing={a.status === "RELEASING" || a.status === "NOT_YET_RELEASED"} />
             </div>
             <TogetherBar media={a} together={together} undo={undo} />
@@ -199,13 +201,23 @@ export function AnimeDetailsView({ id, openVoices, together, undo, comment }: {
           </div>
         )}
 
-        <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_20rem]">
-          <div className="min-w-0 space-y-8">
-            <Description media={a} />
+        <div className="title-layout mt-8">
+          <div className="title-nav-slot"><TitleSections sections={[
+            { id: "title-overview", label: "Описание" },
+            { id: "title-story", label: "Мир и персонажи" },
+            { id: "title-media", label: "Кадры и видео" },
+            { id: "title-franchise", label: "Франшиза" },
+            ...(similar?.length ? [{ id: "title-similar", label: "Похожее" }] : []),
+            { id: "title-discussion", label: "Обсуждение" },
+          ]} /></div>
+          <div className="title-content min-w-0 space-y-10">
+            <section id="title-overview" tabIndex={-1} className="title-section"><Description media={a} /></section>
 
-            <PlotHub media={a} />
+            <section id="title-story" tabIndex={-1} className="title-section">{castError || (cast && !cast.built && !cast.members.length)
+              ? <div><h2 className="text-xl font-bold">Мир и персонажи</h2><p className="mt-3 text-sm text-gray-400">{castError ? "Не удалось загрузить информацию о персонажах." : "Информация о персонажах пока не добавлена."}</p><Link href={`/anime/${a.id}/characters`} className="mt-3 inline-block text-sm text-accent-300 hover:text-accent-200">Открыть персонажей</Link></div>
+              : <PlotHub media={a} />}</section>
 
-            <Impressions media={a} />
+            <section id="title-media" tabIndex={-1} className="title-section space-y-6">
 
             {/* Галерея грузится отдельно — место под неё заранее, чтобы серии ниже не прыгали */}
             {!gallery && (
@@ -214,7 +226,7 @@ export function AnimeDetailsView({ id, openVoices, together, undo, comment }: {
                 <Skel className="aspect-video w-full rounded-xl" />
               </section>
             )}
-            {images.length > 1 && (
+            {images.length > 0 && (
               <section>
                 <h2 className="mb-3 text-xl font-bold">Кадры и арт <span className="text-base font-normal text-gray-500">{images.length}</span></h2>
                 <Gallery images={images} index={shot} onIndex={setShot} onOpen={() => setViewer(shot + offset)} />
@@ -223,7 +235,12 @@ export function AnimeDetailsView({ id, openVoices, together, undo, comment }: {
 
             {gallery && <Videos videos={gallery.videos} />}
 
-            <Episodes media={a} entry={myList.get(a.id)} now={now} />
+            {gallery && images.length === 0 && !gallery.videos.length && <div><h2 className="text-xl font-bold">Кадры и видео</h2><p className="mt-3 text-sm text-gray-400">Кадры и видео пока не добавлены.</p></div>}
+            </section>
+
+            <section id="title-franchise" tabIndex={-1} className="title-section space-y-6">
+
+            {!a.relations.length && <div><h2 className="text-xl font-bold">Франшиза</h2><Link href={`/franchise/${a.id}`} className="mt-3 inline-block text-sm text-accent-300 hover:text-accent-200">Открыть франшизу и источники</Link></div>}
 
             <AnimeBooks id={a.id} />
 
@@ -242,8 +259,10 @@ export function AnimeDetailsView({ id, openVoices, together, undo, comment }: {
               </section>
             )}
 
+            </section>
+
             {similar && similar.length > 0 && (
-              <section>
+              <section id="title-similar" tabIndex={-1} className="title-section">
                 <div className="mb-3 flex flex-wrap items-center gap-3">
                   <h2 className="mr-auto text-xl font-bold">Похожее</h2>
                   <Segmented value={simSort} onChange={setSimSort}
@@ -264,10 +283,10 @@ export function AnimeDetailsView({ id, openVoices, together, undo, comment }: {
               </section>
             )}
 
-            <Discussion anilistId={a.id} highlight={comment} />
+            <section id="title-discussion" tabIndex={-1} className="title-section"><Discussion anilistId={a.id} highlight={comment} /></section>
           </div>
 
-          <aside className="space-y-4">
+          <aside className="title-facts min-w-0 space-y-5">
             <FriendOpinions id={a.id} />
             {a.genres.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
@@ -288,10 +307,13 @@ export function AnimeDetailsView({ id, openVoices, together, undo, comment }: {
                   <span className="capitalize">{formatAiring(airDay).weekday}</span>, {formatAiring(airDay).time}
                 </Fact>
               )}
+              {!airDay && <Fact name="День выхода">Не объявлен</Fact>}
               <Fact name="Страна">{label(COUNTRY_LABELS, a.countryOfOrigin)}</Fact>
               <Fact name="Первоисточник">{label(SOURCE_LABELS, a.source)}</Fact>
+              <Fact name="Студия">{a.studios.join(", ")}</Fact>
               <Fact name="Популярность">{a.popularity.toLocaleString("ru-RU")}</Fact>
             </div>
+            <Impressions media={a} />
             <div className="flex flex-col gap-2 text-sm">
               <a className="inline-flex items-center gap-1 text-indigo-300 hover:text-indigo-200" href={`https://anilist.co/anime/${a.id}`} target="_blank" rel="noreferrer">
                 AniList <ArrowTopRightOnSquareIcon className="h-4 w-4" />

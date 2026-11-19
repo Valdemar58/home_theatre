@@ -13,7 +13,7 @@ import { Badge, Button, cx, Spinner } from "./ui";
 
 /** Где смотреть серию — плеер календаря. */
 export function useWatchHref(anilistId: number) {
-  return (s: EpisodeStatus) => (s.itemId ? `/anime/${anilistId}/watch/${s.ep}` : null);
+  return (s: EpisodeStatus) => (s.state !== "upcoming" ? `/anime/${anilistId}/watch/${s.ep}` : null);
 }
 
 /** Подготовить серию «Стрима» (буфер TorrServer, уведомление — когда можно смотреть без остановок). */
@@ -21,7 +21,7 @@ export function usePrepare(anilistId: number) {
   const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
   const prepare = async (s: EpisodeStatus) => {
-    if (!s.hash || !s.index) return;
+    if (!s.hash || s.index == null) return;
     setBusy(true);
     try {
       await api("/api/downloads/prebuffer", { method: "POST", json: { hash: s.hash, index: s.index } });
@@ -70,15 +70,8 @@ export function WatchButton({ anilistId, watched, onFind }: { anilistId: number;
       </span>
     );
   }
-  if (t.state === "downloading") {
-    return (
-      <Button disabled title="Серия качается в библиотеку">
-        <ArrowDownTrayIcon className="h-4 w-4" /> {t.ep} серия качается · {Math.round((t.pct ?? 0) * 100)}%{t.etaSec ? ` · ~${waitText(t.etaSec)}` : ""}
-      </Button>
-    );
-  }
-  if (t.state === "aired") {
-    return <Button variant="primary" onClick={onFind}><MagnifyingGlassIcon className="h-4 w-4" /> Найти {n}</Button>;
+  if (t.state === "downloading" || t.state === "aired") {
+    return <Link href={`/anime/${anilistId}/watch/${t.ep}`}><Button variant="primary"><PlayIcon className="h-4 w-4" />Смотреть {n}</Button></Link>;
   }
   return null;
 }

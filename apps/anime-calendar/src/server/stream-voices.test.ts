@@ -53,7 +53,7 @@ describe("ссылки на озвучки рядом с .strm", () => {
     expect(fs.readdirSync(season).sort()).toEqual([
       "Slime - S01E01.en.ENG Sound.mka", "Slime - S01E01.ru.AniLibria.mka", "Slime - S01E01.ru.Dream Cast.mka", "Slime - S01E01.strm",
     ]);
-    expect(fs.readlinkSync(path.join(season, "Slime - S01E01.ru.AniLibria.mka"))).toBe(`../../.voices/${hash}/5.mka`);
+    expect(fs.readlinkSync(path.join(season, "Slime - S01E01.ru.AniLibria.mka"))).toBe(path.join("..", "..", ".voices", hash, "5.mka"));
     expect(fs.existsSync(path.join(STREAM, ".voices", ".ignore"))).toBe(true);
   });
 });

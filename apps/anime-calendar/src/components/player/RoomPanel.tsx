@@ -118,7 +118,7 @@ function InRoom({ room, handle, friends, onLeave }: { room: RoomView; handle: Ro
   const isOwner = room.me === room.ownerId;
   const [inviting, setInviting] = useState(false);
   const names = new Map(room.members.map((m) => [m.id, m.name]));
-  const outside = friends.filter((f) => !room.members.some((m) => m.id === f.id && m.status !== "left"));
+  const outside = friends.filter((f) => (!room.groupId || room.members.some(m => m.id === f.id)) && !room.members.some((m) => m.id === f.id && m.status !== "left"));
   const shown = room.members.filter((m) => m.status !== "left" || m.presence?.online);
   const waiting = room.state.hold.map((u) => names.get(u)).filter(Boolean);
   return (
@@ -148,7 +148,7 @@ function InRoom({ room, handle, friends, onLeave }: { room: RoomView; handle: Ro
                   )}
                 </p>
               </div>
-              {isOwner && room.preset === "host" && !m.host && m.status === "joined" && (
+              {isOwner && !room.groupId && room.preset === "host" && !m.host && m.status === "joined" && (
                 <button onClick={() => void handle.act({ action: "grant", user: m.id, control: !m.control })}
                   className="rounded px-1.5 py-0.5 text-xs text-gray-400 ring-1 ring-gray-600 hover:text-white" title="Право ставить паузу, перематывать и менять серию">
                   {m.control ? "забрать" : "дать пульт"}
@@ -159,7 +159,7 @@ function InRoom({ room, handle, friends, onLeave }: { room: RoomView; handle: Ro
         })}
       </ul>
 
-      {isOwner && (
+      {isOwner && !room.groupId && (
         <div className="flex rounded-md bg-gray-900/60 p-0.5 text-xs ring-1 ring-gray-700">
           {([["equal", "Все управляют"], ["host", "Организатор"]] as const).map(([k, l]) => (
             <button key={k} onClick={() => void handle.act({ action: "preset", preset: k })}
@@ -180,7 +180,7 @@ function InRoom({ room, handle, friends, onLeave }: { room: RoomView; handle: Ro
         </div>
       )}
 
-      {inviting ? (
+      {inviting && room.canInvite !== false ? (
         <div className="space-y-1 border-t border-gray-700 pt-2">
           {outside.length ? outside.map((f) => (
             <button key={f.id} onClick={() => void handle.act({ action: "invite", users: [f.id] })}
@@ -191,7 +191,7 @@ function InRoom({ room, handle, friends, onLeave }: { room: RoomView; handle: Ro
         </div>
       ) : null}
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" onClick={() => setInviting((x) => !x)}>{inviting ? "Готово" : "Позвать"}</Button>
+        <Button size="sm" disabled={room.canInvite === false} onClick={() => setInviting((x) => !x)}>{inviting ? "Готово" : "Позвать"}</Button>
         <Button size="sm" variant="ghost" onClick={async () => { await handle.act({ action: isOwner ? "end" : "leave" }); onLeave(); }}>
           {isOwner ? "Закончить" : "Выйти"}
         </Button>

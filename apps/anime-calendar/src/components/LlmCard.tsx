@@ -84,9 +84,9 @@ export function LlmCard() {
       </div>
 
       <div className="space-y-2">
-        <div className="flex items-baseline justify-between">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
           <span className="text-gray-300">Расход в этом месяце</span>
-          <span className="tabular-nums text-gray-300">{usd(st.month.spent)} из {usd(st.month.budget)}</span>
+          <span className="whitespace-nowrap tabular-nums text-gray-300">{usd(st.month.spent)} из {usd(st.month.budget)}</span>
         </div>
         <div className="h-1.5 overflow-hidden rounded-full bg-gray-700">
           <div className={cx("h-full rounded-full", spentShare >= 1 ? "tone-negative solid" : spentShare > 0.8 ? "tone-warning solid" : "tone-accent solid")}
@@ -162,7 +162,7 @@ function LlmCardSkeleton() {
       <div className="flex flex-wrap gap-2">{["w-44", "w-52", "w-36"].map((w) => <Skel key={w} className={cx("h-6 rounded-full", w)} />)}</div>
       <div className="space-y-2"><Skel className="h-9 w-96 max-w-full rounded-lg" /><Skel className="h-4 w-80 max-w-full" /></div>
       <div className="space-y-2">
-        <div className="flex items-baseline justify-between"><span className="text-gray-300">Расход в этом месяце</span><Skel className="h-4 w-24" /></div>
+        <div className="flex flex-wrap items-baseline justify-between gap-2"><span className="text-gray-300">Расход в этом месяце</span><Skel className="h-4 w-24" /></div>
         <Skel className="h-1.5 w-full rounded-full" />
         <p className="text-xs text-gray-500">Бюджет исчерпан — задачи до конца месяца идут локально.</p>
       </div>

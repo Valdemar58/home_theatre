@@ -1,4 +1,6 @@
 import "server-only";
+import { DEFAULT_GROUP_PERMISSIONS, GROUP_CAPABILITIES } from "@/lib/group-policy";
+import { groupAccess, requireGroupCapability } from "./group-policy";
 import { defaultUpTo, episodesRange, togetherChange, type MemberState } from "@/lib/together-rules";
 import type {
   CoWatcher, SharedItem, SharedListDetail, SharedListSummary, SharedMember, WatchSessionInfo,
@@ -8,6 +10,7 @@ import { ensureMedia, getMedia, getRow, logWatch, pushSoon, upsertEntry, type En
 import { notify, resolveActions } from "./notifications";
 import { ApiError } from "./route";
 import { areFriends, friendIds } from "./social";
+import { groupEpisodes } from "./meeting-history";
 
 // Совместный просмотр: общие списки, «посмотрели вместе» (с отменой) и режим «Смотрим вместе с…».
 // Статусы участников в общем списке не хранятся отдельно — это их личные записи (живые данные);
@@ -42,7 +45,7 @@ export function requireMember(listId: number, userId: number) {
 export function createList(owner: { id: number; name: string }, name: string, invite: number[]): number {
   const clean = name.trim().slice(0, 80);
   if (!clean) throw new ApiError(400, "Нужно название");
-  const id = Number(db.prepare("INSERT INTO shared_lists (name, owner_id, created_at) VALUES (?, ?, ?)").run(clean, owner.id, now()).lastInsertRowid);
+  const id = Number(db.prepare("INSERT INTO shared_lists (name, owner_id, created_at, permissions) VALUES (?, ?, ?, ?)").run(clean, owner.id, now(), JSON.stringify(DEFAULT_GROUP_PERMISSIONS)).lastInsertRowid);
   db.prepare("INSERT INTO shared_list_members (list_id, user_id, status, invited_by, joined_at) VALUES (?, ?, 'member', NULL, ?)").run(id, owner.id, now());
   for (const u of invite) inviteToList(owner, id, u);
   return id;
@@ -50,6 +53,7 @@ export function createList(owner: { id: number; name: string }, name: string, in
 
 export function inviteToList(by: { id: number; name: string }, listId: number, userId: number) {
   requireMember(listId, by.id);
+  requireGroupCapability(listId, by.id, "invite");
   if (!areFriends(by.id, userId)) throw new ApiError(400, "Пригласить можно только друга");
   if (roleIn(listId, userId)) return;
   db.prepare("INSERT INTO shared_list_members (list_id, user_id, status, invited_by, joined_at) VALUES (?, ?, 'invited', ?, ?)").run(listId, userId, by.id, now());
@@ -84,8 +88,11 @@ export function deleteList(userId: number, listId: number) {
 
 export async function addItem(user: { id: number; name: string }, listId: number, anilistId: number) {
   requireMember(listId, user.id);
-  const media = await ensureMedia(anilistId);
-  const res = db.prepare("INSERT INTO shared_list_items (list_id, anilist_id, added_by, added_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING").run(listId, anilistId, user.id, now());
+  requireGroupCapability(listId, user.id, "suggest");
+  await ensureMedia(anilistId);
+  // Re-check after the asynchronous metadata fetch: membership may have changed.
+  requireGroupCapability(listId, user.id, "suggest");
+  const res = db.prepare("INSERT INTO shared_list_items (list_id, anilist_id, added_by, added_at, planning_state) VALUES (?, ?, ?, ?, 'proposed') ON CONFLICT DO NOTHING").run(listId, anilistId, user.id, now());
   if (!res.changes) return;
   const list = listRow(listId)!;
   for (const m of membersOf(listId)) if (m.user_id !== user.id && m.status === "member")
@@ -94,6 +101,7 @@ export async function addItem(user: { id: number; name: string }, listId: number
 
 export function removeItem(userId: number, listId: number, anilistId: number) {
   requireMember(listId, userId);
+  requireGroupCapability(listId, userId, "queue");
   db.prepare("DELETE FROM shared_list_items WHERE list_id = ? AND anilist_id = ?").run(listId, anilistId);
 }
 
@@ -136,8 +144,8 @@ export function myLists(userId: number): SharedListSummary[] {
 }
 
 export function itemsOf(listId: number, members: MemberRow[], ids?: number[]): SharedItem[] {
-  const rows = db.prepare<[number], { anilist_id: number; added_by: number | null; added_at: number }>(
-    "SELECT anilist_id, added_by, added_at FROM shared_list_items WHERE list_id = ? ORDER BY added_at DESC").all(listId)
+  const rows = db.prepare<[number], { anilist_id: number; added_by: number | null; added_at: number; planning_state: "proposed" | "accepted" }>(
+    "SELECT anilist_id, added_by, added_at, planning_state FROM shared_list_items WHERE list_id = ? ORDER BY added_at DESC").all(listId)
     .filter((r) => !ids || ids.includes(r.anilist_id));
   const active = members.filter((m) => m.status === "member");
   const entries = entriesOf(active.map((m) => m.user_id), rows.map((r) => r.anilist_id));
@@ -150,7 +158,10 @@ export function itemsOf(listId: number, members: MemberRow[], ids?: number[]): S
       if (e?.private) return { userId: m.user_id, status: null, episodes: 0, score: 0, updatedAt: null, hidden: true };
       return { userId: m.user_id, status: e?.status ?? null, episodes: e?.episodes ?? 0, score: e?.score ?? 0, updatedAt: e?.updated_at ?? null, hidden: false };
     });
-    out.push({ media, addedBy: r.added_by, addedAt: r.added_at, members: states, state: itemState(states) });
+    const watched = groupEpisodes(listId,r.anilist_id);
+    const completed = media.status === "FINISHED" && media.episodes && Array.from({length:media.episodes},(_,i)=>i+1).every(ep=>watched.includes(ep));
+    out.push({ media, addedBy: r.added_by, addedAt: r.added_at, members: states, planningState: r.planning_state,
+      state: r.planning_state === "proposed" ? "proposed" : completed ? "done" : watched.length ? "watching" : "planned" });
   }
   return out;
 }
@@ -160,10 +171,12 @@ export function listDetail(userId: number, listId: number): SharedListDetail {
   const l = listRow(listId);
   if (!l || !role) throw new ApiError(404, "Список не найден");
   const members = membersOf(listId);
+  const access = role === "invited" ? null : groupAccess(listId, userId);
   return {
     id: l.id, name: l.name, ownerId: l.owner_id, role,
     members: members.map((m) => ({ id: m.user_id, name: m.name, status: m.status })),
     items: role === "invited" ? [] : itemsOf(listId, members),
+    capabilities: !access ? undefined : Object.fromEntries(GROUP_CAPABILITIES.map(k => [k, access.can(k)])) as SharedListDetail["capabilities"],
   };
 }
 

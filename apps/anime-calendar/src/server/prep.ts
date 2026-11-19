@@ -65,6 +65,7 @@ function writeIndex() {
   fs.writeFileSync(tmp, JSON.stringify(ready));
   fs.renameSync(tmp, path.join(PREP_DIR(), "index.json"));
 }
+export const refreshPreparedIndex = () => writeIndex();
 
 /** Серия скачана целиком (её отдают с диска). */
 export function isPrepared(hash: string, index: number): boolean {

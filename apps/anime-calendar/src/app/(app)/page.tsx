@@ -1,5 +1,2 @@
-import { redirect } from "next/navigation";
-
-export default function Home() {
-  redirect("/calendar");
-}
+import { HomeView } from "@/components/HomeView";
+export default function Home() { return <HomeView />; }

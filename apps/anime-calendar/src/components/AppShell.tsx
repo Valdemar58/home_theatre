@@ -26,12 +26,14 @@ import {
   UsersIcon,
   UserGroupIcon,
   Bars3Icon,
+  HomeIcon,
 } from "@heroicons/react/24/outline";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { api, useMe } from "@/lib/client";
 import { SIDEBAR_COOKIE, type SidebarMode } from "@/lib/sidebar";
+import { SidebarNavigation } from "./SidebarNavigation";
 import { Avatar } from "./Avatar";
 import { HoverCardHost } from "./HoverCard";
 import { ModeProvider, ModeSwitch, sectionHref, sectionOf, useMode, type Section } from "./Mode";
@@ -44,6 +46,7 @@ import { cx } from "./ui";
 
 // section — пункт с содержимым по режиму (аниме или книги, TASKS 5.10)
 const NAV: { href: string; label: string; icon: typeof CalendarDaysIcon; section?: Section; bookLabel?: string }[] = [
+  { href: "/", label: "Главная", icon: HomeIcon },
   { href: "/calendar", label: "Календарь", icon: CalendarDaysIcon, section: "calendar", bookLabel: "Выход глав" },
   { href: "/browse", label: "Каталог", icon: Squares2X2Icon, section: "catalog" },
   { href: "/lists", label: "Мои списки", icon: QueueListIcon, section: "lists" },
@@ -84,14 +87,14 @@ function useNav(pathname: string) {
   return (items: typeof NAV) => items.map((n) => {
     const href = n.section ? sectionHref(n.section, mode) : n.href;
     const label = n.section && mode !== "anime" ? n.bookLabel ?? n.label : n.label;
-    const active = n.section ? section === n.section : pathname.startsWith(n.href);
+    const active = n.section ? section === n.section : (n.href === "/" ? pathname === "/" : pathname.startsWith(n.href));
     return { ...n, href, label, active };
   });
 }
 
 function Logo({ compact, textClass }: { compact?: boolean; textClass?: string }) {
   return (
-    <Link href="/calendar" className="flex shrink-0 items-center gap-2 px-2">
+    <Link href="/" className="flex shrink-0 items-center gap-2 px-2">
       <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-linear-to-br from-indigo-600 to-purple-600 text-lg font-black">
         A
       </span>
@@ -105,7 +108,7 @@ function Logo({ compact, textClass }: { compact?: boolean; textClass?: string })
  * режим «по ширине» задан только классами (xl:), поэтому первая отрисовка тоже без мигания.
  * Свёрнутая при наведении раскрывается поверх страницы (как вкладки слева в браузере).
  */
-function useSidebar(initial: SidebarMode) {
+function useSidebar(initial: SidebarMode, menuOpen = false) {
   const [mode, setMode] = useState<SidebarMode>(initial);
   const [hover, setHover] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -128,13 +131,14 @@ function useSidebar(initial: SidebarMode) {
   };
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
   const pick = (collapsed: string, auto: string, expanded: string) => (mode === "collapsed" ? collapsed : mode === "auto" ? auto : expanded);
+  const overlay = hover || (menuOpen && mode !== "expanded");
   return {
-    mode, toggle, enter, leave, overlay: hover,
-    width: hover ? "w-64" : pick("w-16", "w-16 xl:w-64", "w-64"),
+    mode, toggle, enter, leave, overlay,
+    width: overlay ? "w-64" : pick("w-16", "w-16 xl:w-64", "w-64"),
     pad: pick("md:pl-16", "md:pl-16 xl:pl-64", "md:pl-64"),
     // Подписи в свёрнутой панели прозрачны (иначе из-под иконок торчат первые буквы); линия вместо заголовка раздела — наоборот
-    label: hover ? "" : pick("opacity-0", "opacity-0 xl:opacity-100", ""),
-    rule: hover ? "opacity-0" : pick("", "xl:opacity-0", "opacity-0"),
+    label: overlay ? "" : pick("opacity-0", "opacity-0 xl:opacity-100", ""),
+    rule: overlay ? "opacity-0" : pick("", "xl:opacity-0", "opacity-0"),
     title: (s: string) => (mode === "expanded" ? undefined : s),
   };
 }
@@ -144,27 +148,19 @@ const Label = ({ cls, children }: { cls: string; children: React.ReactNode }) =>
   <span className={cx("transition-opacity duration-150", cls)}>{children}</span>
 );
 
-/** Заголовок раздела; в свёрнутой панели — линия на том же месте и той же высоты (иконки ниже не прыгают). */
-function Section({ bar, children }: { bar: { label: string; rule: string }; children: React.ReactNode }) {
-  return (
-    <div className="relative h-6">
-      <p className={cx("absolute inset-x-0 top-0 whitespace-nowrap px-3 text-xs font-semibold uppercase leading-6 tracking-wider text-gray-500 transition-opacity duration-150", bar.label)}>{children}</p>
-      <div className={cx("absolute inset-x-2 top-1/2 border-t border-gray-700 transition-opacity duration-150", bar.rule)} />
-    </div>
-  );
-}
-
 type ShellProps = { userName: string; sidebar?: SidebarMode; children: React.ReactNode };
 
 export function AppShell(props: ShellProps) {
   return <ModeProvider><Shell {...props} /></ModeProvider>;
 }
 
-function Shell({ userName, sidebar = "auto", children }: ShellProps) {
+function Shell({ userName, sidebar = "collapsed", children }: ShellProps) {
   const pathname = usePathname();
+  useEffect(() => { const device = new URLSearchParams(window.location.search).get("desktopDevice"); if (device && /^[a-f0-9]{24}$/.test(device)) sessionStorage.setItem("home-theater-device", device); }, []);
   const nav = useNav(pathname);
   const { data: me } = useMe();
-  const bar = useSidebar(sidebar);
+  const [moreOpen,setMoreOpen]=useState(false);
+  const bar = useSidebar(sidebar,moreOpen);
   const [mobileMenu, setMobileMenu] = useState(false);
   useEffect(() => setMobileMenu(false), [pathname]);
   // Приглашения в группы — значком у пункта меню
@@ -178,64 +174,17 @@ function Shell({ userName, sidebar = "auto", children }: ShellProps) {
     <div className="min-h-screen">
       {/* Боковая панель (десктоп) */}
       <aside onMouseEnter={bar.enter} onMouseLeave={bar.leave}
-        className={cx("fixed inset-y-0 left-0 z-30 hidden flex-col overflow-hidden border-r border-gray-800 backdrop-blur transition-[width] duration-200 md:flex",
+        className={cx("fixed inset-y-0 left-0 z-50 hidden flex-col border-r border-gray-800 backdrop-blur transition-[width] duration-200 md:flex",
           bar.width, bar.overlay ? "bg-gray-800/95 shadow-2xl" : "bg-gray-800/60")}>
-        <div className="flex h-16 shrink-0 items-center px-1">
+        <div className="flex h-16 shrink-0 items-center overflow-hidden px-1">
           <Logo textClass={bar.label} />
         </div>
-        <nav className="mt-4 flex-1 space-y-1 overflow-y-auto overflow-x-hidden px-3">
-          {nav(NAV.filter((n) => me?.isAdmin || n.href !== "/downloads")).map(({ href, label, icon: Icon, active }) => {
-            return (
-              <Link
-                key={href}
-                href={href}
-                title={bar.title(label)}
-                className={cx(
-                  "flex items-center gap-3 whitespace-nowrap rounded-md px-2.5 py-2.5 text-base font-medium transition",
-                  active ? "bg-linear-to-br from-indigo-600 to-purple-600 text-white shadow" : "text-gray-300 hover:bg-gray-700/60 hover:text-white",
-                )}
-              >
-                <span className="relative shrink-0">
-                  <Icon className="h-6 w-6" />
-                  {href === "/groups" && groupInvites > 0 && (
-                    <span className="absolute -right-1.5 -top-1 rounded-full bg-indigo-500 px-1 text-[10px] font-semibold leading-4 text-white">{groupInvites}</span>
-                  )}
-                </span>
-                <Label cls={bar.label}>{label}</Label>
-              </Link>
-            );
-          })}
-          {me && me.services.length > 0 && (
-            <div className="pt-4">
-              <Section bar={bar}>Сервисы</Section>
-              {me.services.map((sv) => {
-                const Icon = SERVICE_ICONS[sv.id] ?? ArrowTopRightOnSquareIcon;
-                return (
-                  <a key={sv.id} href={browserUrl(sv.url)} target="_blank" rel="noreferrer" title={bar.mode === "expanded" ? sv.hint : sv.name}
-                    className="group flex items-center gap-3 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium text-gray-400 transition hover:bg-gray-700/60 hover:text-white">
-                    <Icon className="h-5 w-5 shrink-0" />
-                    <Label cls={bar.label}>{sv.name}</Label>
-                    <ArrowTopRightOnSquareIcon className="ml-auto h-3.5 w-3.5 opacity-0 transition group-hover:opacity-60" />
-                  </a>
-                );
-              })}
-            </div>
-          )}
-          {me?.isAdmin && (
-            <div className="pt-4">
-              <Section bar={bar}>Для админа</Section>
-              {ADMIN_NAV.map(({ href, label, icon: Icon }) => (
-                <Link key={href} href={href} title={bar.title(label)}
-                  className={cx("flex items-center gap-3 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition",
-                    pathname.startsWith(href) ? "bg-gray-700 text-white" : "text-gray-400 hover:bg-gray-700/60 hover:text-white")}>
-                  <Icon className="h-5 w-5 shrink-0" />
-                  <Label cls={bar.label}>{label}</Label>
-                </Link>
-              ))}
-            </div>
-          )}
-        </nav>
-        <div className="px-3 pb-1">
+        <SidebarNavigation labelClass={bar.label} onOpenChange={setMoreOpen} items={[
+          ...nav(NAV).map(n=>({...n,badge:n.href==="/groups"?groupInvites:0})),
+          ...(me?.services??[]).map(s=>({href:browserUrl(s.url),label:s.name,icon:SERVICE_ICONS[s.id]??ArrowTopRightOnSquareIcon,external:true,group:"Сервисы"})),
+          ...(me?.isAdmin?ADMIN_NAV.map(n=>({...n,active:(n.href === "/" ? pathname === "/" : pathname.startsWith(n.href)),group:"Для админа"})):[]),
+        ]}/>
+        <div className="overflow-hidden px-3 pb-1">
           <button onClick={bar.toggle} title={bar.mode === "expanded" ? "Свернуть панель до иконок" : "Закрепить панель развёрнутой"}
             className="flex w-full items-center gap-3 whitespace-nowrap rounded-md px-3 py-2 text-sm text-gray-500 transition hover:bg-gray-700/60 hover:text-white">
             {/* «По ширине»: на широком экране панель развёрнута — кнопка сворачивает */}
@@ -247,7 +196,7 @@ function Shell({ userName, sidebar = "auto", children }: ShellProps) {
             </Label>
           </button>
         </div>
-        <div className="border-t border-gray-700/60 px-2 py-3">
+        <div className="overflow-hidden border-t border-gray-700/60 px-2 py-3">
           {/* Ширина постоянная: при сворачивании ничего не переносится, правое просто уходит за край */}
           <div className="flex w-60 items-center justify-between gap-2 rounded-md px-1 py-2">
             <Link href={me ? `/users/${me.id}` : "#"} title="Мой профиль" className="flex min-w-0 items-center gap-2 rounded-md hover:text-indigo-300">
@@ -283,7 +232,7 @@ function Shell({ userName, sidebar = "auto", children }: ShellProps) {
 
       <Drawer open={mobileMenu} onClose={() => setMobileMenu(false)} title="Меню">
         <nav aria-label="Все разделы" className="space-y-1">
-          {nav(NAV.filter((n) => me?.isAdmin || n.href !== "/downloads")).map(({ href, label, icon: Icon, active }) => (
+          {nav(NAV).map(({ href, label, icon: Icon, active }) => (
             <Link key={href} href={href} onClick={() => setMobileMenu(false)}
               className={cx("flex items-center gap-3 rounded-lg px-3 py-3", active ? "bg-indigo-600 text-white" : "hover:bg-gray-800")}>
               <Icon className="h-6 w-6 shrink-0" />{label}

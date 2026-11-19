@@ -17,7 +17,7 @@ export function buildTree(items: CommentItem[], rootId: number | null = null): C
   }
   const build = (parent: number | null, depth: number): CommentNode[] => {
     const list = [...(byParent.get(parent) ?? [])].sort((a, b) =>
-      parent === rootId && depth === 0 ? b.createdAt - a.createdAt : a.createdAt - b.createdAt);
+      parent === rootId && depth === 0 ? b.createdAt - a.createdAt || b.id-a.id : a.createdAt - b.createdAt || a.id-b.id);
     return list.map((c) => {
       const children = build(c.id, depth + 1);
       return { ...c, children, depth, total: children.reduce((s, ch) => s + 1 + ch.total, 0) };

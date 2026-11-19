@@ -47,6 +47,7 @@ export function listComments(viewer: { id: number; is_admin: number }, anilistId
     createdAt: r.created_at, editedAt: r.edited_at,
     deleted: Boolean(r.deleted),
     mine: r.user_id === viewer.id,
+    friend: r.user_id !== viewer.id && areFriends(viewer.id,r.user_id),
     score: r.deleted ? null : scoreOf(r.user_id),
   }));
 }

@@ -7,6 +7,12 @@ import { cacheClassOf } from "../src/lib/freshness";
 import { kindInfo } from "../src/lib/notice-kinds";
 
 const SCHEMA = `
+CREATE TABLE IF NOT EXISTS playback_coverage (
+  sid TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  anilist_id INTEGER NOT NULL, ep INTEGER NOT NULL, duration REAL NOT NULL,
+  item_key TEXT, watched INTEGER NOT NULL DEFAULT 0,
+  intervals TEXT NOT NULL DEFAULT '[]', updated_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS playback_coverage_user ON playback_coverage(user_id, anilist_id, ep);
 CREATE TABLE IF NOT EXISTS book_source_state (
   book_id INTEGER NOT NULL, provider TEXT NOT NULL, source_id TEXT NOT NULL, value TEXT NOT NULL,
   PRIMARY KEY(book_id, provider, source_id));
@@ -155,12 +161,6 @@ function migrate(db: Db) {
     const cols = columns(table);
     if (cols.size && !cols.has(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
   };
-  addCol("shared_lists", "preset", "TEXT NOT NULL DEFAULT 'equal'");
-  addCol("shared_list_members", "control", "INTEGER NOT NULL DEFAULT 0");
-  addCol("shared_list_items", "queue_pos", "INTEGER");
-  addCol("shared_list_items", "voice", "TEXT");
-  addCol("watch_rooms", "group_id", "INTEGER");
-  addCol("watch_rooms", "session_id", "INTEGER");
   // Единый вход (TASKS 7.9): учётка Authentik (uuid), почта, блокировка, кто пригласил
   addCol("users", "auth_sub", "TEXT");
   addCol("users", "email", "TEXT");
@@ -908,6 +908,87 @@ function migrate(db: Db) {
       error ? `${m[1]} — не получилось` : (r.body ?? m[1]), error ? r.body : null,
       JSON.stringify({ ...(r.data ? JSON.parse(r.data) : {}), subject: m[2], error }), r.id);
   }
+  addCol("shared_lists", "permissions", "TEXT");
+  addCol("group_sessions", "plan_json", "TEXT");
+  addCol("group_sessions", "revision", "INTEGER NOT NULL DEFAULT 1");
+  addCol("shared_list_items", "planning_state", "TEXT NOT NULL DEFAULT 'accepted'");
+  addCol("shared_lists", "preset", "TEXT NOT NULL DEFAULT 'equal'");
+  addCol("shared_list_members", "control", "INTEGER NOT NULL DEFAULT 0");
+  addCol("shared_list_items", "queue_pos", "INTEGER");
+  addCol("shared_list_items", "voice", "TEXT");
+  addCol("watch_rooms", "group_id", "INTEGER");
+  addCol("watch_rooms", "session_id", "INTEGER");
+  db.exec(`
+
+CREATE TABLE IF NOT EXISTS watch_cycles (
+ id TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ anilist_id INTEGER NOT NULL, baseline INTEGER NOT NULL DEFAULT 0,
+ prior_completed INTEGER NOT NULL DEFAULT 0, started_at BIGINT, last_activity BIGINT NOT NULL,
+ ended_at BIGINT, outcome TEXT, idle_since BIGINT, created_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS watch_cycles_user ON watch_cycles(user_id, anilist_id);
+CREATE TABLE IF NOT EXISTS watch_episode_events (
+ id TEXT PRIMARY KEY, cycle_id TEXT NOT NULL REFERENCES watch_cycles(id) ON DELETE CASCADE,
+ ep INTEGER NOT NULL, source TEXT NOT NULL, actor_id INTEGER NOT NULL,
+ meeting_id INTEGER, created_at BIGINT NOT NULL, revoked_at BIGINT, revoked_by INTEGER,
+ UNIQUE(cycle_id,ep,source,id)
+);
+
+CREATE TABLE IF NOT EXISTS meeting_history (
+ id TEXT PRIMARY KEY, meeting_id INTEGER NOT NULL REFERENCES group_sessions(id) ON DELETE CASCADE,
+ actor_id INTEGER NOT NULL, created_at BIGINT NOT NULL, payload TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS meeting_history_meeting ON meeting_history(meeting_id,created_at);
+CREATE TABLE IF NOT EXISTS meeting_coverage (
+ meeting_id INTEGER NOT NULL REFERENCES group_sessions(id) ON DELETE CASCADE,
+ anilist_id INTEGER NOT NULL, ep INTEGER NOT NULL, user_id INTEGER NOT NULL,
+ attempt TEXT NOT NULL, duration DOUBLE PRECISION NOT NULL, intervals TEXT NOT NULL DEFAULT '[]',
+ seen TEXT NOT NULL DEFAULT '[]', updated_at BIGINT NOT NULL,
+ PRIMARY KEY(meeting_id,user_id,attempt)
+);
+CREATE TABLE IF NOT EXISTS watch_preferences (
+ user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+ inactivity_days INTEGER NOT NULL DEFAULT 60
+);
+`);
+  addCol("playback_coverage", "cycle_id", "TEXT");
+  addCol("group_sessions", "actual_started_at", "INTEGER");
+  addCol("watch_log", "cycle_id", "TEXT");
+  addCol("watch_log", "ep", "INTEGER");
+  addCol("watch_cycles", "initial_status", "TEXT");
+  db.exec(`
+
+CREATE TABLE IF NOT EXISTS desktop_devices (
+ id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+ label TEXT NOT NULL, platform TEXT NOT NULL, created_at BIGINT NOT NULL, expires_at BIGINT NOT NULL,
+ last_seen BIGINT NOT NULL DEFAULT 0, revoked INTEGER NOT NULL DEFAULT 0, inventory TEXT NOT NULL DEFAULT '[]'
+);
+CREATE TABLE IF NOT EXISTS desktop_installations (
+ key_hash TEXT PRIMARY KEY, device_id TEXT NOT NULL UNIQUE REFERENCES desktop_devices(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS desktop_grants (
+ device_id TEXT NOT NULL REFERENCES desktop_devices(id) ON DELETE CASCADE,
+ list_id BIGINT NOT NULL REFERENCES shared_lists(id) ON DELETE CASCADE,
+ anilist_id BIGINT NOT NULL, PRIMARY KEY(device_id,list_id,anilist_id)
+);
+CREATE TABLE IF NOT EXISTS desktop_commands (
+ id TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES desktop_devices(id) ON DELETE CASCADE,
+ kind TEXT NOT NULL, payload TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'queued',
+ result TEXT NOT NULL DEFAULT '{}', created_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS desktop_commands_device ON desktop_commands(device_id,created_at);
+CREATE TABLE IF NOT EXISTS desktop_download_state (
+ device_id TEXT PRIMARY KEY REFERENCES desktop_devices(id) ON DELETE CASCADE,
+ snapshot TEXT NOT NULL DEFAULT '[]', updated_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS desktop_room_sources (
+ room_id TEXT PRIMARY KEY REFERENCES watch_rooms(id) ON DELETE CASCADE,
+ device_id TEXT REFERENCES desktop_devices(id) ON DELETE SET NULL
+);
+
+  `);
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS watch_log_cycle_episode ON watch_log(cycle_id,ep) WHERE cycle_id IS NOT NULL");
+  db.exec("CREATE TABLE IF NOT EXISTS watch_sync_receipts (key TEXT PRIMARY KEY)");
   migrateBooks(db);
   migrateLlmOutputs(db);
 }

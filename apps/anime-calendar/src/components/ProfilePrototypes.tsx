@@ -242,7 +242,7 @@ function VariantC({ user, d }: { user: User; d: Data }) {
         <div className="absolute inset-0 bg-linear-to-t from-gray-950 via-gray-950/75 to-gray-950/20" />
         <div className="relative flex flex-wrap items-end gap-6 p-6 pt-24">
           <LevelRing user={user} s={s} size={124} />
-          <div className="min-w-0 flex-1 pb-1">
+          <div className="min-w-0 basis-full pb-1 sm:basis-0 sm:flex-1">
             <h2 className="text-3xl font-bold drop-shadow">{user.name}</h2>
             <p className="text-lg text-accent-200">{classTitle(s)}</p>
             {s.klass && <p className="text-sm text-gray-300">«{s.klass.motto}»</p>}
@@ -500,7 +500,7 @@ function VariantD({ user, d, self, actions, avatar, extra }: {
         </div>
         <div className="relative flex flex-wrap items-end gap-6 p-6 pt-28">
           <LevelRing user={user} s={s} size={124} avatar={avatar} />
-          <div className="min-w-0 flex-1 pb-1">
+          <div className="min-w-0 basis-full pb-1 sm:basis-0 sm:flex-1">
             <h2 className="text-3xl font-bold drop-shadow">{user.name}</h2>
             <p className="text-base text-warning-200">Уровень {s.level.level} · {s.level.rank}</p>
             <div className="group relative mt-2 max-w-sm">
@@ -509,7 +509,7 @@ function VariantD({ user, d, self, actions, avatar, extra }: {
                 <span><b className="tabular-nums text-warning-200">{s.level.inLevel.toLocaleString("ru-RU")}</b> / {s.level.levelSize.toLocaleString("ru-RU")} опыта</span>
                 <span className="text-gray-400">до {s.level.level + 1}-го уровня — {s.level.toNext.toLocaleString("ru-RU")}</span>
               </p>
-              <div className="pointer-events-none invisible absolute left-0 top-full z-30 mt-2 w-72 rounded-xl bg-gray-900/97 p-3 text-xs opacity-0 shadow-2xl ring-1 ring-gray-700 transition group-hover:visible group-hover:opacity-100">
+              <div className="mobile-tooltip pointer-events-none invisible absolute left-0 top-full z-30 mt-2 w-72 rounded-xl bg-gray-900/97 p-3 text-xs opacity-0 shadow-2xl ring-1 ring-gray-700 transition group-hover:visible group-hover:opacity-100">
                 <p className="text-gray-200">Опыт — сумма опыта всех наград: <b>{s.level.xp.toLocaleString("ru-RU")}</b></p>
                 <p className="mt-1 text-gray-400">«Время просмотра»: {s.level.fromHours.toLocaleString("ru-RU")} (10 за час, {s.totals.hours} ч)</p>
                 <p className="text-gray-400">Остальные награды: {s.level.fromBadges.toLocaleString("ru-RU")} (бронза 20, серебро 50, золото 120, платина 300)</p>
