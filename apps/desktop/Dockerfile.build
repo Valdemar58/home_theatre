@@ -3,7 +3,8 @@ COPY --from=node:22-alpine /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-
 RUN npm install -g pnpm@11.25.0
 ENV NODE_OPTIONS="--dns-result-order=ipv4first --no-network-family-autoselection"
 WORKDIR /desktop
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
 RUN pnpm install --frozen-lockfile --ignore-scripts --no-optional
 RUN cd node_modules/.pnpm/node-datachannel@0.32.3/node_modules/node-datachannel && node ../prebuild-install/bin.js -r napi
 RUN node node_modules/electron/install.js && node node_modules/ffmpeg-static/install.js

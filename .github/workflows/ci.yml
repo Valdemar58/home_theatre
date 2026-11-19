@@ -75,6 +75,7 @@ jobs:
           cache: npm
           cache-dependency-path: apps/anime-calendar/package-lock.json
       - run: npm ci
+      - run: npm audit --audit-level=low
       - run: npm run typecheck
       - run: npm test -- --reporter=default --reporter=junit --outputFile=test-results.xml
       - run: npm run build
@@ -154,6 +155,7 @@ jobs:
           node-version: '22'
       - run: npm install --global pnpm@11.25.0
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm audit --audit-level=low
       - run: node ../../scripts/ci/desktop-native.cjs
       - run: pnpm test
 

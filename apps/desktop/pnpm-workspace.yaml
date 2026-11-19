@@ -1,0 +1,5 @@
+overrides:
+  'bittorrent-tracker>ip': '-'
+  'minimatch@>=7 <11.0.1': '11.0.1'
+patchedDependencies:
+  bittorrent-tracker@11.2.3: patches/bittorrent-tracker@11.2.3.patch

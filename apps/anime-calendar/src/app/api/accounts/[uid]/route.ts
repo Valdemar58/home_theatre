@@ -1,11 +1,8 @@
-import { accountAction, type AccountAction } from "@/server/accounts";
-import { adminOnly, ApiError, authed, intParam, json } from "@/server/route";
-
-const ACTIONS: AccountAction[] = ["admin", "friend", "block", "unblock", "libraries-on", "libraries-off", "reset", "delete"];
-
+import { privateJson as json } from "@/server/account-http";
+import { manage, authBody } from "@/server/local-accounts";
+import { adminOnly, authed, intParam } from "@/server/route";
 export const POST = authed<{ uid: string }>(async (req, user, { uid }) => {
   adminOnly(user);
-  const { action } = (await req.json().catch(() => ({}))) as { action?: AccountAction };
-  if (!action || !ACTIONS.includes(action)) throw new ApiError(400, "Неизвестное действие");
-  return json(await accountAction(user, intParam(uid, "uid"), action));
+  const b = await authBody(req);
+  return json(manage(user, intParam(uid, "uid"), String(b.action)));
 });
