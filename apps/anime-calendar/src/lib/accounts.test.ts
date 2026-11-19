@@ -6,7 +6,17 @@ describe("safeNext", () => {
     expect(safeNext("/anime/1/watch/2?room=x")).toBe("/anime/1/watch/2?room=x");
   });
   it("чужой сайт и пустое — в календарь", () => {
-    for (const bad of ["//evil.example", "/\\evil.example", "https://evil.example", "evil", "", null, undefined]) {
+    for (const bad of [
+      "/\n/evil.example",
+      "/\t/evil.example",
+      "//evil.example",
+      "/\\evil.example",
+      "https://evil.example",
+      "evil",
+      "",
+      null,
+      undefined,
+    ]) {
       expect(safeNext(bad)).toBe("/calendar");
     }
   });

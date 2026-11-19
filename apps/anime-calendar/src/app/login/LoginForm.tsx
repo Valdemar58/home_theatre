@@ -1,72 +1,240 @@
 "use client";
-import { useState } from "react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
 import { Button, ErrorBox } from "@/components/ui";
-import { safeNext } from "@/lib/accounts";
 import { api } from "@/lib/client";
-
-export function LoginForm({ sso, fallback, error: initialError, next }: { sso: boolean; fallback: boolean; error: string | null; next: string | null }) {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<unknown>(initialError ? new Error(initialError) : null);
-  const [busy, setBusy] = useState(false);
-  const [showPassword, setShowPassword] = useState(!sso);
-
-  const submit = async (e: React.FormEvent) => {
+import { safeNext } from "@/lib/accounts";
+type TokenInfo = {
+  purpose: "invite" | "claim" | "reset";
+  name: string | null;
+  login: string | null;
+  expiresAt: number;
+};
+const field =
+  "mt-1.5 min-h-11 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 text-sm text-gray-100 outline-none focus-visible:border-accent-400 focus-visible:ring-2 focus-visible:ring-accent-400/30";
+export function LoginForm({
+  mode = "login",
+  next = null,
+}: {
+  mode?: "login" | "register" | "setup";
+  next?: string | null;
+}) {
+  const [login, setLogin] = useState(""),
+    [name, setName] = useState(""),
+    [password, setPassword] = useState(""),
+    [repeat, setRepeat] = useState("");
+  const [token, setToken] = useState(""),
+    [info, setInfo] = useState<TokenInfo | null>(null),
+    [loading, setLoading] = useState(mode === "setup"),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState<unknown>(null);
+  useEffect(() => {
+    if (mode !== "setup") return;
+    const value =
+      new URLSearchParams(location.hash.slice(1)).get("token") || "";
+    setToken(value);
+    history.replaceState(null, "", location.pathname);
+    if (!value) {
+      setError(
+        new Error("Откройте полную ссылку, которую выдал администратор"),
+      );
+      setLoading(false);
+      return;
+    }
+    api<TokenInfo>("/api/auth/setup", {
+      method: "POST",
+      json: { action: "info", token: value },
+    })
+      .then((v) => {
+        setInfo(v);
+        setLogin(v.login || "");
+        setName(v.name || "");
+      })
+      .catch(setError)
+      .finally(() => setLoading(false));
+  }, [mode]);
+  const registration = mode === "register" || info?.purpose === "invite",
+    claim = info?.purpose === "claim";
+  const setting = registration || claim || info?.purpose === "reset";
+  const title =
+    mode === "login"
+      ? "Войти"
+      : registration
+        ? "Создать аккаунт"
+        : claim
+          ? "Настроить личный аккаунт"
+          : info?.purpose === "reset"
+            ? "Новый пароль"
+            : "Проверяем ссылку";
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
-    setBusy(true);
     setError(null);
+    if (setting && password !== repeat) {
+      setError(new Error("Пароли не совпадают"));
+      return;
+    }
+    setBusy(true);
     try {
-      await api("/api/auth/login", { method: "POST", json: { username, password } });
-      window.location.href = safeNext(next);
-    } catch (err) {
-      setError(err);
+      const result = await api<{ pending?: boolean }>(
+        registration
+          ? "/api/auth/register"
+          : mode === "setup"
+            ? "/api/auth/setup"
+            : "/api/auth/login",
+        {
+          method: "POST",
+          json: { login, name, password, token: token || undefined },
+        },
+      );
+      location.href = result.pending ? "/access" : safeNext(next);
+    } catch (e) {
+      setError(e);
       setBusy(false);
     }
-  };
-
-  const input =
-    "mt-1 w-full rounded-md border border-gray-600 bg-gray-900 px-3 py-2 text-white focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
-
+  }
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden px-4">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(99,102,241,0.25),transparent_60%)]" />
-      <div className="relative w-full max-w-md">
-        <div className="mb-8 flex flex-col items-center gap-3">
-          <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-linear-to-br from-indigo-600 to-purple-600 text-2xl font-black">A</span>
-          <h1 className="text-2xl font-bold">Аниме-календарь</h1>
-          <p className="text-sm text-gray-400">{sso ? "Один вход для календаря, Jellyfin и остальных сервисов" : "Войди с учётной записью Jellyfin"}</p>
-        </div>
-        <div className="space-y-4 rounded-xl bg-gray-800/80 p-6 shadow-xl ring-1 ring-gray-700 backdrop-blur">
-          {sso ? (
-            <a href={`/api/auth/oidc/start${next ? `?next=${encodeURIComponent(next)}` : ""}`}
-              className="tone-accent solid flex h-10 w-full items-center justify-center rounded-md text-sm font-semibold">
-              Войти
-            </a>
-          ) : null}
-          {sso && error && !showPassword ? <ErrorBox error={error} /> : null}
-          {sso && fallback && !showPassword ? (
-            <button type="button" onClick={() => setShowPassword(true)} className="w-full text-center text-xs text-gray-500 hover:text-gray-300">
-              Войти паролем Jellyfin (если единый вход не работает)
-            </button>
-          ) : null}
-          {showPassword && fallback ? (
-            <form onSubmit={submit} className={sso ? "space-y-4 border-t border-gray-700 pt-4" : "space-y-4"}>
-              <label className="block text-sm font-medium text-gray-300">
-                Имя пользователя
-                <input className={input} value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoFocus />
+    <main className="flex min-h-dvh items-center justify-center bg-gray-900 px-4 py-10">
+      <div className="w-full max-w-md">
+        <Link
+          href="/login"
+          className="mb-8 inline-flex text-sm font-semibold text-accent-200 hover:text-white focus-visible:outline-2 focus-visible:outline-accent-300"
+        >
+          home_theater
+        </Link>
+        <h1 className="text-2xl font-semibold text-gray-100">{title}</h1>
+        <p className="mb-7 mt-2 text-sm leading-relaxed text-gray-300">
+          {claim
+            ? "Сохранятся ваши списки, история, комнаты и привязанные устройства. Администратор останется вашей ролью."
+            : registration
+              ? info?.purpose === "invite"
+                ? "Приглашение даст доступ сразу после регистрации."
+                : "После регистрации администратор одобрит доступ."
+              : "Один аккаунт для браузера и desktop."}
+        </p>
+        {loading ? (
+          <p role="status" className="py-6 text-sm text-gray-300">
+            Проверяем срок действия ссылки…
+          </p>
+        ) : mode === "setup" && !info ? (
+          <ErrorBox error={error} />
+        ) : (
+          <form onSubmit={submit} className="space-y-5" aria-label={title}>
+            {info?.purpose !== "reset" && (
+              <label className="block text-sm text-gray-200">
+                Логин
+                <input
+                  className={field}
+                  value={login}
+                  onChange={(e) => setLogin(e.target.value)}
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  required
+                  minLength={3}
+                  maxLength={40}
+                  pattern="[a-zA-Z0-9][a-zA-Z0-9_.-]{2,39}"
+                />
+                <span className="mt-1.5 block text-xs leading-relaxed text-gray-400">
+                  Латинские буквы, цифры, точка, дефис или подчёркивание.
+                </span>
               </label>
-              <label className="block text-sm font-medium text-gray-300">
-                Пароль
-                <input className={input} type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+            )}
+            {(registration || claim) && (
+              <label className="block text-sm text-gray-200">
+                Ник
+                <input
+                  className={field}
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  autoComplete="nickname"
+                  required
+                  maxLength={60}
+                />
               </label>
-              {error ? <ErrorBox error={error} /> : null}
-              <Button variant={sso ? "default" : "primary"} type="submit" disabled={busy || !username} className="w-full">
-                {busy ? "Вход…" : sso ? "Войти паролем Jellyfin" : "Войти"}
-              </Button>
-            </form>
-          ) : null}
+            )}
+            <label className="block text-sm text-gray-200">
+              {info?.purpose === "reset" ? "Новый пароль" : "Пароль"}
+              <input
+                className={field}
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete={setting ? "new-password" : "current-password"}
+                required
+                minLength={setting ? 12 : 1}
+                maxLength={256}
+              />
+              {setting && (
+                <span className="mt-1.5 block text-xs text-gray-400">
+                  Не менее 12 символов. Можно использовать фразу.
+                </span>
+              )}
+            </label>
+            {setting && (
+              <label className="block text-sm text-gray-200">
+                Повторите пароль
+                <input
+                  className={field}
+                  type="password"
+                  value={repeat}
+                  onChange={(e) => setRepeat(e.target.value)}
+                  autoComplete="new-password"
+                  required
+                  minLength={12}
+                />
+              </label>
+            )}
+            {error ? (
+              <div role="alert">
+                <ErrorBox error={error} />
+              </div>
+            ) : null}
+            <Button
+              type="submit"
+              variant="primary"
+              className="min-h-11 w-full"
+              disabled={busy}
+            >
+              {busy
+                ? "Сохраняем…"
+                : mode === "login"
+                  ? "Войти"
+                  : registration
+                    ? "Создать аккаунт"
+                    : "Сохранить и войти"}
+            </Button>
+          </form>
+        )}
+        <div className="mt-6 space-y-4 text-sm text-gray-300">
+          {mode === "login" ? (
+            <>
+              <p>
+                Нет аккаунта?{" "}
+                <Link
+                  className="text-accent-200 underline-offset-4 hover:underline"
+                  href="/register"
+                >
+                  Зарегистрироваться
+                </Link>
+              </p>
+              <details className="text-gray-400">
+                <summary className="cursor-pointer hover:text-gray-200">
+                  Забыли пароль?
+                </summary>
+                <p className="mt-2 leading-relaxed">
+                  Попросите администратора создать одноразовую ссылку
+                  восстановления. Владельцу сервера доступна команда
+                  восстановления.
+                </p>
+              </details>
+            </>
+          ) : (
+            <Link className="text-accent-200 hover:underline" href="/login">
+              Вернуться ко входу
+            </Link>
+          )}
         </div>
       </div>
-    </div>
+    </main>
   );
 }

@@ -26,7 +26,7 @@ const missing = new Set<number>();
 
 export async function syncJellyfinPlays(): Promise<void> {
   if (!env.jellyfinApiKey) return;
-  const users = db.prepare<[], User>("SELECT id, name, jellyfin_id, jf_played_at FROM users").all();
+  const users = db.prepare<[], User>("SELECT id, name, jellyfin_id, jf_played_at FROM users WHERE jellyfin_id NOT LIKE 'local:%'").all();
   // Каждый пользователь отдельно: ошибка одного не останавливает остальных
   for (const u of users) {
     await syncUser(u).catch((e: unknown) => {

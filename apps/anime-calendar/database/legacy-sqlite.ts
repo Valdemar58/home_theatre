@@ -81,10 +81,15 @@ type Param = null | number | bigint | string | Uint8Array;
 export type Statement<P extends unknown[], R> = {
   get(...params: P): R | undefined;
   all(...params: P): R[];
-  run(...params: P): { changes: number | bigint; lastInsertRowid: number | bigint };
+  run(...params: P): {
+    changes: number | bigint;
+    lastInsertRowid: number | bigint;
+  };
 };
 export type Db = {
-  prepare<P extends unknown[] = unknown[], R = unknown>(sql: string): Statement<P, R>;
+  prepare<P extends unknown[] = unknown[], R = unknown>(
+    sql: string,
+  ): Statement<P, R>;
   exec(sql: string): void;
   transaction<T>(fn: () => T): () => T;
 };
@@ -117,12 +122,22 @@ function wrap(raw: DatabaseSync): Db {
 function open(): Db {
   fs.mkdirSync(env.dataDir, { recursive: true });
   const raw = new DatabaseSync(path.join(env.dataDir, "anime-calendar.db"));
-  raw.function("greatest", { varargs: true }, (...values) => Math.max(...values.filter(v => v !== null).map(Number)));
-  raw.function("least", { varargs: true }, (...values) => Math.min(...values.filter(v => v !== null).map(Number)));
+  raw.function("greatest", { varargs: true }, (...values) =>
+    Math.max(...values.filter((v) => v !== null).map(Number)),
+  );
+  raw.function("least", { varargs: true }, (...values) =>
+    Math.min(...values.filter((v) => v !== null).map(Number)),
+  );
   const db = wrap(raw);
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
   db.exec(SCHEMA);
+  db.exec(
+    fs.readFileSync(
+      path.join(process.cwd(), "database", "account-schema.sql"),
+      "utf8",
+    ),
+  );
   migrate(db);
   return db;
 }
@@ -130,56 +145,94 @@ function open(): Db {
 /** Изменения схемы для уже существующих баз. */
 function migrate(db: Db) {
   const columns = (table: string) =>
-    new Set(db.prepare<[], { name: string }>(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+    new Set(
+      db
+        .prepare<[], { name: string }>(`PRAGMA table_info(${table})`)
+        .all()
+        .map((c) => c.name),
+    );
   // Оценка MAL (из Shikimori) рядом с русским названием
-  if (!columns("titles_ru").has("score")) db.exec("ALTER TABLE titles_ru ADD COLUMN score REAL");
+  if (!columns("titles_ru").has("score"))
+    db.exec("ALTER TABLE titles_ru ADD COLUMN score REAL");
   // Кэш стал хранилищем: класс записи (entity — не удаляется, listing, volatile) и когда получено
   const cacheCols = columns("cache");
   if (!cacheCols.has("class")) {
-    db.exec("ALTER TABLE cache ADD COLUMN class TEXT NOT NULL DEFAULT 'volatile'");
+    db.exec(
+      "ALTER TABLE cache ADD COLUMN class TEXT NOT NULL DEFAULT 'volatile'",
+    );
     db.exec("ALTER TABLE cache ADD COLUMN fetched_at INTEGER");
-    const set = db.prepare<[string, string]>("UPDATE cache SET class = ? WHERE key = ?");
+    const set = db.prepare<[string, string]>(
+      "UPDATE cache SET class = ? WHERE key = ?",
+    );
     db.transaction(() => {
-      for (const { key } of db.prepare<[], { key: string }>("SELECT key FROM cache").all()) set.run(cacheClassOf(key), key);
+      for (const { key } of db
+        .prepare<[], { key: string }>("SELECT key FROM cache")
+        .all())
+        set.run(cacheClassOf(key), key);
     })();
   }
   // Впечатления о тайтле: заметка, личные теги («так плохо, что смешно»), студия озвучки
   const entryCols = columns("list_entries");
-  if (!entryCols.has("note")) db.exec("ALTER TABLE list_entries ADD COLUMN note TEXT");
-  if (!entryCols.has("tags")) db.exec("ALTER TABLE list_entries ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'");
-  if (!entryCols.has("voice")) db.exec("ALTER TABLE list_entries ADD COLUMN voice TEXT");
+  if (!entryCols.has("note"))
+    db.exec("ALTER TABLE list_entries ADD COLUMN note TEXT");
+  if (!entryCols.has("tags"))
+    db.exec(
+      "ALTER TABLE list_entries ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'",
+    );
+  if (!entryCols.has("voice"))
+    db.exec("ALTER TABLE list_entries ADD COLUMN voice TEXT");
   // «Рекомендую к просмотру»: 1 — да, 0 — нет, NULL — не выбрано (локально, в Shikimori не уходит)
-  if (!entryCols.has("recommend")) db.exec("ALTER TABLE list_entries ADD COLUMN recommend INTEGER");
+  if (!entryCols.has("recommend"))
+    db.exec("ALTER TABLE list_entries ADD COLUMN recommend INTEGER");
   // Сколько серий было вышедшими при последней отметке: «+N новых» — только вышедшие после неё
-  if (!entryCols.has("aired_mark")) db.exec("ALTER TABLE list_entries ADD COLUMN aired_mark INTEGER");
+  if (!entryCols.has("aired_mark"))
+    db.exec("ALTER TABLE list_entries ADD COLUMN aired_mark INTEGER");
   // Синхронизация с AniLib: профиль пользователя (по публичным закладкам)
   const userCols = columns("users");
-  if (!userCols.has("lib_user_id")) db.exec("ALTER TABLE users ADD COLUMN lib_user_id INTEGER");
+  if (!userCols.has("lib_user_id"))
+    db.exec("ALTER TABLE users ADD COLUMN lib_user_id INTEGER");
   // Группа просмотра: пресет управления комнатой, пульт у участников, очередь и озвучка группы у тайтлов;
   // комната группы — из какой группы и сеанса (таблицы может не быть — урезанная схема в тестах)
   const addCol = (table: string, col: string, def: string) => {
     const cols = columns(table);
-    if (cols.size && !cols.has(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+    if (cols.size && !cols.has(col))
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
   };
   // Единый вход (TASKS 7.9): учётка Authentik (uuid), почта, блокировка, кто пригласил
   addCol("users", "auth_sub", "TEXT");
   addCol("users", "email", "TEXT");
   addCol("users", "blocked", "INTEGER NOT NULL DEFAULT 0");
   addCol("users", "invited_by", "INTEGER");
-  if (columns("users").has("auth_sub")) db.exec("CREATE UNIQUE INDEX IF NOT EXISTS users_auth_sub ON users(auth_sub)");
-  if (!userCols.has("lib_nickname")) db.exec("ALTER TABLE users ADD COLUMN lib_nickname TEXT");
-  if (!userCols.has("lib_synced_at")) db.exec("ALTER TABLE users ADD COLUMN lib_synced_at INTEGER");
-  if (!userCols.has("lib_error")) db.exec("ALTER TABLE users ADD COLUMN lib_error TEXT");
+  if (columns("users").has("auth_sub"))
+    db.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS users_auth_sub ON users(auth_sub)",
+    );
+  if (!userCols.has("lib_nickname"))
+    db.exec("ALTER TABLE users ADD COLUMN lib_nickname TEXT");
+  if (!userCols.has("lib_synced_at"))
+    db.exec("ALTER TABLE users ADD COLUMN lib_synced_at INTEGER");
+  if (!userCols.has("lib_error"))
+    db.exec("ALTER TABLE users ADD COLUMN lib_error TEXT");
   // ИИ-апскейл: цель (ширина), под которую делали — карточке хватает меньшего, шапке нужно больше
-  if (columns("img_upscale").size && !columns("img_upscale").has("target")) db.exec("ALTER TABLE img_upscale ADD COLUMN target INTEGER");
+  if (columns("img_upscale").size && !columns("img_upscale").has("target"))
+    db.exec("ALTER TABLE img_upscale ADD COLUMN target INTEGER");
   // Отметка серий по просмотру в Jellyfin: до какого момента история уже разобрана
-  if (!userCols.has("jf_played_at")) db.exec("ALTER TABLE users ADD COLUMN jf_played_at INTEGER");
+  if (!userCols.has("jf_played_at"))
+    db.exec("ALTER TABLE users ADD COLUMN jf_played_at INTEGER");
   // Друзья: кому виден профиль и списки (all / friends / private); отдельный тайтл можно скрыть
-  if (!userCols.has("visibility")) db.exec("ALTER TABLE users ADD COLUMN visibility TEXT NOT NULL DEFAULT 'friends'");
-  if (!entryCols.has("private")) db.exec("ALTER TABLE list_entries ADD COLUMN private INTEGER NOT NULL DEFAULT 0");
+  if (!userCols.has("visibility"))
+    db.exec(
+      "ALTER TABLE users ADD COLUMN visibility TEXT NOT NULL DEFAULT 'friends'",
+    );
+  if (!entryCols.has("private"))
+    db.exec(
+      "ALTER TABLE list_entries ADD COLUMN private INTEGER NOT NULL DEFAULT 0",
+    );
   // Профиль: свой баннер (тайтл) и витрина наград (id через запятую; пусто — самые прокачанные)
-  if (!userCols.has("profile_banner")) db.exec("ALTER TABLE users ADD COLUMN profile_banner INTEGER");
-  if (!userCols.has("showcase")) db.exec("ALTER TABLE users ADD COLUMN showcase TEXT");
+  if (!userCols.has("profile_banner"))
+    db.exec("ALTER TABLE users ADD COLUMN profile_banner INTEGER");
+  if (!userCols.has("showcase"))
+    db.exec("ALTER TABLE users ADD COLUMN showcase TEXT");
   // «Зал славы»: выбранные тайтлы (до 10; пусто — лучшие по оценке)
   if (!userCols.has("hall")) db.exec("ALTER TABLE users ADD COLUMN hall TEXT");
   db.exec(`
@@ -531,11 +584,14 @@ function migrate(db: Db) {
       UNIQUE (anilist_id, ep, source, hash)
     );`);
   // Дата выхода серии по источнику (YYYY-MM-DD) — проверка сопоставления серий с AniList
-  if (!columns("episode_text").has("aired")) db.exec("ALTER TABLE episode_text ADD COLUMN aired TEXT");
+  if (!columns("episode_text").has("aired"))
+    db.exec("ALTER TABLE episode_text ADD COLUMN aired TEXT");
   // Отозвано (чужой сезон, сдвинутая серия): строка остаётся в истории, но текущей не считается
-  if (!columns("episode_text").has("retracted_at")) db.exec("ALTER TABLE episode_text ADD COLUMN retracted_at INTEGER");
+  if (!columns("episode_text").has("retracted_at"))
+    db.exec("ALTER TABLE episode_text ADD COLUMN retracted_at INTEGER");
   // Японское название серии по источнику: сверка источников между собой и словарь для перевода
-  if (!columns("episode_text").has("title_ja")) db.exec("ALTER TABLE episode_text ADD COLUMN title_ja TEXT");
+  if (!columns("episode_text").has("title_ja"))
+    db.exec("ALTER TABLE episode_text ADD COLUMN title_ja TEXT");
   // Справочник серий по источникам — и тех, о которых текста нет: дата и названия (эталон, сверка, словарь названий).
   // Производные данные: при новом сборе источника перезаписываются
   db.exec(`CREATE TABLE IF NOT EXISTS episode_meta (
@@ -548,7 +604,8 @@ function migrate(db: Db) {
     PRIMARY KEY (anilist_id, ep, source)
   )`);
   // Филлер (не по первоисточнику) — по данным MAL: пересказу сезона он не важен
-  if (!columns("episode_meta").has("filler")) db.exec("ALTER TABLE episode_meta ADD COLUMN filler INTEGER");
+  if (!columns("episode_meta").has("filler"))
+    db.exec("ALTER TABLE episode_meta ADD COLUMN filler INTEGER");
   // Японские субтитры для слабослышащих (Jimaku): файл серии лежит только локально (data/plot/<id>/sdh), здесь — откуда и какой
   db.exec(`CREATE TABLE IF NOT EXISTS sdh_file (
     anilist_id INTEGER NOT NULL,
@@ -595,7 +652,9 @@ function migrate(db: Db) {
     source TEXT NOT NULL,
     PRIMARY KEY (entity_id, anilist_id)
   )`);
-  db.exec("CREATE INDEX IF NOT EXISTS plot_appearance_title ON plot_appearance (anilist_id)");
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS plot_appearance_title ON plot_appearance (anilist_id)",
+  );
   db.exec(`CREATE TABLE IF NOT EXISTS plot_relation (
     id INTEGER PRIMARY KEY,
     a INTEGER NOT NULL,
@@ -628,7 +687,9 @@ function migrate(db: Db) {
     data TEXT,
     created_at INTEGER NOT NULL
   )`);
-  db.exec("CREATE INDEX IF NOT EXISTS plot_event_title ON plot_event (anilist_id)");
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS plot_event_title ON plot_event (anilist_id)",
+  );
   db.exec(`CREATE TABLE IF NOT EXISTS plot_event_participant (
     event_id INTEGER NOT NULL,
     entity_id INTEGER NOT NULL,
@@ -646,11 +707,19 @@ function migrate(db: Db) {
   // Граф из разбора серий (задача plot_graph): ключ модели → сущность (в пределах франшизы — у сезонов общие ключи),
   // облики с картинкой и серией показа, раскрытия «это один человек», членство в группах, способности,
   // описание персонажа на конец порции; флаги тайтла и выбор зрителя «сюжет на серию N»
-  if (!columns("plot_event").has("key")) db.exec("ALTER TABLE plot_event ADD COLUMN key TEXT");
-  if (!columns("plot_event").has("major")) db.exec("ALTER TABLE plot_event ADD COLUMN major INTEGER NOT NULL DEFAULT 0");
-  db.exec("CREATE INDEX IF NOT EXISTS plot_event_key ON plot_event (anilist_id, key)");
-  if (!columns("plot_relation").has("ended_ep")) db.exec("ALTER TABLE plot_relation ADD COLUMN ended_ep INTEGER");
-  if (!columns("plot_alias").has("look")) db.exec("ALTER TABLE plot_alias ADD COLUMN look TEXT");
+  if (!columns("plot_event").has("key"))
+    db.exec("ALTER TABLE plot_event ADD COLUMN key TEXT");
+  if (!columns("plot_event").has("major"))
+    db.exec(
+      "ALTER TABLE plot_event ADD COLUMN major INTEGER NOT NULL DEFAULT 0",
+    );
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS plot_event_key ON plot_event (anilist_id, key)",
+  );
+  if (!columns("plot_relation").has("ended_ep"))
+    db.exec("ALTER TABLE plot_relation ADD COLUMN ended_ep INTEGER");
+  if (!columns("plot_alias").has("look"))
+    db.exec("ALTER TABLE plot_alias ADD COLUMN look TEXT");
   if (!columns("plot_alias").has("kind")) {
     db.exec("ALTER TABLE plot_alias ADD COLUMN kind TEXT");
     db.exec("ALTER TABLE plot_alias ADD COLUMN who TEXT");
@@ -674,7 +743,8 @@ function migrate(db: Db) {
     source TEXT NOT NULL,
     UNIQUE (entity_id, anilist_id, look)
   )`);
-  if (!columns("plot_look").has("appearance")) db.exec("ALTER TABLE plot_look ADD COLUMN appearance TEXT");
+  if (!columns("plot_look").has("appearance"))
+    db.exec("ALTER TABLE plot_look ADD COLUMN appearance TEXT");
   db.exec(`CREATE TABLE IF NOT EXISTS plot_image (
     entity_id INTEGER NOT NULL,
     url TEXT NOT NULL,
@@ -705,7 +775,9 @@ function migrate(db: Db) {
     to_ep INTEGER,
     source TEXT NOT NULL
   )`);
-  db.exec("CREATE INDEX IF NOT EXISTS plot_member_title ON plot_member (anilist_id)");
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS plot_member_title ON plot_member (anilist_id)",
+  );
   db.exec(`CREATE TABLE IF NOT EXISTS plot_ability (
     entity_id INTEGER NOT NULL,
     anilist_id INTEGER NOT NULL,
@@ -715,7 +787,9 @@ function migrate(db: Db) {
     from_ep INTEGER NOT NULL,
     source TEXT NOT NULL
   )`);
-  db.exec("CREATE INDEX IF NOT EXISTS plot_ability_entity ON plot_ability (entity_id)");
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS plot_ability_entity ON plot_ability (entity_id)",
+  );
   db.exec(`CREATE TABLE IF NOT EXISTS plot_note (
     entity_id INTEGER NOT NULL,
     anilist_id INTEGER NOT NULL,
@@ -743,7 +817,8 @@ function migrate(db: Db) {
     revealed_ep INTEGER NOT NULL,
     source TEXT NOT NULL
   )`);
-  if (!columns("plot_event").has("place_id")) db.exec("ALTER TABLE plot_event ADD COLUMN place_id INTEGER");
+  if (!columns("plot_event").has("place_id"))
+    db.exec("ALTER TABLE plot_event ADD COLUMN place_id INTEGER");
   // Карта франшизы (подложка с вики) и подписи на ней (прочитаны моделью со зрением); координаты — доли от 0 до 1
   db.exec(`CREATE TABLE IF NOT EXISTS plot_map (
     root_id INTEGER PRIMARY KEY,
@@ -759,7 +834,8 @@ function migrate(db: Db) {
     x REAL NOT NULL, y REAL NOT NULL, w REAL NOT NULL, h REAL NOT NULL
   )`);
   // Цвет карты вокруг подписи — закрыть подпись будущего места пятном в цвет фона
-  if (!columns("plot_map_label").has("color")) db.exec("ALTER TABLE plot_map_label ADD COLUMN color TEXT");
+  if (!columns("plot_map_label").has("color"))
+    db.exec("ALTER TABLE plot_map_label ADD COLUMN color TEXT");
   // Вектор карты (контейнер mapvec): строки подписей с рамками в пикселях обрезки, суша и страны контурами (JSON)
   db.exec(`CREATE TABLE IF NOT EXISTS plot_map_vector (
     root_id INTEGER PRIMARY KEY,
@@ -783,9 +859,13 @@ function migrate(db: Db) {
     queued_at INTEGER NOT NULL
   )`);
   // Картинки сохранённых целиком тайтлов не вытесняются при нехватке места
-  if (!columns("img_cache").has("pinned")) db.exec("ALTER TABLE img_cache ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
+  if (!columns("img_cache").has("pinned"))
+    db.exec(
+      "ALTER TABLE img_cache ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+    );
   // Последняя серия, о которой сообщили «можно смотреть» (в библиотеке или «Стриме»); NULL — ещё не смотрели
-  if (!columns("episode_marks").has("ready")) db.exec("ALTER TABLE episode_marks ADD COLUMN ready INTEGER");
+  if (!columns("episode_marks").has("ready"))
+    db.exec("ALTER TABLE episode_marks ADD COLUMN ready INTEGER");
   // Опенинги и эндинги по звуку (segments.ts): отпечатки начала и конца файла серии и найденные отрезки.
   // Ключ — файл («jf:<элемент Jellyfin>» / «ts:<раздача>:<файл>»): у разных релизов свои тайминги
   db.exec(`CREATE TABLE IF NOT EXISTS episode_fp (
@@ -850,7 +930,9 @@ function migrate(db: Db) {
     from_ep INTEGER NOT NULL,
     source TEXT NOT NULL
   )`);
-  db.exec("CREATE INDEX IF NOT EXISTS plot_name_entity ON plot_name (entity_id)");
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS plot_name_entity ON plot_name (entity_id)",
+  );
   db.exec(`CREATE TABLE IF NOT EXISTS plot_title (
     anilist_id INTEGER PRIMARY KEY,
     group_word TEXT,
@@ -872,7 +954,9 @@ function migrate(db: Db) {
     created_at INTEGER NOT NULL,
     undone_at INTEGER
   )`);
-  db.exec("CREATE INDEX IF NOT EXISTS plot_edit_root ON plot_edit (root_id, key)");
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS plot_edit_root ON plot_edit (root_id, key)",
+  );
   db.exec(`CREATE TABLE IF NOT EXISTS plot_view (
     user_id INTEGER NOT NULL,
     anilist_id INTEGER NOT NULL,
@@ -887,31 +971,60 @@ function migrate(db: Db) {
     db.exec("ALTER TABLE notifications ADD COLUMN anilist_id INTEGER");
     db.exec("ALTER TABLE notifications ADD COLUMN actor_id INTEGER");
     db.exec("ALTER TABLE notifications ADD COLUMN data TEXT");
-    const rows = db.prepare<[], { id: number; kind: string; title: string }>("SELECT id, kind, title FROM notifications").all();
+    const rows = db
+      .prepare<
+        [],
+        { id: number; kind: string; title: string }
+      >("SELECT id, kind, title FROM notifications")
+      .all();
     for (const r of rows) {
       const error = r.title.endsWith("не получилось");
-      db.prepare("UPDATE notifications SET grp = ?, data = ? WHERE id = ?")
-        .run(kindInfo(r.kind, error).group, JSON.stringify({ error }), r.id);
+      db.prepare("UPDATE notifications SET grp = ?, data = ? WHERE id = ?").run(
+        kindInfo(r.kind, error).group,
+        JSON.stringify({ error }),
+        r.id,
+      );
     }
-    db.exec("CREATE INDEX IF NOT EXISTS notifications_by_group ON notifications (user_id, grp, id)");
+    db.exec(
+      "CREATE INDEX IF NOT EXISTS notifications_by_group ON notifications (user_id, grp, id)",
+    );
   }
   // Награды — своя вкладка «Достижения»
-  db.exec("UPDATE notifications SET grp = 'achievements' WHERE kind = 'achievement' AND grp != 'achievements'");
+  db.exec(
+    "UPDATE notifications SET grp = 'achievements' WHERE kind = 'achievement' AND grp != 'achievements'",
+  );
   // Старые итоги задач «Озвучки: «Тайтл»» → тайтл — отдельной строкой (обложка), текст — что найдено
-  const legacy = db.prepare<[], { id: number; title: string; body: string | null; data: string | null }>(
-    `SELECT id, title, body, data FROM notifications WHERE kind IN ('voices', 'prebuffer') AND title LIKE '%: «%' AND (data IS NULL OR data NOT LIKE '%subject%')`).all();
+  const legacy = db
+    .prepare<
+      [],
+      { id: number; title: string; body: string | null; data: string | null }
+    >(`SELECT id, title, body, data FROM notifications WHERE kind IN ('voices', 'prebuffer') AND title LIKE '%: «%' AND (data IS NULL OR data NOT LIKE '%subject%')`)
+    .all();
   for (const r of legacy) {
     const m = /^(.+?): «(.+)»( — не получилось)?$/.exec(r.title);
     if (!m) continue;
     const error = Boolean(m[3]);
-    db.prepare("UPDATE notifications SET title = ?, body = ?, data = ? WHERE id = ?").run(
-      error ? `${m[1]} — не получилось` : (r.body ?? m[1]), error ? r.body : null,
-      JSON.stringify({ ...(r.data ? JSON.parse(r.data) : {}), subject: m[2], error }), r.id);
+    db.prepare(
+      "UPDATE notifications SET title = ?, body = ?, data = ? WHERE id = ?",
+    ).run(
+      error ? `${m[1]} — не получилось` : (r.body ?? m[1]),
+      error ? r.body : null,
+      JSON.stringify({
+        ...(r.data ? JSON.parse(r.data) : {}),
+        subject: m[2],
+        error,
+      }),
+      r.id,
+    );
   }
   addCol("shared_lists", "permissions", "TEXT");
   addCol("group_sessions", "plan_json", "TEXT");
   addCol("group_sessions", "revision", "INTEGER NOT NULL DEFAULT 1");
-  addCol("shared_list_items", "planning_state", "TEXT NOT NULL DEFAULT 'accepted'");
+  addCol(
+    "shared_list_items",
+    "planning_state",
+    "TEXT NOT NULL DEFAULT 'accepted'",
+  );
   addCol("shared_lists", "preset", "TEXT NOT NULL DEFAULT 'equal'");
   addCol("shared_list_members", "control", "INTEGER NOT NULL DEFAULT 0");
   addCol("shared_list_items", "queue_pos", "INTEGER");
@@ -987,8 +1100,12 @@ CREATE TABLE IF NOT EXISTS desktop_room_sources (
 );
 
   `);
-  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS watch_log_cycle_episode ON watch_log(cycle_id,ep) WHERE cycle_id IS NOT NULL");
-  db.exec("CREATE TABLE IF NOT EXISTS watch_sync_receipts (key TEXT PRIMARY KEY)");
+  db.exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS watch_log_cycle_episode ON watch_log(cycle_id,ep) WHERE cycle_id IS NOT NULL",
+  );
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS watch_sync_receipts (key TEXT PRIMARY KEY)",
+  );
   migrateBooks(db);
   migrateLlmOutputs(db);
 }
@@ -1098,7 +1215,9 @@ function migrateBooks(db: Db) {
     hidden INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL
   )`);
-  db.exec("CREATE INDEX IF NOT EXISTS glossary_term_root ON glossary_term (root_id)");
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS glossary_term_root ON glossary_term (root_id)",
+  );
   // Серия ↔ главы книги по сюжету (TASKS 5.11): индексы и ключи глав издания, уверенность
   db.exec(`CREATE TABLE IF NOT EXISTS plot_align (
     anime_id INTEGER NOT NULL,
@@ -1162,7 +1281,12 @@ function migrateBooks(db: Db) {
 /** Результаты LLM без срока жизни: журнал (строки не удаляются) + провенанс текущего значения. */
 export function migrateLlmOutputs(db: Db) {
   const columns = (table: string) =>
-    new Set(db.prepare<[], { name: string }>(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+    new Set(
+      db
+        .prepare<[], { name: string }>(`PRAGMA table_info(${table})`)
+        .all()
+        .map((c) => c.name),
+    );
   db.exec(`
     -- Все результаты LLM: задача, о чём (anime:1 | tag:X | user:1 | user:1:anime:2 | cluster:<ids>),
     -- версии схемы/промпта, хэш смыслового входа, кто сделал (провайдер, модель, ранг качества)
@@ -1197,54 +1321,124 @@ export function migrateLlmOutputs(db: Db) {
     db.exec("ALTER TABLE anime_plot ADD COLUMN src INTEGER");
     db.exec("ALTER TABLE anime_plot ADD COLUMN tier INTEGER");
   }
-  if (!columns("user_taste").has("portrait_hash")) db.exec("ALTER TABLE user_taste ADD COLUMN portrait_hash TEXT");
+  if (!columns("user_taste").has("portrait_hash"))
+    db.exec("ALTER TABLE user_taste ADD COLUMN portrait_hash TEXT");
 
   // Перенос того, что сделано до журнала: модель неизвестна — «legacy», ранг как у локальной, хэш входа пустой
   // (пустой хэш считается совпадающим: старые результаты остаются в работе, а не пересчитываются)
-  const has = (task: string) => Boolean(db.prepare("SELECT 1 FROM llm_output WHERE task = ? LIMIT 1").get(task));
+  const has = (task: string) =>
+    Boolean(
+      db.prepare("SELECT 1 FROM llm_output WHERE task = ? LIMIT 1").get(task),
+    );
   const legacyModel = process.env.LLM_MODEL ?? "qwen3.5:9b";
   const put = db.prepare<[string, string, number, string, number]>(
     `INSERT INTO llm_output (task, subject, schema_v, prompt_v, input_hash, provider, model, tier, value, created_at)
-     VALUES (?, ?, ?, 1, '', 'legacy', '${legacyModel.replace(/'/g, "")}', 1, ?, ?)`);
+     VALUES (?, ?, ?, 1, '', 'legacy', '${legacyModel.replace(/'/g, "")}', 1, ?, ?)`,
+  );
   db.transaction(() => {
     if (!has("analysis")) {
-      const rows = db.prepare<[], { anilist_id: number; analysis: string; analysis_v: number | null; updated_at: number }>(
-        "SELECT anilist_id, analysis, analysis_v, updated_at FROM anime_profile WHERE analysis IS NOT NULL").all();
+      const rows = db
+        .prepare<
+          [],
+          {
+            anilist_id: number;
+            analysis: string;
+            analysis_v: number | null;
+            updated_at: number;
+          }
+        >("SELECT anilist_id, analysis, analysis_v, updated_at FROM anime_profile WHERE analysis IS NOT NULL")
+        .all();
       for (const r of rows) {
-        const id = Number(put.run("analysis", `anime:${r.anilist_id}`, r.analysis_v ?? 1, r.analysis, r.updated_at).lastInsertRowid);
-        db.prepare("UPDATE anime_profile SET analysis_src = ?, analysis_tier = 1, analysis_hash = '' WHERE anilist_id = ?").run(id, r.anilist_id);
+        const id = Number(
+          put.run(
+            "analysis",
+            `anime:${r.anilist_id}`,
+            r.analysis_v ?? 1,
+            r.analysis,
+            r.updated_at,
+          ).lastInsertRowid,
+        );
+        db.prepare(
+          "UPDATE anime_profile SET analysis_src = ?, analysis_tier = 1, analysis_hash = '' WHERE anilist_id = ?",
+        ).run(id, r.anilist_id);
       }
       // Полный эмбеддинг «<модель>:1» → «<модель>:a<id анализа>»: не пересчитывать векторы
       db.exec(`UPDATE anime_profile SET embed_v = substr(embed_v, 1, length(embed_v) - 2) || ':a' || analysis_src
         WHERE embed_v LIKE '%:1' AND analysis_src IS NOT NULL`);
     }
     if (!has("synopsis") && !has("recap")) {
-      const rows = db.prepare<[], { anilist_id: number; kind: string; text: string; data: string | null; sources: string | null; updated_at: number }>(
-        "SELECT anilist_id, kind, text, data, sources, updated_at FROM anime_plot WHERE text != ''").all();
+      const rows = db
+        .prepare<
+          [],
+          {
+            anilist_id: number;
+            kind: string;
+            text: string;
+            data: string | null;
+            sources: string | null;
+            updated_at: number;
+          }
+        >("SELECT anilist_id, kind, text, data, sources, updated_at FROM anime_plot WHERE text != ''")
+        .all();
       for (const r of rows) {
         if (r.kind === "synopsis" && r.sources === "tmdb") {
-          db.prepare("UPDATE anime_plot SET tier = 4 WHERE anilist_id = ? AND kind = 'synopsis'").run(r.anilist_id);
+          db.prepare(
+            "UPDATE anime_plot SET tier = 4 WHERE anilist_id = ? AND kind = 'synopsis'",
+          ).run(r.anilist_id);
           continue;
         }
-        const value = r.kind === "recap"
-          ? JSON.stringify({ recap_ru: r.text, ...(r.data ? JSON.parse(r.data) : {}), sources: r.sources })
-          : JSON.stringify({ synopsis_ru: r.text });
-        const id = Number(put.run(r.kind, `anime:${r.anilist_id}`, 1, value, r.updated_at).lastInsertRowid);
-        db.prepare("UPDATE anime_plot SET src = ?, tier = 1 WHERE anilist_id = ? AND kind = ?").run(id, r.anilist_id, r.kind);
+        const value =
+          r.kind === "recap"
+            ? JSON.stringify({
+                recap_ru: r.text,
+                ...(r.data ? JSON.parse(r.data) : {}),
+                sources: r.sources,
+              })
+            : JSON.stringify({ synopsis_ru: r.text });
+        const id = Number(
+          put.run(r.kind, `anime:${r.anilist_id}`, 1, value, r.updated_at)
+            .lastInsertRowid,
+        );
+        db.prepare(
+          "UPDATE anime_plot SET src = ?, tier = 1 WHERE anilist_id = ? AND kind = ?",
+        ).run(id, r.anilist_id, r.kind);
       }
     }
     if (!has("portrait")) {
-      const rows = db.prepare<[], { user_id: number; list_hash: string; portrait: string | null; updated_at: number }>(
-        "SELECT user_id, list_hash, portrait, updated_at FROM user_taste WHERE portrait IS NOT NULL").all();
+      const rows = db
+        .prepare<
+          [],
+          {
+            user_id: number;
+            list_hash: string;
+            portrait: string | null;
+            updated_at: number;
+          }
+        >("SELECT user_id, list_hash, portrait, updated_at FROM user_taste WHERE portrait IS NOT NULL")
+        .all();
       for (const r of rows) {
         put.run("portrait", `user:${r.user_id}`, 1, r.portrait!, r.updated_at);
-        db.prepare("UPDATE user_taste SET portrait_hash = list_hash WHERE user_id = ?").run(r.user_id);
+        db.prepare(
+          "UPDATE user_taste SET portrait_hash = list_hash WHERE user_id = ?",
+        ).run(r.user_id);
       }
     }
     if (!has("tags")) {
-      const row = db.prepare<[], { value: string }>("SELECT value FROM cache WHERE key = 'tags-ru:v1'").get();
+      const row = db
+        .prepare<
+          [],
+          { value: string }
+        >("SELECT value FROM cache WHERE key = 'tags-ru:v1'")
+        .get();
       const map = row ? (JSON.parse(row.value) as Record<string, string>) : {};
-      for (const [en, ru] of Object.entries(map)) put.run("tags", `tag:${en}`, 1, JSON.stringify({ ru }), Math.floor(Date.now() / 1000));
+      for (const [en, ru] of Object.entries(map))
+        put.run(
+          "tags",
+          `tag:${en}`,
+          1,
+          JSON.stringify({ ru }),
+          Math.floor(Date.now() / 1000),
+        );
     }
   })();
 }
@@ -1263,7 +1457,9 @@ export const db = new Proxy({} as Db, {
 });
 
 /** Подготовленный запрос, который создаётся при первом использовании. */
-export function stmt<P extends unknown[] = unknown[], R = unknown>(sql: string) {
+export function stmt<P extends unknown[] = unknown[], R = unknown>(
+  sql: string,
+) {
   let s: Statement<P, R> | undefined;
   return () => (s ??= instance().prepare<P, R>(sql));
 }

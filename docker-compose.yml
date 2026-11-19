@@ -109,10 +109,12 @@ services:
       SHIKIMORI_APP_NAME: ${SHIKIMORI_APP_NAME:-}
       SHIKIMORI_REDIRECT_URI: ${SHIKIMORI_REDIRECT_URI:-}
       SESSION_SECRET: ${ANIME_CALENDAR_SECRET}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-}
+      LEGACY_AUTH_ENABLED: ${LEGACY_AUTH_ENABLED:-0}
       DESKTOP_STUN_URLS: ${DESKTOP_STUN_URLS:-}
       DESKTOP_HANDOVER_ENABLED: ${DESKTOP_HANDOVER_ENABLED:-1}
       DESKTOP_RELAY_ENABLED: ${DESKTOP_RELAY_ENABLED:-1}
-      # Единый вход (Authentik, профиль public): без ключей — вход паролем Jellyfin, как раньше
+      # Старый внешний вход — только для временного перехода при LEGACY_AUTH_ENABLED=1
       AUTH_URL: http://authentik:9000
       AUTH_PUBLIC_URL: ${AUTH_PUBLIC_URL:-}
       AUTH_CLIENT_ID: ${AUTH_CLIENT_ID:-}
@@ -138,6 +140,7 @@ services:
       PREP_MIN_FREE_GB: ${PREP_MIN_FREE_GB:-15}
       STREAM_DIR: /stream
       JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:-}
+      JELLYFIN_PLAYBACK_USER_ID: ${JELLYFIN_PLAYBACK_USER_ID:-}
       JELLYFIN_PUBLIC_URL: ${JELLYFIN_PUBLISHED_URL:-http://localhost:8096}
       # Ссылки на сервисы в меню «Сервисы» (localhost браузер заменяет на адрес, с которого открыт календарь)
       SONARR_PUBLIC_URL: ${SONARR_PUBLIC_URL:-http://localhost:8989}

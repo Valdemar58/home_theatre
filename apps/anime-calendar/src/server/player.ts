@@ -22,6 +22,7 @@ import { dropTorrentCache, jellyfin, torrentCached, torrentStats } from "./strea
 import { episodeStatus } from "./availability";
 import { coverageAttempt, recordCoverage } from "./watch-coverage";
 import { openLease, closeLease } from "./desktop-stream";
+import { jellyfinPlaybackUser } from "./jellyfin-playback-user";
 
 // Плеер календаря: сессия просмотра серии. Jellyfin решает по профилю браузера, что отдать как есть, а что
 // перекодировать (HEVC 10 бит → копия, если браузер умеет; FLAC → AAC), и отдаёт HLS. Браузер ходит только
@@ -114,7 +115,7 @@ export async function startPlayback(user: { id: number; jellyfin_id: string }, a
   // (выбранная в плеере — раньше отмеченной в «Впечатлениях»)
   const voice = opts.voice ?? voicePref(user.id, anilistId)
     ?? db.prepare<[number, number], { voice: string | null }>("SELECT voice FROM list_entries WHERE user_id = ? AND anilist_id = ?").get(user.id, anilistId)?.voice ?? null;
-  const jf = await jellyfinUser(user.jellyfin_id, item.itemId);
+  const jf = await jellyfinPlaybackUser(user.jellyfin_id, item.itemId);
   // Серия «Стрима», а озвучки в раздаче отдельными файлами: нужную — скачать и положить рядом с .strm
   const voices = item.strmPath ? await episodeVoices(item).catch(() => [] as EpisodeVoice[]) : [];
   // «lang:jpn» — выбрали оригинал, а не студию
@@ -278,19 +279,6 @@ const defaultAudio = (ms: MediaSource) => {
   const a = ms.MediaStreams.filter((m) => m.Type === "Audio");
   return (a.find((m) => m.IsDefault) ?? a[0])?.Index ?? null;
 };
-
-/**
- * Пользователь Jellyfin для PlaybackInfo (без него Jellyfin отвечает 400): свой, а у друзей без аккаунта Jellyfin
- * (или без доступа к библиотекам) — администратор календаря; поток от этого не зависит.
- */
-async function jellyfinUser(own: string, itemId: string): Promise<string> {
-  // Друг без библиотек: аккаунт есть, а серию Jellyfin ему не покажет (404) — смотрит через календарь
-  const ok = await jellyfin(`/Items/${itemId}?userId=${own}`).then(() => true).catch(() => false);
-  if (ok) return own;
-  const admin = db.prepare<[], { jellyfin_id: string }>("SELECT jellyfin_id FROM users WHERE is_admin = 1 ORDER BY id LIMIT 1").get();
-  if (!admin) throw new ApiError(403, "Нет пользователя Jellyfin, от имени которого смотреть");
-  return admin.jellyfin_id;
-}
 
 async function info(itemId: string, userId: string, caps: PlayCaps, start: number, audio?: number): Promise<MediaSource> {
   const r = await guarded("jellyfin", () => jellyfin<{ MediaSources: MediaSource[] }>(`/Items/${itemId}/PlaybackInfo?userId=${userId}`, {

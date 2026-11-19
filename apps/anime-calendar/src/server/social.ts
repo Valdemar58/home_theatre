@@ -134,7 +134,8 @@ export function profileStats(entries: ListEntryWithMedia[]): ProfileStats {
 }
 
 export function jellyfinIdOf(userId: number): string | null {
-  return userRow(userId)?.jellyfin_id ?? null;
+  const id = userRow(userId)?.jellyfin_id;
+  return id && !id.startsWith("local:") ? id : null;
 }
 
 /** Что о тайтле думают те, чьи списки мне видны (кроме скрытых записей). */

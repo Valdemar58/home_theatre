@@ -1,9 +1,7 @@
-import { accountsView, syncSignups } from "@/server/accounts";
-import { adminOnly, authed, json } from "@/server/route";
-
+import { privateJson as json } from "@/server/account-http";
+import { localAccountsView } from "@/server/local-accounts";
+import { adminOnly, authed } from "@/server/route";
 export const GET = authed(async (_req, user) => {
   adminOnly(user);
-  // Заявки — сразу, не дожидаясь минутной проверки
-  await syncSignups().catch(() => undefined);
-  return json(await accountsView());
+  return json(localAccountsView());
 });

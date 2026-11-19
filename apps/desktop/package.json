@@ -1,6 +1,6 @@
 {
   "name": "home-theater-desktop",
-  "version": "0.5.0-rc.5",
+  "version": "0.5.0-rc.6",
   "private": true,
   "desktopName": "home_theater.desktop",
   "description": "home_theater desktop media host",
