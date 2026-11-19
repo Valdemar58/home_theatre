@@ -1,9 +1,9 @@
-FROM node:22-alpine AS deps
+FROM node:26-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-FROM node:22-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
@@ -15,7 +15,7 @@ RUN npm run build
 FROM deps AS runtime-deps
 RUN npm prune --omit=dev
 
-FROM node:22-alpine
+FROM node:26-alpine
 WORKDIR /app
 # ffmpeg — кадры персонажей из своих серий (plot-frames.ts) и звук серий; chromaprint (fpcalc) — отпечатки звука
 # для поиска опенингов и эндингов (segments.ts)
