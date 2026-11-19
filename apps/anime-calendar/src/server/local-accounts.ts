@@ -417,9 +417,11 @@ export function decide(actor: User, id: number, approve: boolean) {
     const c = credential(id);
     if (!c || c.access !== "pending")
       throw new ApiError(409, "Заявка уже обработана");
-    db.prepare(
-      "UPDATE local_accounts SET access=?,session_version=session_version+? WHERE user_id=?",
+    const decision = db.prepare(
+      "UPDATE local_accounts SET access=?,session_version=session_version+? WHERE user_id=? AND access='pending'",
     ).run(approve ? "approved" : "blocked", approve ? 0 : 1, id);
+    // A second administrator may have decided after the initial SELECT.
+    if (!decision.changes) throw new ApiError(409, "Заявка уже обработана");
     db.prepare("UPDATE users SET blocked=? WHERE id=?").run(
       approve ? 0 : 1,
       id,
