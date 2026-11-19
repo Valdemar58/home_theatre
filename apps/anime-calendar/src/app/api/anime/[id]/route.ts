@@ -1,13 +1,19 @@
+import { after } from "next/server";
 import type { AnimeDetails } from "@/lib/types";
+import { archiveOpened } from "@/server/archive";
 import { getDetails } from "@/server/anilist";
 import { externalIds } from "@/server/idmap";
 import { withShikimori } from "@/server/lists";
 import { authed, intParam, json } from "@/server/route";
+import { plotHubShape } from "@/server/plot-graph";
 import { ruDescription } from "@/server/shikimori";
 
 // Картинки галереи отдаёт /api/anime/[id]/images — страница не ждёт Shikimori/TMDB
 export const GET = authed<{ id: string }>(async (_req, _user, { id }) => {
-  const details = structuredClone(await getDetails(intParam(id, "id")));
+  const raw = await getDetails(intParam(id, "id"));
+  // Открыли тайтл — он и его франшиза сохраняются в архив (фоном, после ответа)
+  after(() => { try { archiveOpened(raw); } catch (e) { console.warn(`[archive] ${String(e)}`); } });
+  const details = structuredClone(raw);
   await withShikimori([details, ...details.relations.map((r) => r.media)]);
   const [ids, description] = await Promise.all([
     externalIds(details.id),
@@ -17,6 +23,7 @@ export const GET = authed<{ id: string }>(async (_req, _user, { id }) => {
     ...details,
     description: description ?? details.description,
     externalIds: ids,
+    plotHub: plotHubShape(details.id),
   };
   return json(result);
 });

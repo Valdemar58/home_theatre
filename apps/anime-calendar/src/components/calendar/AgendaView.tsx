@@ -1,11 +1,12 @@
 "use client";
 import type { DayItem, GridDay } from "@/lib/schedule";
 import { AnimeQuick } from "../AnimeQuick";
-import { EmptyState, cx } from "../ui";
+import { EmptyState, Skel, cx } from "../ui";
 import { dayStats, dayTitle } from "./shared";
 
 /** Лента: дни сверху вниз, крупные карточки. Удобно на телефоне и чтобы просмотреть неделю целиком. */
-export function AgendaView({ days, byDay, today }: { days: GridDay[]; byDay: Map<string, DayItem[]>; today: string }) {
+export function AgendaView({ days, byDay, today, loading }: { days: GridDay[]; byDay: Map<string, DayItem[]>; today: string; loading?: boolean }) {
+  if (loading) return <AgendaSkeleton />;
   const withItems = days.filter((d) => (byDay.get(d.key) ?? []).length);
   if (!withItems.length) return <EmptyState title="В эти дни ничего не выходит">Попробуй «Все серии» или ослабь фильтры.</EmptyState>;
   return (
@@ -30,6 +31,27 @@ export function AgendaView({ days, byDay, today }: { days: GridDay[]; byDay: Map
           </section>
         );
       })}
+    </div>
+  );
+}
+
+/** Пока расписание грузится: два дня с карточками той же формы (постер и строки справа). */
+function AgendaSkeleton() {
+  return (
+    <div className="space-y-8" aria-busy>
+      {[0, 1].map((d) => (
+        <section key={d}>
+          <div className="mb-3 flex items-baseline gap-x-3 py-2"><Skel className="h-6 w-40" /><Skel className="h-4 w-24" /></div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="flex gap-4 rounded-xl bg-gray-800/50 p-3 ring-1 ring-gray-800">
+                <Skel className="aspect-2/3 w-24 shrink-0 rounded-lg sm:w-28" />
+                <div className="min-w-0 flex-1 space-y-2"><Skel className="h-5 w-3/4" /><Skel className="h-3 w-1/2" /><Skel className="h-4 w-2/3" /><Skel className="h-4 w-1/2" /></div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }

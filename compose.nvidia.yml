@@ -25,6 +25,16 @@ services:
               count: all
               capabilities: [gpu]
 
+  # Векторизация карт: dots.mocr на CUDA
+  mapvec:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
   # ИИ-апскейл: Real-ESRGAN через Vulkan (нужна graphics-возможность драйвера)
   upscaler:
     environment:

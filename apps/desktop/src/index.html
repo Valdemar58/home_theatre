@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'"
+    />
+    <title>home_theater · Локальная библиотека</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>Локальная библиотека</h1>
+          <p>Ваши серии и доступ к ним для комнат просмотра</p>
+        </div>
+        <button id="web" class="quiet">Открыть home_theater</button>
+      </header>
+      <section id="connection">
+        <h2>Сервер home_theater</h2>
+        <form id="pair-form">
+          <label
+            >Адрес сервера<input
+              id="server"
+              type="url"
+              placeholder="https://cinema.example"
+              required /></label
+          ><button type="submit">Открыть home_theater</button>
+        </form>
+        <p>Войдите в аккаунт в окне приложения. Устройство можно подключить отдельно: Настройки → Мои устройства.</p>
+        <button id="link-device" class="quiet">Подключить устройство к аккаунту</button>
+        <p id="account" role="status"></p>
+        <p id="pair-code"></p>
+        <p id="storage-warning"></p>
+      </section>
+      <p id="error" role="alert" hidden></p>
+      <section>
+        <div class="section-heading">
+          <h2>Серии на этом устройстве</h2>
+          <span id="count"></span>
+        </div>
+        <form id="search-form">
+          <label
+            >Найти аниме<input
+              id="search"
+              type="search"
+              minlength="2"
+              placeholder="Название тайтла"
+              required /></label
+          ><button type="submit" class="quiet">Найти</button
+          ><label
+            >Результаты<select id="results">
+              <option value="">Выберите тайтл</option>
+            </select></label
+          >
+        </form>
+        <div id="acquire">
+          <form id="release-form">
+            <label>Поиск раздачи<input id="release-query" type="search" minlength="2" maxlength="150" placeholder="Название, сезон или группа релиза" required /></label>
+            <button id="find-releases" type="submit">Найти раздачи</button>
+          </form>
+          <p id="release-status" role="status">Выберите тайтл выше, затем найдите раздачу для этого устройства.</p>
+          <div id="release-results"></div>
+          <div id="download-selection" hidden></div>
+        </div>
+        <details class="manual-import"><summary>Подключить уже скачанный файл</summary>
+        <form id="import-form">
+          <label
+            >ID тайтла<input
+              id="title"
+              type="number"
+              min="1"
+              step="1"
+              placeholder="ID из адреса /anime/…"
+              required /></label
+          ><label
+            >Серия<input
+              id="episode"
+              type="number"
+              min="1"
+              step="1"
+              value="1"
+              required /></label
+          ><button type="submit">Подключить файл</button>
+        </form>
+        <p class="hint">
+          Файл остаётся на своём месте. Подключение не разрешает раздачу
+          автоматически.
+        </p>
+        <p id="import-status" role="status"></p>
+        </details>
+        <section aria-labelledby="downloads-heading">
+          <div class="section-heading"><h2 id="downloads-heading">Загрузки на устройство</h2><button id="download-folder" class="quiet">Изменить папку</button></div>
+          <p id="download-folder-path" class="name"></p>
+          <p class="hint">Во время скачивания BitTorrent также отдаёт полученные части другим участникам раздачи. После загрузки выбранных серий соединение закрывается. Доступ комнате включается отдельно.</p>
+          <div id="downloads"></div>
+        </section>
+        <h2 class="library-heading">Локальная библиотека</h2>
+        <div id="library"></div>
+      </section>
+      <footer>
+        Разрешённые серии доступны участникам комнаты, пока приложение открыто.
+        Если прямое соединение недоступно, видео передаётся через сервер.
+      </footer>
+    </main>
+    <script src="renderer.js"></script>
+    <script src="stream-provider.js"></script>
+  </body>
+</html>

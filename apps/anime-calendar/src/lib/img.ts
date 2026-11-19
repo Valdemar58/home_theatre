@@ -14,7 +14,7 @@ const IMG_V = 3;
 // Источники: AniList, Shikimori, TMDB, TheTVDB, YouTube и VK (превью видео), обложки AniLib
 const HOSTS = [
   "anilist.co", "shikimori.io", "shikimori.one", "image.tmdb.org", "artworks.thetvdb.com", "kitsu.app",
-  "img.youtube.com", "i.ytimg.com", "userapi.com", "cdnlibs.org", "imglib.info",
+  "img.youtube.com", "i.ytimg.com", "userapi.com", "cdnlibs.org", "imglib.info", "wikia.nocookie.net",
 ];
 
 export function isCacheable(url: string): boolean {

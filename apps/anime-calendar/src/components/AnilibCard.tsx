@@ -6,7 +6,7 @@ import { api } from "@/lib/client";
 import { LIST_LABELS } from "@/lib/labels";
 import { relative } from "@/lib/time";
 import type { LibAction, LibField, LibPlanItem, LibStatus, LibValues } from "@/lib/types";
-import { Button, cx, ErrorBox, Spinner } from "./ui";
+import { Button, cx, ErrorBox, Skel, Spinner } from "./ui";
 import { imgSrc } from "@/lib/img";
 
 // Синхронизация с AniLib: подключение по ссылке на профиль, предпросмотр, запись, статус.
@@ -74,7 +74,13 @@ export function AnilibCard() {
   };
   const sync = (apply: boolean) => call(() => api("/api/anilib/sync", { method: "POST", json: { apply } }));
 
-  if (isLoading || !st) return <Spinner />;
+  // Заглушка по форме подключённого профиля: строка «Профиль … · синхронизировано» и кнопки
+  if (isLoading || !st) return (
+    <div className="flex flex-wrap items-center justify-between gap-3" aria-busy>
+      <Skel className="h-4 w-72 max-w-full" />
+      <div className="flex flex-wrap gap-2">{["w-40", "w-36", "w-24"].map((w) => <Skel key={w} className={cx("h-7 rounded-lg", w)} />)}</div>
+    </div>
+  );
 
   if (!st.linked) {
     return (
@@ -89,7 +95,7 @@ export function AnilibCard() {
           void call(() => api("/api/anilib", { method: "POST", json: { profile } }));
         }}>
           <input value={profile} onChange={(e) => setProfile(e.target.value)} placeholder="https://v5.animelib.org/ru/user/…"
-            className="min-w-64 flex-1 rounded-md border border-gray-600 bg-gray-900 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
+            className="min-w-0 w-full flex-1 sm:min-w-64 rounded-md border border-gray-600 bg-gray-900 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
           <Button type="submit" variant="primary" disabled={!profile.trim() || busy}>{busy ? "Проверяю…" : "Подключить"}</Button>
         </form>
       </div>
@@ -111,7 +117,7 @@ export function AnilibCard() {
           {" · "}
           {st.syncedAt ? <>синхронизировано {Date.now() / 1000 - st.syncedAt < 60 ? "только что" : relative(st.syncedAt)}, дальше — каждые 30 мин</> : <span className="text-amber-300">ещё не импортировано</span>}
         </p>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button size="sm" onClick={() => sync(false)} disabled={running || busy}>Проверить изменения</Button>
           {!firstRun && <Button size="sm" onClick={() => sync(true)} disabled={running || busy}>Синхронизировать</Button>}
           <Button size="sm" variant="ghost" onClick={() => call(() => api("/api/anilib", { method: "DELETE" }))} disabled={running || busy}>Отключить</Button>

@@ -2,11 +2,13 @@ import "server-only";
 import { ewma, readiness } from "@/lib/buffer";
 import { env } from "./env";
 import { db } from "./db";
-import { jellyfinNowPlaying, listStreams, strmEpisodes, streamAnilistId, streamMinutes, torrentFile } from "./stream";
+import { jellyfinNowPlaying, listStreams, strmEpisodes, streamAnilistId, streamMinutes, torrentFile, torrentFilesCached } from "./stream";
+import { isPrepared } from "./prep";
 import { registerHandler, startTask } from "./tasks";
 
-// «Подготовить серию»: фоновая задача читает серию из TorrServer с начала — так же, как читал бы
-// Jellyfin, — и TorrServer складывает её в дисковый кэш. По сглаженной скорости считаем, когда
+// «Подготовить серию»: фоновая задача скачивает серию целиком через qBittorrent (prep.ts, TASKS 9.8); если нельзя
+// (нет .torrent, qBittorrent или места) — читает её из TorrServer с начала, так же, как читал бы Jellyfin (кэш
+// TorrServer — 1 ГБ в памяти, серия целиком не помещается). По сглаженной скорости считаем, когда
 // можно включать и досмотреть без остановок (lib/buffer.ts), и шлём уведомление.
 // Ключ задачи: «<хэш>:<индекс файла>».
 //
@@ -68,6 +70,28 @@ registerHandler("prebuffer", {
     progress.set(key, p);
     // Отменили — прогресс больше не показываем (в кэше TorrServer прочитанное остаётся)
     signal.addEventListener("abort", () => progress.delete(key));
+    // Озвучка, выбранная у тайтла, отдельным файлом раздачи — рядом с серией (десятки МБ, параллельно с видео)
+    const { prepareVoices } = await import("./stream-voices");
+    void prepareVoices(hash, index, ctx.userIds).catch((e) => console.warn(`[prebuffer] озвучка ${key}: ${String(e)}`));
+
+    // Сначала — скачать серию целиком через qBittorrent (не упирается в кэш TorrServer, переживает перезапуски,
+    // маршрутизатор отдаст её Jellyfin с диска); не вышло — прогон через TorrServer, как раньше
+    const { downloadEpisode } = await import("./prep");
+    const d = await downloadEpisode({
+      hash, index, file, userIds: ctx.userIds, signal,
+      onProgress: (read, speed) => {
+        const at = Date.now();
+        const s = ewma(p.speed || null, speed);
+        Object.assign(p, { read, speed: s, etaSec: s > 0 ? Math.round((p.size - read) / s) : null, updatedAt: at });
+      },
+    });
+    if (d.mode === "download") {
+      Object.assign(p, { read: p.size, done: true, ready: true, etaSec: 0, readyAt: Date.now(), updatedAt: Date.now() });
+      if (ctx.origin === "user") await prepareNext(hash, index, ctx.userIds);
+      ctx.notify(`${code}: серия скачана — смотрите без остановок`);
+      return { summary: `${code}: серия скачана (${Math.round(d.size / 2 ** 20)} МБ)`, isNew: false, silent: true };
+    }
+    console.log(`[prebuffer] ${key}: через TorrServer — ${d.reason}`);
 
     const res = await fetch(`${env.torrserverUrl}/stream/${encodeURIComponent(file.path.split("/").pop()!)}?link=${hash}&index=${index}&play`, { signal });
     if (!res.ok || !res.body) throw new Error(`TorrServer: HTTP ${res.status}`);
@@ -99,9 +123,10 @@ registerHandler("prebuffer", {
     Object.assign(p, { done: p.read >= p.size, ready: true, etaSec: 0, updatedAt: Date.now() });
     // Подготовили по кнопке — следом следующую (она уже не тянет за собой дальше)
     if (ctx.origin === "user") await prepareNext(hash, index, ctx.userIds);
-    if (!p.readyAt) ctx.notify(`${code}: серия целиком в кэше — смотрите без остановок`);
+    // Кэш TorrServer в памяти меньше серии: прочитанное прогрело раздачу (пиры, скорость), но целиком не лежит
+    if (!p.readyAt) ctx.notify(`${code}: серия прочитана через TorrServer — можно включать`);
     p.readyAt ??= Date.now();
-    return { summary: `${code}: серия целиком в кэше`, isNew: false, silent: true };
+    return { summary: `${code}: серия прочитана через TorrServer`, isNew: false, silent: true };
   },
 });
 
@@ -117,27 +142,35 @@ async function prepareNext(hash: string, index: number, userIds: number[]) {
   const next = nextIndex(hash, index);
   if (next === null) return;
   const key = `${hash}:${next}`;
-  if (progress.get(key)?.done) return;
+  if (progress.get(key)?.done || isPrepared(hash, next)) return;
   for (const userId of userIds.length ? userIds : [undefined]) {
     await startTask("prebuffer", key, { origin: "auto", userId, notify: true }).catch((e) => console.warn(`[prebuffer] ${key}: ${String(e)}`));
   }
 }
 
 /**
- * Что сейчас смотрят из «Стрима» — готовим следующую серию (раз в 30 с из jobs.ts).
- * Только когда это не отнимет скорость у текущей: она уже целиком в кэше или раздача качает
- * минимум вдвое быстрее, чем нужно для просмотра.
+ * Что сейчас смотрят из «Стрима» (Jellyfin и плеер календаря — player) — готовим следующую серию (раз в 30 с из jobs.ts).
+ * Только когда это не отнимет скорость у текущей: она почти целиком в кэше TorrServer или скачана хотя бы на 30%
+ * и раздача качает минимум вдвое быстрее, чем нужно для просмотра.
  */
-export async function prefetchWhileWatching() {
-  const playing = await jellyfinNowPlaying();
+export async function prefetchWhileWatching(player: { hash: string; index: number; userId: number }[] = []) {
+  const jf = await jellyfinNowPlaying().catch(() => []);
+  const playing = [
+    ...jf.map(({ hash, index, jellyfinUserId }) => {
+      const id = jellyfinUserId.replace(/-/g, "").toLowerCase();
+      const user = db.prepare<[string], { id: number }>("SELECT id FROM users WHERE lower(replace(jellyfin_id, '-', '')) = ?").get(id);
+      return { hash, index, userId: user?.id };
+    }),
+    ...player,
+  ];
   if (!playing.length) return;
   const streams = await listStreams();
-  for (const { hash, index, jellyfinUserId } of playing) {
+  for (const { hash, index, userId } of playing) {
     const s = streams.find((x) => x.hash === hash);
-    const cached = progress.get(`${hash}:${index}`)?.done;
-    if (!cached && !(s?.rate && s.speed >= 2 * s.rate)) continue;
-    const id = jellyfinUserId.replace(/-/g, "").toLowerCase();
-    const user = db.prepare<[string], { id: number }>("SELECT id FROM users WHERE lower(replace(jellyfin_id, '-', '')) = ?").get(id);
-    await prepareNext(hash, index, user ? [user.id] : []);
+    // Текущая серия почти в кэше — можно; иначе — только когда её скачано заметно (не сразу после старта или
+    // перемотки: тогда весь канал нужен ей) и раздача качает вдвое быстрее нужного
+    const have = isPrepared(hash, index) ? 1 : (await torrentFilesCached(hash).catch(() => null))?.files.get(index) ?? 0;
+    if (have < 0.9 && !(have >= 0.3 && s?.rate && s.speed >= 2 * s.rate)) continue;
+    await prepareNext(hash, index, userId ? [userId] : []);
   }
 }

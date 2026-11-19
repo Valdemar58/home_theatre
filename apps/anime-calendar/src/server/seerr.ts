@@ -1,13 +1,18 @@
 import "server-only";
 import type { MediaLite, SeerrStatus } from "@/lib/types";
-import { cached } from "./cache";
+import { cached, dropCached } from "./cache";
 import { env, seerrConfigured } from "./env";
 import { expectOk, fetchWithRetry, RateLimiter } from "./http";
 import { externalIds } from "./idmap";
+import { guarded } from "./sources";
 
 const limiter = new RateLimiter(0);
 
-async function seerr<T>(path: string, init: RequestInit & { json?: unknown; asUser?: number } = {}): Promise<T> {
+function seerr<T>(path: string, init: RequestInit & { json?: unknown; asUser?: number } = {}): Promise<T> {
+  return guarded("seerr", () => seerrRaw<T>(path, init));
+}
+
+async function seerrRaw<T>(path: string, init: RequestInit & { json?: unknown; asUser?: number }): Promise<T> {
   const { json, asUser, ...rest } = init;
   const h: Record<string, string> = { "X-Api-Key": env.seerrApiKey, Accept: "application/json" };
   if (json !== undefined) h["Content-Type"] = "application/json";
@@ -45,7 +50,7 @@ async function resolve(m: MediaLite): Promise<{ type: "tv" | "movie"; tmdbId: nu
 
   const wanted = isMovieFormat(m) ? "movie" : "tv";
   for (const q of [m.title.english, m.title.romaji].filter(Boolean) as string[]) {
-    const data = await cached(`seerr-search:${q}`, 86400, () =>
+    const data = await cached(`seerr-search:${q}`, { fresh: 86400, source: "seerr" }, () =>
       seerr<{ results: SearchResult[] }>(`/api/v1/search?query=${strictEncode(q)}&page=1&language=ru`));
     const year = m.seasonYear ?? m.startDate.year;
     const hit = data.results.find((r) => {
@@ -69,13 +74,14 @@ export async function seerrStatus(m: MediaLite): Promise<SeerrStatus> {
   if (!r) return { configured: true, found: false };
   const url = `${env.seerrPublicUrl}/${r.type}/${r.tmdbId}`;
   if (r.type === "movie") {
-    const movie = await seerr<SeerrMovie>(`/api/v1/movie/${r.tmdbId}?language=ru`);
+    // Состояние в Seerr меняется (запросили, скачалось) — 10 минут, при недоступности — последнее известное
+    const movie = await cached(`seerr-status:movie:${r.tmdbId}`, { fresh: 600, source: "seerr" }, () => seerr<SeerrMovie>(`/api/v1/movie/${r.tmdbId}?language=ru`));
     return {
       configured: true, found: true, matchedBy: r.by, mediaType: "movie", tmdbId: r.tmdbId,
       title: movie.title, status: movie.mediaInfo?.status ?? 1, url,
     };
   }
-  const tv = await seerr<SeerrTv>(`/api/v1/tv/${r.tmdbId}?language=ru`);
+  const tv = await cached(`seerr-status:tv:${r.tmdbId}`, { fresh: 600, source: "seerr" }, () => seerr<SeerrTv>(`/api/v1/tv/${r.tmdbId}?language=ru`));
   const seasonStatus = new Map(tv.mediaInfo?.seasons?.map((s) => [s.seasonNumber, s.status]) ?? []);
   const seasons = tv.seasons
     .filter((s) => s.seasonNumber > 0)
@@ -92,7 +98,7 @@ type SeerrUser = { id: number; jellyfinUserId?: string | null };
 
 /** ID пользователя Seerr для Jellyfin-аккаунта (чтобы запрос был записан на него). */
 async function seerrUserId(jellyfinId: string): Promise<number | undefined> {
-  const users = await cached("seerr-users", 3600, async () =>
+  const users = await cached("seerr-users", { fresh: 3600, source: "seerr" }, async () =>
     (await seerr<{ results: SeerrUser[] }>("/api/v1/user?take=500")).results);
   return users.find((u) => u.jellyfinUserId?.replace(/-/g, "") === jellyfinId.replace(/-/g, ""))?.id;
 }
@@ -110,5 +116,6 @@ export async function seerrRequest(
       ? { mediaType: "movie", mediaId: r.tmdbId }
       : { mediaType: "tv", mediaId: r.tmdbId, seasons };
   await seerr("/api/v1/request", { method: "POST", json: body, asUser });
+  dropCached(`seerr-status:${r.type}:${r.tmdbId}`);
   return { ok: true, message: asUser ? "Запрос отправлен" : "Запрос отправлен (от имени администратора)" };
 }

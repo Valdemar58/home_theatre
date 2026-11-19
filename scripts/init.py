@@ -19,12 +19,13 @@ import sys
 from common import ENV_EXAMPLE, ENV_FILE, ROOT, parse_env, resolve
 
 CONFIG_DIRS = ["jellyfin", "jellyfin-cache", "seerr", "anime-calendar", "torrserver", "ollama", "sonarr", "radarr",
-               "prowlarr", "bazarr", "qbittorrent", "gluetun"]
+               "prowlarr", "bazarr", "qbittorrent", "gluetun", "mapvec", "suwayomi", "authentik/data", "authentik/templates"]
 MEDIA_KINDS = ["movies", "tv", "anime"]
 # Папка .strm-ссылок для «Смотреть сейчас» (только в media)
 STREAM_DIR = "stream"
 
 GENERATED = {
+    "CALENDAR_DB_PASSWORD": lambda: secrets.token_urlsafe(32),
     "SONARR_API_KEY": lambda: secrets.token_hex(16),
     "RADARR_API_KEY": lambda: secrets.token_hex(16),
     "PROWLARR_API_KEY": lambda: secrets.token_hex(16),
@@ -32,6 +33,10 @@ GENERATED = {
     "QBIT_PASSWORD": lambda: secrets.token_urlsafe(12),
     "ANIME_CALENDAR_SECRET": lambda: secrets.token_urlsafe(32),
     "ANIME_CALENDAR_TORZNAB_KEY": lambda: secrets.token_hex(16),
+    "AUTHENTIK_SECRET_KEY": lambda: secrets.token_urlsafe(48),
+    "AUTHENTIK_DB_PASSWORD": lambda: secrets.token_urlsafe(24),
+    "AUTHENTIK_BOOTSTRAP_PASSWORD": lambda: secrets.token_urlsafe(16),
+    "AUTHENTIK_BOOTSTRAP_TOKEN": lambda: secrets.token_urlsafe(48),
 }
 
 
@@ -67,8 +72,6 @@ def ensure_dirs(env: dict[str, str]) -> None:
     paths += [data_root / "torrents" / k for k in MEDIA_KINDS]
     paths += [data_root / "media" / k for k in MEDIA_KINDS]
     paths.append(data_root / "media" / STREAM_DIR)
-    # Дисковый кэш TorrServer («подготовить серию»)
-    paths.append(data_root / "torrserver-cache")
     for p in paths:
         p.mkdir(parents=True, exist_ok=True)
     print(f"+ каталоги готовы: CONFIG_ROOT={config_root}  DATA_ROOT={data_root}")

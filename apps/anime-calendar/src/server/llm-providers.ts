@@ -16,6 +16,10 @@ export type ChatRequest = {
   repair?: { answer: string; errors: string[] };
   timeoutMs: number;
   maxTokens?: number;
+  /** Картинки к сообщению (base64) — только Ollama с моделью со зрением */
+  images?: string[];
+  /** Без ограничения генерации схемой (Ollama format): родной вывод модели — например, рамки bbox_2d у Qwen-VL */
+  freeform?: boolean;
 };
 export type ChatResponse = { text: string; usage: Usage; truncated: boolean };
 
@@ -58,10 +62,10 @@ export function ollamaChat(r: ChatRequest): Promise<ChatResponse> {
         stream: false,
         // Без «размышлений»: ответ нужен структурированный и быстрый
         think: false,
-        format: r.schema,
+        format: r.freeform ? undefined : r.schema,
         // Контекст — на промпт и ответ вместе: переранжирование 30 тайтлов (~5k + ~3k) в 8k не влезало
         options: { temperature: 0.3, num_ctx: OLLAMA_NUM_CTX },
-        messages: [{ role: "system", content: r.system }, { role: "user", content: r.user }, ...repairMessages(r)],
+        messages: [{ role: "system", content: r.system }, { role: "user", content: r.user, ...(r.images?.length ? { images: r.images } : {}) }, ...repairMessages(r)],
       }),
       signal: AbortSignal.timeout(r.timeoutMs),
     });

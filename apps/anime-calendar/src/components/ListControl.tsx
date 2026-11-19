@@ -70,7 +70,7 @@ export function ListControl({ media, compact }: { media: MediaLite; compact?: bo
           <ChevronDownIcon className="h-4 w-4 opacity-70" />
         </button>
         {open && (
-          <div className="absolute left-0 z-40 mt-1 w-52 overflow-hidden rounded-lg bg-gray-800 py-1 shadow-xl ring-1 ring-gray-600">
+          <div className="mobile-popover absolute left-0 z-40 mt-1 w-52 overflow-hidden rounded-lg bg-gray-800 py-1 shadow-xl ring-1 ring-gray-600">
             {OPTIONS.map((o) => (
               <button
                 key={o.key}
@@ -103,6 +103,7 @@ export function ListControl({ media, compact }: { media: MediaLite; compact?: bo
       </div>
 
       {entry && ["watching", "rewatching", "on_hold"].includes(entry.status) && (
+        <div className="flex max-w-full flex-wrap items-center gap-1.5">
         <div className={cx(CONTROL_BASE, CONTROL_SIZES[compact ? "sm" : "md"], "gap-0 overflow-hidden bg-gray-800/80 px-0 text-gray-100 ring-gray-600")}>
           <button className="flex h-full items-center px-2 text-gray-400 hover:bg-gray-700 hover:text-white disabled:opacity-40" disabled={entry.episodes <= 0}
             onClick={() => setEpisodes(entry.episodes - 1)} aria-label="Минус серия">
@@ -116,6 +117,7 @@ export function ListControl({ media, compact }: { media: MediaLite; compact?: bo
             onClick={() => setEpisodes(entry.episodes + 1)} aria-label="Плюс серия">
             <PlusIcon className="h-4 w-4" />
           </button>
+        </div>
           {fresh > 0 ? (
             <span className="mr-1.5 whitespace-nowrap rounded-md bg-indigo-500/20 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-200"
               title={`Вышло ${fresh} с вашей последней отметки (всего не просмотрено: ${remaining})`}>

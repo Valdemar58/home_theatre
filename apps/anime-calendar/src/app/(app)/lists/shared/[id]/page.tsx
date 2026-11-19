@@ -1,10 +1,6 @@
-import { Suspense } from "react";
-import { SharedListView } from "@/components/SharedListView";
-import { Spinner } from "@/components/ui";
+import { redirect } from "next/navigation";
 
-export const metadata = { title: "Общий список" };
-
-export default async function SharedListPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  return <Suspense fallback={<Spinner />}><SharedListView id={Number(id)} /></Suspense>;
+// Группы переехали в своё меню — старые ссылки (уведомления) ведут туда
+export default async function OldSharedListPage({ params }: { params: Promise<{ id: string }> }) {
+  redirect(`/groups/${(await params).id}`);
 }

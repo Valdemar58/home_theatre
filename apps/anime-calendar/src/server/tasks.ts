@@ -68,7 +68,14 @@ export function registerHandler(kind: string, h: Handler) {
   HANDLERS[kind] = h;
 }
 
-const HANDLERS: Record<string, Handler> = {
+// Состояние очереди — одно на процесс: Next.js собирает маршруты отдельными пакетами, и у каждого может быть
+// своя копия этого модуля. С копией на модуль новый маршрут «восстанавливался» и отменял чужие идущие задачи
+const g = globalThis as unknown as {
+  __tasks?: { handlers: Record<string, Handler>; queues: Map<string, number[]>; controllers: Map<number, AbortController>; running: Set<string>; recovered: boolean };
+};
+const state = (g.__tasks ??= { handlers: {}, queues: new Map(), controllers: new Map(), running: new Set(), recovered: false });
+
+const HANDLERS: Record<string, Handler> = Object.assign(state.handlers, {
   voices: {
     noun: "Озвучки",
     anilistId: async (key) => Number(key) || null,
@@ -77,7 +84,11 @@ const HANDLERS: Record<string, Handler> = {
       const ru = d.idMal ? (await shikiInfo([d.idMal])).get(d.idMal)?.russian : null;
       return ru ?? d.title.romaji ?? d.title.english ?? `#${key}`;
     },
-    fresh: (key) => (getCached<CachedVoices>(voicesKey(key), true)?.at ?? 0) > now() - VOICES_FRESH,
+    // Результат без оригинальных раздач (до IDEAS #88) — устаревший: искать заново
+    fresh: (key) => {
+      const c = getCached<CachedVoices>(voicesKey(key), true);
+      return Boolean(c?.data.orig) && (c?.at ?? 0) > now() - VOICES_FRESH;
+    },
     run: async (key, signal) => {
       const prev = getCached<CachedVoices>(voicesKey(key), true);
       const data = await ruReleases(Number(key), { signal, budgetMs: 90_000 });
@@ -92,15 +103,12 @@ const HANDLERS: Record<string, Handler> = {
     },
     href: (key) => `/anime/${key}?voices=1`,
   },
-};
+} satisfies Record<string, Handler>);
 
 // ---------------------------------------------------------------- очередь
 
-const queues = new Map<string, number[]>();
-const queueOf = (kind: string) => queues.get(kind) ?? (queues.set(kind, []), queues.get(kind)!);
-const controllers = new Map<number, AbortController>();
-const running = new Set<string>();
-let recovered = false;
+const { queues, controllers, running } = state;
+const queueOf = (kind: string): number[] => queues.get(kind) ?? (queues.set(kind, []), queues.get(kind)!);
 
 const getRow = (id: number) => db.prepare<[number], Row>("SELECT * FROM tasks WHERE id = ?").get(id);
 const activeRow = (kind: string, key: string) => db.prepare<[string, string], Row>(
@@ -115,8 +123,8 @@ const info = (r: Row): TaskInfo => ({
 
 /** Задачи прошлого запуска процесса не доделаются — отмечаем прерванными. */
 function recover() {
-  if (recovered) return;
-  recovered = true;
+  if (state.recovered) return;
+  state.recovered = true;
   db.prepare("UPDATE tasks SET status = 'cancelled', error = 'прервано перезапуском', finished_at = ? WHERE status IN ('queued', 'running')").run(now());
   // История — неделя
   db.prepare("DELETE FROM tasks WHERE created_at < ?").run(now() - 7 * 86400);
@@ -257,7 +265,8 @@ async function runOne(row: Row) {
     db.prepare("UPDATE tasks SET status = ?, error = ?, finished_at = ? WHERE id = ?")
       .run(aborted ? "cancelled" : "error", aborted ? "отменено" : message, now(), row.id);
     if (!aborted) {
-      console.warn(`[tasks] ${row.kind} ${row.key}: ${message}`);
+      // Трассировка — чтобы найти место ошибки без повторного запуска
+      console.warn(`[tasks] ${row.kind} ${row.key}: ${message}`, err instanceof Error ? err.stack?.split("\n").slice(1, 6).join(" | ") : "");
       const anilistId = await h.anilistId?.(row.key).catch(() => null) ?? null;
       for (const w of waitersOf(getRow(row.id)!)) {
         if (w.notify) notify(w.u, { kind: row.kind, anilistId, subject: anilistId ? null : row.title, title: `${h.noun} — не получилось`, body: message, href: h.href(row.key), error: true });

@@ -2,10 +2,12 @@ import "server-only";
 import { described, episodeDigest, fillEpisodes, fuzzyIso, isStubDescription, seasonEpisodes, seasonFit, type AirWindow, type RawEpisode } from "@/lib/plot";
 import type { EpisodeInfo, MediaLite, PlotInfo } from "@/lib/types";
 import { getDetails, type AnilistDetails } from "./anilist";
+import { freshFor } from "@/lib/freshness";
 import { cached } from "./cache";
 import { corpusOf, deepestByEpisode } from "./corpus-store";
 import { db, now } from "./db";
 import { env, seerrConfigured } from "./env";
+import { HttpError } from "./http";
 import { externalIds, mappingForAnilist } from "./idmap";
 import { bestRouteTier, runTask, taskAvailable } from "./llm";
 import { getLlmConfig } from "./llm-config";
@@ -13,7 +15,9 @@ import { hashOf, recordOutput } from "./knowledge";
 import { TIER } from "@/lib/llm-tier";
 import type { JsonSchema } from "@/lib/json-lite";
 import { withShikimori } from "./lists";
+import { seasonForPage, seasonPlot } from "./plot-deep";
 import { ruDescription } from "./shikimori";
+import { guarded, isOutage } from "./sources";
 
 // Сюжет тайтла: серии (TMDB через Seerr — по-русски, иначе по-английски; запасной источник — Kitsu),
 // синопсис от локальной LLM вместо заглушек Shikimori и пересказ предыдущих сезонов без спойлеров нового.
@@ -24,17 +28,33 @@ const KITSU = "https://kitsu.app/api/edge";
 // «…/t/p/original//abc.jpg» → «…/t/p/w780/abc.jpg»: оригиналы кадров тяжёлые
 const still = (p: string | null | undefined) => (p ? `${TMDB_IMG}/w780/${p.replace(/^.*\/(?=[^/]+$)/, "")}` : null);
 
-async function seerr<T>(path: string): Promise<T | null> {
-  const res = await fetch(`${env.seerrUrl}${path}`, { headers: { "X-Api-Key": env.seerrApiKey }, signal: AbortSignal.timeout(15_000) });
-  return res.ok ? ((await res.json()) as T) : null;
+/** Запрос к Seerr (TMDB): нет такого — null; сбой (сеть, 5xx) — ошибка, чтобы пустое не сохранилось как «серий нет». */
+function seerr<T>(path: string): Promise<T | null> {
+  return guarded("seerr", async () => {
+    const res = await fetch(`${env.seerrUrl}${path}`, { headers: { "X-Api-Key": env.seerrApiKey }, signal: AbortSignal.timeout(15_000) });
+    if (res.ok) return (await res.json()) as T;
+    if (res.status === 429 || res.status >= 500) throw new HttpError(res.status, `Seerr ${path}: ${res.status}`);
+    return null;
+  });
+}
+
+/** Kitsu: то же правило — нет данных ≠ сбой. */
+function kitsu<T>(url: string): Promise<T | null> {
+  return guarded("kitsu", async () => {
+    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    if (res.ok) return (await res.json()) as T;
+    if (res.status === 429 || res.status >= 500) throw new HttpError(res.status, `Kitsu: ${res.status}`);
+    return null;
+  });
 }
 
 type TmdbSeason = { overview?: string | null; episodes?: { episodeNumber: number; name: string | null; overview: string | null; airDate: string | null; stillPath: string | null }[] };
 
 /** Серии и описание сезона TMDB на языке (en — без language: так Seerr отвечает для любых тайтлов). */
 function tmdbSeason(tv: number, season: number, lang: "ru" | "en"): Promise<{ overview: string | null; episodes: RawEpisode[] }> {
-  return cached(`tmdb-season:v2:${tv}:${season}:${lang}`, 86400, async () => {
-    const d = await seerr<TmdbSeason>(`/api/v1/tv/${tv}/season/${season}${lang === "ru" ? "?language=ru" : ""}`).catch(() => null);
+  // Сезон TMDB у вышедшего не меняется — неделя (свежесть тайтла решает plot-eps), сбой не сохраняется
+  return cached(`tmdb-season:v2:${tv}:${season}:${lang}`, { fresh: 7 * 86400, source: "seerr" }, async () => {
+    const d = await seerr<TmdbSeason>(`/api/v1/tv/${tv}/season/${season}${lang === "ru" ? "?language=ru" : ""}`);
     return {
       overview: d?.overview?.trim() || null,
       episodes: (d?.episodes ?? []).map((e) => ({ number: e.episodeNumber, title: e.name, overview: e.overview, airDate: e.airDate, still: still(e.stillPath) })),
@@ -64,7 +84,7 @@ async function tmdbEpisodes(anilistId: number, count: number | null, w: AirWindo
   if (!ids.tmdbTv) return { episodes: [], overview: null };
   // Абсолютная нумерация (длинные сериалы): склеиваем сезоны TMDB подряд и вырезаем свои серии
   if (!ids.tmdbSeason && m?.season === "a") {
-    const tv = await seerr<{ seasons?: { seasonNumber: number; episodeCount: number }[] }>(`/api/v1/tv/${ids.tmdbTv}`).catch(() => null);
+    const tv = await tmdbShow(ids.tmdbTv);
     const ru: RawEpisode[] = [];
     const en: RawEpisode[] = [];
     let start = 0;
@@ -94,9 +114,14 @@ async function tmdbEpisodes(anilistId: number, count: number | null, w: AirWindo
   return { episodes: seasonEpisodes(b.ru, b.en, offset, count), overview: offset ? null : b.overview };
 }
 
+/** Сериал TMDB (список сезонов) — сохраняется, как и сезоны. */
+function tmdbShow(tv: number) {
+  return cached(`tmdb-show:${tv}`, { fresh: 7 * 86400, source: "seerr" }, () => seerr<{ seasons?: { seasonNumber: number; episodeCount: number }[] }>(`/api/v1/tv/${tv}`));
+}
+
 /** Сезон TMDB, чьи серии вышли в период показа тайтла (и с какой серии сезона он начинается). */
 async function seasonByDates(tv: number, skip: number, count: number | null, w: AirWindow): Promise<Episodes | null> {
-  const info = await seerr<{ seasons?: { seasonNumber: number }[] }>(`/api/v1/tv/${tv}`).catch(() => null);
+  const info = await tmdbShow(tv);
   let best: { b: Awaited<ReturnType<typeof tmdbBoth>>; offset: number; inside: number } | null = null;
   for (const s of (info?.seasons ?? []).filter((x) => x.seasonNumber > 0 && x.seasonNumber !== skip)) {
     const b = await tmdbBoth(tv, s.seasonNumber);
@@ -111,16 +136,14 @@ type KitsuEpisode = { attributes: { number: number | null; canonicalTitle: strin
 
 /** Серии из Kitsu (английские): там, где TMDB ничего не знает. */
 function kitsuEpisodes(anilistId: number, count: number | null): Promise<EpisodeInfo[]> {
-  return cached(`kitsu-eps:${anilistId}`, 86400, async () => {
-    const map = await fetch(`${KITSU}/mappings?filter[externalSite]=anilist/anime&filter[externalId]=${anilistId}&include=item`, { signal: AbortSignal.timeout(15_000) })
-      .then((r) => (r.ok ? r.json() : null)).catch(() => null) as { included?: { id: string; type: string }[] } | null;
+  return cached(`kitsu-eps:${anilistId}`, { fresh: 7 * 86400, source: "kitsu" }, async () => {
+    const map = await kitsu<{ included?: { id: string; type: string }[] }>(`${KITSU}/mappings?filter[externalSite]=anilist/anime&filter[externalId]=${anilistId}&include=item`);
     const kitsuId = map?.included?.find((x) => x.type === "anime")?.id;
     if (!kitsuId) return [];
     const raw: RawEpisode[] = [];
     const pages = Math.min(5, Math.ceil((count ?? 40) / 20));
     for (let p = 0; p < pages; p++) {
-      const d = await fetch(`${KITSU}/anime/${kitsuId}/episodes?page[limit]=20&page[offset]=${p * 20}&sort=number`, { signal: AbortSignal.timeout(15_000) })
-        .then((r) => (r.ok ? r.json() : null)).catch(() => null) as { data?: KitsuEpisode[] } | null;
+      const d = await kitsu<{ data?: KitsuEpisode[] }>(`${KITSU}/anime/${kitsuId}/episodes?page[limit]=20&page[offset]=${p * 20}&sort=number`);
       for (const e of d?.data ?? []) {
         if (e.attributes.number) raw.push({ number: e.attributes.number, title: e.attributes.canonicalTitle, overview: e.attributes.synopsis, airDate: e.attributes.airdate, still: e.attributes.thumbnail?.original ?? null });
       }
@@ -135,21 +158,45 @@ function episodeCount(d: Pick<MediaLite, "episodes" | "nextAiringEpisode">): num
   return d.episodes ?? (d.nextAiringEpisode ? d.nextAiringEpisode.episode - 1 : null);
 }
 
-/** Серии тайтла (кэш: у выходящих — полдня, у вышедших — неделя). */
-export function episodesOf(
+/**
+ * Серии тайтла. Срок — по живости (онгоинг — 6 ч, вышедший давно — 90 дней, в фоне). Источник лежит — сохранённое;
+ * сохранённого нет — пустой список без записи (иначе «серий нет» держалось бы до следующей проверки).
+ */
+export async function episodesOf(
   d: Pick<MediaLite, "id" | "format" | "status" | "episodes" | "nextAiringEpisode"> & Partial<Pick<MediaLite, "startDate" | "endDate">>,
 ): Promise<Episodes & { source: PlotInfo["source"] }> {
-  if (d.format === "MOVIE") return Promise.resolve({ episodes: [], overview: null, source: null });
-  const ttl = d.status === "RELEASING" || d.status === "NOT_YET_RELEASED" ? 12 * 3600 : 7 * 86400;
-  return cached(`plot-eps:v3:${d.id}`, ttl, async () => {
-    const count = episodeCount(d);
-    const w: AirWindow = { start: fuzzyIso(d.startDate), end: d.status === "FINISHED" ? fuzzyIso(d.endDate) : null };
-    const { episodes: tmdb, overview } = await tmdbEpisodes(d.id, count, w).catch((): Episodes => ({ episodes: [], overview: null }));
-    // Kitsu — если в TMDB серий нет или описано меньше половины
-    if (tmdb.length && described(tmdb) * 2 >= tmdb.length) return { episodes: tmdb, overview, source: "TMDB" as const };
-    const kitsu = await kitsuEpisodes(d.id, count).catch(() => [] as EpisodeInfo[]);
-    if (!tmdb.length) return { episodes: kitsu, overview, source: kitsu.length ? ("Kitsu" as const) : null };
-    return { episodes: fillEpisodes(tmdb, kitsu), overview, source: "TMDB" as const };
+  if (d.format === "MOVIE") return { episodes: [], overview: null, source: null };
+  const ttl = freshFor(d, "airing");
+  // Сбой источника — наверх (не сохранять), «нет данных» — пусто
+  const unlessOutage = <T,>(empty: T) => (e: unknown): T => { if (isOutage(e)) throw e; return empty; };
+  try {
+    return await cached(`plot-eps:v3:${d.id}`, { fresh: ttl }, async () => {
+      const count = episodeCount(d);
+      const w: AirWindow = { start: fuzzyIso(d.startDate), end: d.status === "FINISHED" ? fuzzyIso(d.endDate) : null };
+      const { episodes: tmdb, overview } = await tmdbEpisodes(d.id, count, w).catch(unlessOutage<Episodes>({ episodes: [], overview: null }));
+      // Kitsu — если в TMDB серий нет или описано меньше половины
+      if (tmdb.length && described(tmdb) * 2 >= tmdb.length) return { episodes: tmdb, overview, source: "TMDB" as const };
+      const kitsuEps = await kitsuEpisodes(d.id, count).catch(unlessOutage([] as EpisodeInfo[]));
+      if (!tmdb.length) return { episodes: kitsuEps, overview, source: kitsuEps.length ? ("Kitsu" as const) : null };
+      return { episodes: fillEpisodes(tmdb, kitsuEps), overview, source: "TMDB" as const };
+    });
+  } catch (e) {
+    if (isOutage(e)) return { episodes: [], overview: null, source: null };
+    throw e;
+  }
+}
+
+/**
+ * Серии с самым подробным текстом корпуса сюжета (Википедия, Fandom, MAL) вместо анонсов TMDB — там,
+ * где корпус собран (кнопка «Собрать сюжет»). Для промптов ИИ: показ на странице не меняется.
+ */
+function withCorpusText(id: number, eps: EpisodeInfo[]): EpisodeInfo[] {
+  const best = deepestByEpisode(corpusOf(id));
+  if (!best.size) return eps;
+  const base = eps.length ? eps : [...best.values()].map((t): EpisodeInfo => ({ number: t.ep, title: t.title, overview: null, lang: null, airDate: null, still: null }));
+  return base.map((e) => {
+    const t = best.get(e.number);
+    return t && t.text.length > (e.overview?.length ?? 0) ? { ...e, overview: t.text, lang: t.lang === "ru" ? "ru" : "en" } : e;
   });
 }
 
@@ -228,7 +275,7 @@ function runSynopsis(input: SynopsisInput): Promise<string | null> {
       putPlot(input.id, "synopsis", overview.ru, null, "tmdb", { src: null, tier: TIER.tmdb });
       return overview.ru;
     }
-    const first = episodeDigest(episodes.slice(0, 3), 1200, 400);
+    const first = episodeDigest(withCorpusText(input.id, episodes).slice(0, 3), 1200, 400);
     // Английское описание-заглушка («The third season of …») — не материал: модель начнёт сочинять
     const en = isStubDescription(input.en) ? "" : clean(input.en);
     const season = overview?.en && !isStubDescription(overview.en) ? overview.en : "";
@@ -264,7 +311,7 @@ function runSynopsis(input: SynopsisInput): Promise<string | null> {
 // ---------------------------------------------------------------- «что было раньше»
 
 /** Предыстории по порядку (от ранней к поздней), до 4: идём по PREQUEL, предпочитая сериалы. */
-async function prequelChain(d: AnilistDetails): Promise<AnilistDetails[]> {
+export async function prequelChain(d: AnilistDetails): Promise<AnilistDetails[]> {
   const chain: AnilistDetails[] = [];
   const seen = new Set([d.id]);
   let cur = d;
@@ -280,19 +327,41 @@ async function prequelChain(d: AnilistDetails): Promise<AnilistDetails[]> {
   return chain;
 }
 
+// Сначала план (сюжетные линии), потом текст по нему: без плана модель пересказывает серию за серией
+// и склеивает несвязанные события в одно предложение, чтобы уложиться в объём
 const RECAP_SCHEMA: JsonSchema = {
   type: "object",
   properties: {
-    recap_ru: { type: "string", description: "8–14 предложений: что произошло в предыдущих частях по порядку и на чём всё остановилось" },
+    threads: {
+      type: "array", minItems: 1, maxItems: 5, description: "план: 2–5 главных сюжетных линий прошлых частей",
+      items: {
+        type: "object",
+        properties: {
+          name_ru: { type: "string" },
+          goal_ru: { type: "string", description: "чего добиваются герои этой линии и почему" },
+          turns_ru: { type: "string", description: "2–4 главных поворота — с причинами и последствиями" },
+          state_ru: { type: "string", description: "к чему линия пришла к концу последней части" },
+        },
+        required: ["name_ru", "goal_ru", "turns_ru", "state_ru"],
+      },
+    },
+    recap_ru: { type: "string", description: "3–5 абзацев (через пустую строку) по линиям плана, 180–350 слов" },
     points: { type: "array", items: { type: "string" }, description: "3–6 коротких пунктов: что важно помнить к началу новой части" },
   },
-  required: ["recap_ru", "points"],
+  required: ["threads", "recap_ru", "points"],
 };
 
-const RECAP_SYSTEM = `Ты пересказываешь зрителю предыдущие части аниме перед просмотром новой — по-русски, связно и по порядку.
+const RECAP_SYSTEM = `Ты напоминаешь зрителю, который смотрел предыдущие части давно, что в них было — перед просмотром новой. По-русски, живым связным рассказом.
+Сначала составь план (threads): главные сюжетные линии, чего в них добиваются герои, главные повороты, к чему пришли. Потом напиши текст по плану.
+Отбор: событие попадает в текст, только если оно меняет положение героев дальше, объясняет их мотивы или нужно, чтобы понять новую часть. Разовые бои, проходные противники, побочные эпизоды и механика мира — пропускай, даже если они есть в данных.
+Связность: одно предложение — одна мысль. Соединяй события в одном предложении, только если одно вытекает из другого, и называй связь (потому что, чтобы, из-за этого, в ответ). Не нанизывай несвязанное через «и», «а также», запятые.
+Точность: кто кого просит, кто кому предлагает, кто кого предал — сверяй с данными; не меняй направление действий и не приписывай причин, которых в данных нет.
+Термины мира — только если без них не понять; при первом упоминании поясни в двух-трёх словах.
 Опирайся только на данные. О новой части ничего не говори: её событий в данных нет — не придумывай.
-Главное — чем закончилась последняя часть и в каком положении герои. Имена — в принятой русской транскрипции.`;
+Последний абзац — чем закончилась последняя часть и в каком положении герои. Имена — в принятой русской транскрипции.`;
 
+// v3: финал предыстории — до пересказа, пересказ сезона почти без обрезки
+const RECAP_V = 3;
 const recapRuns = new Map<number, Promise<PlotInfo["recap"]>>();
 
 type RecapData = { points: string[]; prequels: { id: number; title: string }[]; thin?: boolean };
@@ -311,7 +380,10 @@ export function ensureRecap(d: AnilistDetails): Promise<PlotInfo["recap"]> {
   const run = (async () => {
     const chain = await prequelChain(d);
     if (!chain.length) return null;
-    const sources = chain.map((p) => p.id).join(",");
+    // Готовый пересказ сезона (plot_deep) — вход лучше анонсов; появился или дописался — пересказ «раньше» составляется заново
+    const deep = new Map(chain.map((p) => [p.id, seasonPlot(p.id)] as const));
+    // Версия пересказа — в наборе источников: новый промпт составляет пересказ заново (старый остаётся в журнале)
+    const sources = `r${RECAP_V}:` + chain.map((p) => { const x = deep.get(p.id); return x?.state ? `${p.id}@${x.state.upTo}` : String(p.id); }).join(",");
     const ready = readRecap(d.id, sources);
     if (ready) return ready;
     if (!(await taskAvailable("recap"))) throw new Error("ИИ недоступен: нет ни ключа внешнего API, ни локальной модели");
@@ -323,7 +395,24 @@ export function ensureRecap(d: AnilistDetails): Promise<PlotInfo["recap"]> {
       ]);
       const desc = ru && !isStubDescription(ru) ? clean(ru) : isStubDescription(p.description) ? "" : clean(p.description);
       const season = [eps.overview?.ru, eps.overview?.en].find((x) => x && !isStubDescription(x)) ?? "";
-      const digest = episodeDigest(eps.episodes, Math.max(600, budget - Math.min(desc.length, 700) - Math.min(season.length, 700)));
+      // Подробные пересказы корпуса — длиннее анонсов: на серию даём долю бюджета части, но не меньше прежних 260 символов
+      const room = Math.max(600, budget - Math.min(desc.length, 700) - Math.min(season.length, 700));
+      const sp = deep.get(p.id);
+      if (sp?.state) {
+        const s = sp.state;
+        const text = [
+          `Часть ${i + 1}: «${titleOf(p.title)}» (${p.format ?? "?"}, ${p.seasonYear ?? "?"}, серий: ${p.episodes ?? "?"})`,
+          // Чем кончилось — до длинного пересказа: при обрезке теряется середина, а не финал
+          `На конец серии ${s.upTo}: ${s.ending_state_ru}`,
+          s.arcs.length ? `Арки:\n${s.arcs.map((a) => `- ${a.name_ru} (${a.eps}): ${a.summary_ru}`).join("\n")}` : "",
+          `Пересказ (серии 1–${s.upTo}): ${s.retelling_ru}`,
+          s.characters.length ? `Персонажи: ${s.characters.slice(0, 15).map((c) => `${c.name_ru} — ${c.role_ru}`).join("; ")}` : "",
+        ].filter(Boolean).join("\n");
+        // Пересказ сезона уже сжат по смыслу — режем только очень длинные (сезоны по 25+ серий)
+        return { text: text.slice(0, Math.max(budget, 12_000)), thin: false };
+      }
+      const episodes = withCorpusText(p.id, eps.episodes);
+      const digest = episodeDigest(episodes, room, Math.max(260, Math.floor(room / Math.max(1, episodes.filter((e) => e.overview).length))));
       const text = [
         `Часть ${i + 1}: «${titleOf(p.title)}» (${p.format ?? "?"}, ${p.seasonYear ?? "?"}, серий: ${p.episodes ?? "?"})`,
         desc ? `Описание: ${desc.slice(0, 700)}` : "",
@@ -337,11 +426,11 @@ export function ensureRecap(d: AnilistDetails): Promise<PlotInfo["recap"]> {
     const prompt = `Новая часть: «${titleOf(d.title)}». Перескажи всё, что было до неё.` +
       (thin ? " О последней из прошлых частей известна только завязка — так и скажи в конце, чем она кончилась, не додумывай." : "") +
       `\n\n${parts.map((x) => x.text).join("\n\n")}`;
-    const res = await runTask<{ recap_ru: string; points: string[] }>("recap", { schema: RECAP_SCHEMA, system: RECAP_SYSTEM, user: prompt, maxTokens: 3000 });
+    const res = await runTask<{ threads: unknown[]; recap_ru: string; points: string[] }>("recap", { schema: RECAP_SCHEMA, system: RECAP_SYSTEM, user: prompt, maxTokens: 4000 });
     const r = res.value;
     const prequels = chain.map((p) => ({ id: p.id, title: titleOf(p.title) }));
     const data: RecapData = { points: r.points.map((x) => x.trim()).filter(Boolean).slice(0, 6), prequels, thin };
-    const src = recordOutput("recap", `anime:${d.id}`, res, { recap_ru: r.recap_ru.trim(), ...data, sources }, { schemaV: 1, promptV: 1, inputHash: hashOf(sources) });
+    const src = recordOutput("recap", `anime:${d.id}`, res, { recap_ru: r.recap_ru.trim(), threads: r.threads, ...data, sources }, { schemaV: 1, promptV: RECAP_V, inputHash: hashOf(sources) });
     putPlot(d.id, "recap", r.recap_ru.trim(), data, sources, { src, tier: res.tier });
     return readRecap(d.id);
   })().finally(() => recapRuns.delete(d.id));
@@ -393,6 +482,6 @@ export async function plotOf(d: AnilistDetails): Promise<PlotInfo> {
   const hasPrequels = d.relations.some((r) => r.relationType === "PREQUEL");
   return {
     episodes: withDetails(d.id, eps.episodes), source: eps.source, stub, synopsis: synopsis?.text ?? null, synopsisBy: synopsis?.by ?? null,
-    pending, hasPrequels, recap: hasPrequels ? readRecap(d.id) : null,
+    pending, hasPrequels, recap: hasPrequels ? readRecap(d.id) : null, season: seasonForPage(d.id),
   };
 }

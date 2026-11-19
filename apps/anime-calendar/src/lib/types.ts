@@ -1,4 +1,5 @@
 // Общие типы для сервера и клиента.
+import type { DeepState } from "./plot-deep";
 
 export type FuzzyDate = { year: number | null; month: number | null; day: number | null };
 
@@ -38,6 +39,35 @@ export type CalendarResponse = { media: Record<number, MediaLite>; airings: Airi
 export const LIST_STATUSES = ["watching", "planned", "completed", "on_hold", "dropped", "rewatching"] as const;
 export type ListStatus = (typeof LIST_STATUSES)[number];
 
+/** Разовый импорт AnimeGo: проверка плана перед записью (server/animego-import.ts). */
+export type AgValues = { status: ListStatus | null; score: number | null };
+export type AgItem = {
+  agId: number;
+  url: string;
+  title: string;
+  original: string | null;
+  /** Как на AnimeGo */
+  ag: AgValues;
+  /** Как сопоставлено: уже в списке, поиском, поиском без точного совпадения, вручную, не найдено */
+  how: "list" | "search" | "check" | "manual" | "none";
+  anilistId: number | null;
+  media: { id: number; title: string; romaji: string | null; cover: string | null; format: string | null; year: number | null; episodes: number | null } | null;
+  /** Как сейчас в календаре (null — тайтла в списке нет) */
+  local: AgValues | null;
+  /** Что запишется */
+  status: ListStatus | null;
+  score: number | null;
+  include: boolean;
+  edited: boolean;
+  /** К этому тайтлу привязано несколько записей AnimeGo */
+  duplicate: boolean;
+};
+export type AgReview = {
+  profile: number | null;
+  items: AgItem[];
+  progress: { done: number; total: number; failed: string[]; startedAt: number; finishedAt?: number; error?: string } | null;
+};
+
 export type ListEntry = {
   anilistId: number;
   malId: number | null;
@@ -66,8 +96,10 @@ export type ListEntryWithMedia = ListEntry & { media: MediaLite | null };
 export type GalleryImage = {
   url: string;
   thumb: string;
-  kind: "poster" | "banner" | "backdrop" | "screenshot";
-  source: "AniList" | "TMDB" | "Shikimori";
+  kind: "poster" | "banner" | "backdrop" | "screenshot" | "portrait";
+  source: "AniList" | "TMDB" | "Shikimori" | "Fandom";
+  /** Подпись вместо «вид · источник» (облик персонажа: «Облик Сидзу · с 8 серии») */
+  caption?: string;
 };
 
 /** Видео с Shikimori: опенинги, эндинги, трейлеры, клипы (YouTube / VK). */
@@ -101,6 +133,8 @@ export type AnimeDetails = MediaLite & {
   relations: { relationType: string; media: MediaLite }[];
   tags: { name: string; rank: number; spoiler: boolean }[];
   externalIds: { tmdbTv: number | null; tmdbMovie: number | null; tvdb: number | null; tmdbSeason: number | null };
+  /** Что есть из разбора серий — чтобы блок «Сюжет» сразу знал свою форму (заглушка того же вида, без сдвига) */
+  plotHub?: { built: boolean; places: boolean; map: boolean };
 };
 
 /** Серия: название и описание из TMDB (русские, иначе английские) или Kitsu */
@@ -138,6 +172,8 @@ export type PlotInfo = {
   hasPrequels: boolean;
   /** thin — о последней из прошлых частей известна только завязка (нет описаний серий) */
   recap: { text: string; points: string[]; prequels: { id: number; title: string }[]; thin: boolean } | null;
+  /** Пересказ сезона ИИ по порциям серий (слепо по порядку): что показать — решает курсор зрителя (stateAt) */
+  season: { states: DeepState[]; total: number; model: string | null } | null;
 };
 
 export type SeerrStatus = {
@@ -405,7 +441,8 @@ export type SharedItem = {
   addedBy: number | null;
   addedAt: number;
   members: { userId: number; status: ListStatus | null; episodes: number; score: number; updatedAt: number | null; hidden: boolean }[];
-  state: "planned" | "watching" | "done";
+  state: "proposed" | "planned" | "watching" | "done";
+  planningState?: "proposed" | "accepted";
 };
 
 export type SharedListDetail = {
@@ -415,6 +452,7 @@ export type SharedListDetail = {
   role: "owner" | "member" | "invited";
   members: SharedMember[];
   items: SharedItem[];
+  capabilities?: Record<import("./group-policy").GroupCapability, boolean>;
 };
 
 /** Кандидат в окне «Посмотрели вместе». */
@@ -453,6 +491,7 @@ export type TogetherEvent = { actor: string; anilistId: number; from: number; to
 
 /** Комментарий под тайтлом (плоский список; дерево строит клиент — lib/comments-tree.ts). */
 export type CommentItem = {
+  friend?: boolean;
   id: number;
   parentId: number | null;
   user: { id: number; name: string };
@@ -472,3 +511,289 @@ export type CommentItem = {
 
 /** Сохранённый набор фильтров каталога. */
 export type FilterPreset = { id: number; name: string; query: string; isDefault: boolean };
+
+// ---------------------------------------------------------------- персонажи и граф сюжета
+
+export type CharacterRole = "MAIN" | "SUPPORTING" | "BACKGROUND";
+
+/** Персонаж тайтла: AniList + русское имя Shikimori */
+export type CharacterLite = {
+  id: number;
+  name: string;
+  nameRu: string | null;
+  native: string | null;
+  image: string | null;
+  role: CharacterRole;
+  /** Сэйю (японский голос) */
+  voice: string | null;
+};
+
+/** На какую серию показывать сюжет: мой прогресс, выбранная серия или весь сезон */
+export type PlotViewMode = "progress" | "ep" | "all";
+/** Карта мест на курсор зрителя: подложка с вики, закрытые подписи, места, события и пути. Координаты — доли 0…1 вырезанной карты. */
+export type PlotMap = {
+  cursor: PlotCursor;
+  map: { url: string; width: number; height: number; crop: { x: number; y: number; w: number; h: number } } | null;
+  /** Подписи будущих мест — закрыть пятном цвета фона вокруг подписи */
+  masks: { x: number; y: number; w: number; h: number; color: string | null }[];
+  /** fog — радиус открытого тумана (доля ширины карты) */
+  places: { id: number; name: string; kind: string; x: number; y: number; approx: boolean; fog: number; firstEp: number; anilistId: number; inside: string | null }[];
+  events: { key: string | null; title: string; kind: string | null; anilistId: number; ep: number; placeId: number; major: boolean }[];
+  people: { id: number; name: string; href: string; image: string | null; stops: { placeId: number; anilistId: number; ep: number }[] }[];
+  hidden: number;
+  /**
+   * Карта контурами (контейнер mapvec): SVG-пути в единицах 1000 × 1000·h/w. Страна открыта, если зрителю известно
+   * место на её подписи (или на подписи поверх неё); placeId — место для перехода по щелчку; color — номер цвета
+   * (у соседей разные); anchor — место для названия (доли карты, r — отступ от краёв в долях ширины).
+   */
+  vector: {
+    land: string[];
+    regions: { d: string; open: boolean; placeId: number | null; name: string | null; color: number; anchor: { x: number; y: number; r: number } | null }[];
+  } | null;
+};
+
+export type PlotCursor = {
+  /** Досмотрено до серии (весь сезон — 1e6) */
+  ep: number;
+  mode: PlotViewMode;
+  /** Мой прогресс по списку */
+  watched: number;
+  inList: boolean;
+  total: number | null;
+};
+
+/** Отношение персонажа (граф сюжета; со сроком действия по сериям) */
+export type PlotRelationInfo = {
+  otherId: number;
+  otherHref: string;
+  otherName: string;
+  otherImage: string | null;
+  kind: string;
+  label: string | null;
+  anilistId: number;
+  fromEp: number | null;
+  /** Кончилось в серии (если зритель это уже видел) */
+  endedEp: number | null;
+};
+
+export type PlotEventInfo = {
+  id: number; key: string | null; anilistId: number; title: string; summary: string | null; kind: string | null;
+  epFrom: number | null; epTo: number | null; major: boolean; role: string | null;
+};
+
+/** Персонаж в составе тайтла на серию курсора */
+export type CastMember = {
+  /** Сущность графа (главная из склеенных) */
+  id: number;
+  /** Все склеенные с ним сущности, раскрытые к курсору (для имён в тексте) */
+  entities: number[];
+  href: string;
+  anilistCharId: number | null;
+  name: string;
+  native: string | null;
+  role: CharacterRole;
+  image: string | null;
+  lookLabel: string | null;
+  description: string | null;
+  goal: string | null;
+  groups: { id: number; name: string; role: string | null }[];
+  /** Другие имена, раскрытые к курсору («он же …») */
+  aka: string[];
+  firstEp: number | null;
+  voice: string | null;
+};
+
+/** Редактор персонажа в графе сюжета (IDEAS #81): всё о нём без курсора и журнал правок. */
+export type PlotEditor = {
+  root: number;
+  key: string;
+  entityId: number;
+  anilistId: number;
+  /** Серий в тайтле (для выбора «с серии») */
+  total: number | null;
+  name: string;
+  anilistCharId: number | null;
+  candidates: { id: number; name: string; native: string | null; image: string | null; role: CharacterRole }[];
+  others: { key: string; entityId: number; name: string }[];
+  identities: { otherKey: string | null; name: string; anilistId: number; ep: number }[];
+  names: { name: string; anilistId: number; fromEp: number }[];
+  notes: { anilistId: number; upTo: number; description: string }[];
+  images: { url: string; source: string; label: string | null; anilistId: number | null; fromEp: number | null }[];
+  edits: { id: number; kind: import("./plot-edits").EditKind; anilistId: number; fromEp: number; author: string; at: number; undone: boolean; text: string }[];
+};
+
+/** Страница франшизы (IDEAS #80, TASKS 5.10): все формы в порядке выхода, мой прогресс, арки сюжета на мой прогресс. */
+export type FranchiseView = {
+  root: number;
+  /** Название франшизы — по корню (первый сезон или корневая книга) */
+  title: MediaLite["title"];
+  /** Что это и о чём: составлено ИИ, иначе описание первоисточника или первого сезона */
+  about: { text: string; by: "ai" | "book" | "anime" } | null;
+  /** Первоисточник среди книг франшизы */
+  sourceBook: number | null;
+  banner: string | null;
+  /** Сезон основной истории, состав которого показываем (где я сейчас); null — у франшизы нет аниме */
+  castTitle: number | null;
+  /** Что смотреть дальше */
+  next: number | null;
+  /** Часть страниц тайтлов ещё догружается архивом */
+  partial: boolean;
+  progress: { watched: number; total: number };
+  items: {
+    media: MediaLite;
+    kind: import("./franchise").FranchiseKind;
+    entry: { status: ListStatus; episodes: number } | null;
+    /** Разбор серий: арки на мой прогресс; null — разбора нет */
+    plot: { ep: number; events: number; ahead: number; arcs: { name: string; fromEp: number | null; events: number }[] } | null;
+    /** Что из книги адаптирует (Fandom или ручная правка) */
+    adapt: import("./adapt").AdaptRange | null;
+    /** Серии ↔ главы, сопоставленные по сюжету (TASKS 5.11) */
+    align: { ep: number; label: string }[] | null;
+  }[];
+  /** Досмотренная серия ↔ следующая глава книги (по сопоставлению сюжета) — откуда читать дальше аниме */
+  readAfter: { bookId: number; form: "manga" | "novel"; anime: number; ep: number; label: string; href: string } | null;
+  /** Манга и ранобэ франшизы: вид, мой прогресс, сколько глав на русском и всего известно */
+  books: {
+    book: import("./books").BookLite;
+    kind: import("./franchise").FranchiseKind;
+    entry: { status: string; chapters: number } | null;
+    ru: { count: number; last: string | null } | null;
+    known: number | null;
+  }[];
+  /** Спин-оффы, альтернативы, пересказы — группами по всем формам (id аниме и книг по выходу) */
+  branches: { kind: import("./franchise").FranchiseKind; ids: number[] }[];
+  /** Кроссоверы и другие франшизы в них */
+  crossovers: { media: MediaLite; others: { id: number; title: MediaLite["title"] }[] }[];
+};
+
+export type TitleCast = {
+  cursor: PlotCursor;
+  /** Граф построен (иначе — состав из AniList без сюжета) */
+  built: boolean;
+  upTo: number;
+  groupWord: string | null;
+  powerSystem: boolean;
+  members: CastMember[];
+  groups: { id: number; name: string; count: number }[];
+  /** Сколько персонажей появится после курсора */
+  hidden: number;
+  /** Для блока «Сюжет»: связей, событий и арок на курсор */
+  stats: { relations: number; events: number; arcs: number; /** Мест тайтла, известных к серии */ places: number; /** Из них на карте франшизы; 0 — карты нет */ mapPlaces: number };
+};
+
+/** Событие сюжета на курсор зрителя: участники, причины и последствия, которые он уже видел */
+export type EventLinkInfo = { kind: string; note: string | null; key: string; anilistId: number; title: string; ep: number | null };
+export type EventBrief = {
+  key: string;
+  anilistId: number;
+  title: string;
+  summary: string | null;
+  kind: string | null;
+  epFrom: number | null;
+  epTo: number | null;
+  arc: string | null;
+  major: boolean;
+  participants: { id: number; name: string; href: string; image: string | null; role: string | null }[];
+  /** Что к нему привело (причина, повод, условие, мотив) */
+  causes: EventLinkInfo[];
+  /** К чему привело — только раскрытое к курсору */
+  consequences: EventLinkInfo[];
+};
+export type EventDetails = EventBrief & {
+  course: string | null;
+  motives: { id: number; name: string; href: string; text: string }[];
+  /** Последствий после курсора */
+  hiddenConsequences: number;
+  sources: string[];
+  /** Событие после курсора зрителя — не показываем */
+  hiddenUntil: number | null;
+  cursor: PlotCursor;
+  /** Где это произошло (имя — на курсор), и во что это место вложено */
+  place?: { id: number; name: string; inside: string | null } | null;
+};
+
+/** Место в списке мест тайтла (на курсор зрителя) */
+export type PlaceBrief = { id: number; name: string; kind: string; inside: string | null; firstEp: number; description: string | null; events: number };
+export type TitlePlaces = { cursor: PlotCursor; places: PlaceBrief[]; hidden: number; map: boolean };
+/** Страница места: названия по сериям, вложенность, что внутри и рядом, события, кто бывал */
+export type PlaceDetails = {
+  cursor: PlotCursor;
+  /** Место появится позже курсора — показываем только серию */
+  hiddenUntil: number | null;
+  id: number; name: string; nameEn: string; kind: string; firstEp: number; description: string | null;
+  names: { name: string; fromEp: number }[]; futureNames: number;
+  path: { id: number; name: string }[];
+  children: { id: number; name: string; kind: string; firstEp: number }[];
+  links: { id: number; name: string; kind: string; distance: string | null; ep: number }[];
+  events: { key: string | null; title: string; summary: string | null; kind: string | null; ep: number; major: boolean }[];
+  people: { id: number; name: string; href: string; image: string | null; firstEp: number }[];
+  onMap: boolean;
+};
+/** Карта персонажей на курсор: узлы — персонажи состава, рёбра — отношения, которые зритель уже видел */
+export type RelationMap = {
+  cursor: PlotCursor;
+  groupWord: string | null;
+  nodes: { id: number; name: string; href: string; image: string | null; role: CharacterRole; groups: { id: number; name: string }[]; description: string | null }[];
+  edges: { a: number; b: number; kind: string; label: string | null; fromEp: number | null; endedEp: number | null }[];
+};
+
+export type TitleEvents = { cursor: PlotCursor; arcs: { name: string | null; events: EventBrief[] }[]; hidden: number };
+
+/** Карточка персонажа для имени в тексте — сам этот персонаж (не тот, с кем его потом склеили), картинки по сериям */
+export type NameCard = {
+  name: string;
+  native: string | null;
+  href: string;
+  role: CharacterRole;
+  description: string | null;
+  goal: string | null;
+  groups: { id: number; name: string; role: string | null }[];
+  firstEp: number | null;
+  /** Облики, которые зритель может видеть: с какой серии этого тайтла (0 — из предыстории) */
+  images: { url: string; label: string | null; ep: number }[];
+  /** Раскрыто, что это тот же человек, — с какой серии этого тайтла */
+  mergedInto: { name: string; href: string; ep: number } | null;
+};
+export type NameRefs = { refs: NameRef[]; cards: Record<number, NameCard>; cursor: number };
+
+/** Имя в тексте → персонаж (spoiler — зритель его ещё не видел) */
+export type NameRef = {
+  alias: string; entity: number; href: string; spoiler: boolean; anilistId: number | null; revealedEp: number;
+  /** Имя привязано к особому облику (прошлая жизнь, маскировка): карточка — под этим именем и с этим обликом */
+  as: { name: string; image: string | null; lookLabel: string } | null;
+};
+
+export type CharacterDetails = {
+  id: number | null;
+  entityId: number | null;
+  href: string;
+  name: string;
+  nameRu: string | null;
+  native: string | null;
+  alternative: string[];
+  image: string | null;
+  /** Описание AniList; спойлеры размечены ~!…!~ */
+  description: string | null;
+  /** Кто это — по разбору серий, на серию курсора */
+  plotDescription: string | null;
+  goal: string | null;
+  gender: string | null;
+  age: string | null;
+  /** Облики, показанные к курсору; future — сколько ещё будет */
+  looks: { image: string; label: string | null; anilistId: number | null; fromEp: number | null }[];
+  futureLooks: number;
+  names: { name: string; kind: string; who: string | null; fromEp: number | null; anilistId: number | null }[];
+  futureNames: number;
+  /** Склеенные с ним персонажи («он же»), раскрытые к курсору */
+  aka: { name: string; href: string; revealedEp: number; anilistId: number }[];
+  /** Страница склеена с другой — перейти туда */
+  redirect: string | null;
+  /** Персонаж ещё не появлялся у зрителя */
+  hiddenUntil: { anilistId: number; ep: number } | null;
+  groups: { id: number; name: string; role: string | null; past: boolean }[];
+  appearances: { media: MediaLite; role: CharacterRole }[];
+  relations: PlotRelationInfo[];
+  events: PlotEventInfo[];
+  /** Только если в тайтле есть система сил */
+  abilities: { name: string; text: string | null; status: string; fromEp: number; anilistId: number }[] | null;
+};

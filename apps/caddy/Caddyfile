@@ -1,0 +1,85 @@
+# Доступ из интернета (TASKS 9.4б, 7.9): HTTPS на 443, календарь — на {$PUBLIC_HOST}, сервисы — на поддоменах.
+# Сертификаты Let's Encrypt — проверкой TLS-ALPN на этом же порту (порт 80 не пробрасывается); DuckDNS отдаёт
+# поддомены сам. Вход — Authentik (auth.): календарь и Jellyfin — по OIDC, остальное — forward-auth
+# (кто допущен — решает приложение в Authentik: служебные — только kino-admins).
+{
+	auto_https disable_redirects
+}
+
+(site) {
+	tls {
+		issuer acme {
+			disable_http_challenge
+		}
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+}
+
+# Сервис за forward-auth Authentik: {args[0]} — адрес сервиса в docker-сети
+(guarded) {
+	import site
+	route {
+		reverse_proxy /outpost.goauthentik.io/* authentik:9000
+		forward_auth authentik:9000 {
+			uri /outpost.goauthentik.io/auth/caddy
+			copy_headers X-Authentik-Username X-Authentik-Groups X-Authentik-Email
+			trusted_proxies private_ranges
+		}
+		reverse_proxy {args[0]}
+	}
+}
+
+{$PUBLIC_HOST} {
+	import site
+	header Referrer-Policy same-origin
+	reverse_proxy anime-calendar:5056 {
+		# Календарь отличает запросы из интернета (качество «Авто», ограничение входов); X-Forwarded-For
+		# Caddy ставит сам, чужой заменяет
+		header_up X-Public-Access 1
+		# События комнаты (SSE) — без буферизации
+		flush_interval -1
+	}
+}
+
+auth.{$PUBLIC_HOST} {
+	import site
+	reverse_proxy authentik:9000
+}
+
+# Jellyfin: свой вход (SSO-плагин и Quick Connect для ТВ), forward-auth сломал бы приложения
+jellyfin.{$PUBLIC_HOST} {
+	import site
+	reverse_proxy jellyfin:8096
+}
+
+seerr.{$PUBLIC_HOST} {
+	import guarded seerr:5055
+}
+
+sonarr.{$PUBLIC_HOST} {
+	import guarded sonarr:8989
+}
+
+radarr.{$PUBLIC_HOST} {
+	import guarded radarr:7878
+}
+
+prowlarr.{$PUBLIC_HOST} {
+	import guarded prowlarr:9696
+}
+
+bazarr.{$PUBLIC_HOST} {
+	import guarded bazarr:6767
+}
+
+qbit.{$PUBLIC_HOST} {
+	import guarded qbittorrent:8080
+}
+
+torrserver.{$PUBLIC_HOST} {
+	import guarded torrserver-core:8090
+}

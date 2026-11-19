@@ -104,6 +104,10 @@ export type TaskRequest = {
   maxTokens?: number;
   /** Не звать модели хуже этого ранга (улучшение старых результатов) */
   minTier?: number;
+  /** Картинки (base64): внешний API их не принимает — только локальная модель */
+  images?: string[];
+  /** Не ограничивать генерацию схемой — ответ всё равно проверяется по ней */
+  freeform?: boolean;
 };
 
 async function attempt(link: Link, r: ChatRequest): Promise<ChatResponse> {
@@ -112,12 +116,13 @@ async function attempt(link: Link, r: ChatRequest): Promise<ChatResponse> {
 
 /** Ответ по JSON-схеме для задачи — с запасными вариантами и записью расхода. */
 export async function runTask<T>(task: LlmTask, req: TaskRequest): Promise<LlmResult<T>> {
-  const links = (await taskRoute(task)).filter((l) => l.tier >= (req.minTier ?? 0));
+  const links = (await taskRoute(task)).filter((l) => l.tier >= (req.minTier ?? 0) && (!req.images?.length || l.provider === "ollama"));
   if (!links.length) throw new LlmUnavailable(task);
   const prices = getLlmConfig().prices;
   let lastError: unknown = null;
   for (const link of links) {
     let repair: ChatRequest["repair"];
+    let retried = false;
     // Две попытки на звено: вторая — «исправь» с перечнем ошибок, если ответ не по схеме
     for (let n = 0; n < 2; n++) {
       const started = Date.now();
@@ -125,7 +130,7 @@ export async function runTask<T>(task: LlmTask, req: TaskRequest): Promise<LlmRe
       try {
         const out = await attempt(link, {
           model: link.model, schema: req.schema, system: req.system, user: req.user, repair,
-          timeoutMs: req.timeoutMs ?? 300_000, maxTokens: req.maxTokens,
+          timeoutMs: req.timeoutMs ?? 300_000, maxTokens: req.maxTokens, images: req.images, freeform: req.freeform,
         });
         const cost = link.provider === "external" ? costUsd(link.model, out.usage, new Date(), prices) : 0;
         let parsed: unknown;
@@ -144,8 +149,14 @@ export async function runTask<T>(task: LlmTask, req: TaskRequest): Promise<LlmRe
         errors = v && !v.ok ? v.errors : errors;
         logUsage({ ...base, ...out.usage, costUsd: cost, ms: Date.now() - started, ok: false, error: errors.join("; ") });
         lastError = new Error(`${task}: ${errors.join("; ")}`);
-        // Оборванный ответ «исправлять» бесполезно: промпт станет ещё длиннее — сразу к следующему звену
-        if (out.truncated) break;
+        // Оборванный ответ «исправлять» бесполезно: промпт станет ещё длиннее. Обрыв обычно — модель зациклилась
+        // в рассуждениях (случайно): один раз пробуем заново с чистого листа, второй обрыв — к следующему звену
+        if (out.truncated) {
+          if (n > 0 || retried) break;
+          retried = true;
+          repair = undefined;
+          continue;
+        }
         repair = { answer: out.text, errors };
       } catch (e) {
         logUsage({ ...base, prompt: 0, cacheHit: 0, completion: 0, costUsd: 0, ms: Date.now() - started, ok: false, error: String(e) });

@@ -47,7 +47,7 @@ export function Impressions({ media }: { media: MediaLite }) {
         {/* Явная рекомендация другим: да / нет / не выбрано (повторный клик снимает) */}
         <div className="flex flex-wrap items-center gap-3">
           <span className="w-24 text-sm text-gray-400">Советую?</span>
-          <div className="flex gap-1.5">
+          <div className="flex flex-wrap gap-1.5">
             {([[true, "Рекомендую", HandThumbUpIcon, "border-green-500 bg-green-600/20 text-green-200"],
               [false, "Не рекомендую", HandThumbDownIcon, "border-red-500 bg-red-600/20 text-red-200"]] as const).map(([value, label, Icon, on]) => (
               <button key={label}
@@ -93,7 +93,7 @@ export function Impressions({ media }: { media: MediaLite }) {
           <span className="w-24 text-sm text-gray-400">Озвучка</span>
           <input list="voices" defaultValue={entry?.voice ?? ""} key={entry?.voice ?? ""} placeholder="с какой озвучкой смотрел"
             onBlur={(e) => e.target.value !== (entry?.voice ?? "") && save({ voice: e.target.value || null })}
-            className="w-64 rounded-md border border-gray-700 bg-gray-900 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none" />
+            className="w-full min-w-0 sm:w-64 rounded-md border border-gray-700 bg-gray-900 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none" />
           <datalist id="voices">{VOICES.map((v) => <option key={v} value={v} />)}</datalist>
         </div>
 
@@ -102,7 +102,7 @@ export function Impressions({ media }: { media: MediaLite }) {
           <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2}
             onBlur={() => note !== (entry?.note ?? "") && save({ note: note || null })}
             placeholder="Что зацепило или раздражало — пиши как есть, рекомендации это учтут"
-            className="min-w-64 flex-1 rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
+            className="min-w-0 w-full flex-1 sm:min-w-64 rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
         </div>
       </div>
     </section>

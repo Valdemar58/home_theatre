@@ -79,7 +79,24 @@ export type ProwlarrRelease = {
   categories: { id: number }[];
 };
 
-type ProwlarrIndexer = { id: number; name: string; enable: boolean; tags: number[] };
+type ProwlarrIndexer = { id: number; name: string; enable: boolean; tags: number[]; language?: string };
+
+/** Нерусские трекеры (Nyaa, 1337x…): оригинал, английские и мультиязычные раздачи (IDEAS #88). */
+export const origIndexers = () =>
+  cached("ru:prowlarr-orig-indexers", (list: { id: number }[]) => (list.length ? 600 : 30), async () =>
+    (await getJson<ProwlarrIndexer[]>(env.prowlarrUrl, env.prowlarrApiKey, "/api/v1/indexer", prowlarrLimiter))
+      .filter((i) => i.enable && !/^ru/i.test(i.language ?? "")).map((i) => ({ id: i.id, name: i.name })));
+
+/** Поиск на нерусских трекерах: аниме (5070) и ТВ (5000), для фильма — ещё фильмы (2000). */
+export async function searchOrig(query: string, movie = false): Promise<ProwlarrRelease[]> {
+  const indexers = await origIndexers();
+  if (!indexers.length) return [];
+  const params = new URLSearchParams({ query, type: "search", limit: "100" });
+  for (const i of indexers) params.append("indexerIds", String(i.id));
+  for (const c of movie ? ["5070", "2000"] : ["5070", "5000"]) params.append("categories", c);
+  return cached(`orig:search:${params}`, (r: ProwlarrRelease[]) => (r.length ? 15 * 60 : 60), () =>
+    getJson<ProwlarrRelease[]>(env.prowlarrUrl, env.prowlarrApiKey, `/api/v1/search?${params}`, prowlarrLimiter, 120_000));
+}
 
 /** Индексаторы Prowlarr с тегом ru (RuTracker, Kinozal...). */
 export const ruIndexers = () =>

@@ -2,21 +2,23 @@
 import { displayTitle, type DayItem, type GridDay } from "@/lib/schedule";
 import { formatTime, WEEKDAYS } from "@/lib/time";
 import { KindBadge } from "../AnimeQuick";
-import { cx } from "../ui";
+import { cx, Skel } from "../ui";
 import { ListDot, type OpenDay } from "./shared";
 import { imgSrc } from "@/lib/img";
 import { HoverZone } from "../HoverCard";
 
 /** Неделя: 7 колонок с карточками по времени и линией «сейчас» в текущем дне. */
-export function WeekView({ days, byDay, today, onOpen }: {
+export function WeekView({ days, byDay, today, onOpen, loading }: {
   days: GridDay[];
   byDay: Map<string, DayItem[]>;
   today: string;
   onOpen: OpenDay;
+  /** Расписание ещё не пришло: колонки дней настоящие, карточки — заглушками */
+  loading?: boolean;
 }) {
   const nowSec = Date.now() / 1000;
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-7">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-7" aria-busy={loading || undefined}>
       {days.map((d, i) => {
         const items = [...(byDay.get(d.key) ?? [])].sort((a, b) => a.airing.airingAt - b.airing.airingAt);
         const isToday = d.key === today;
@@ -30,7 +32,13 @@ export function WeekView({ days, byDay, today, onOpen }: {
               <span className={cx("text-xl font-bold", isToday && "text-indigo-400")}>{d.day}</span>
             </button>
             <div className="flex-1 space-y-1.5 p-2 pt-0">
-              {items.length === 0 && <p className="py-6 text-center text-xs text-gray-600">Нет серий</p>}
+              {loading && Array.from({ length: 1 + (d.day % 3) }, (_, n) => (
+                <div key={n} className="flex gap-2 p-1.5">
+                  <Skel className="h-[72px] w-12 shrink-0" />
+                  <div className="min-w-0 flex-1 space-y-1.5"><Skel className="h-3 w-full" /><Skel className="h-3 w-2/3" /><Skel className="h-4 w-14 rounded-full" /></div>
+                </div>
+              ))}
+              {!loading && items.length === 0 && <p className="py-6 text-center text-xs text-gray-600">Нет серий</p>}
               {items.map((item, n) => (
                 <div key={`${item.media.id}-${item.airing.episode}`}>
                   {n === nowIndex && (

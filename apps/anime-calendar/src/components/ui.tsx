@@ -3,6 +3,7 @@
 import { XMarkIcon } from "@heroicons/react/24/outline";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { useBodyScrollLock } from "@/lib/useBodyScrollLock";
 
 export const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 
@@ -56,8 +57,8 @@ export function Badge({ tone = "neutral", variant = "soft", className, children 
   tone?: Tone; variant?: "soft" | "solid" | "outline"; className?: string; children: React.ReactNode;
 }) {
   return (
-    // Фиксированная высота: бейджи в одной строке (и обёрнутые в ссылку) одного размера
-    <span className={cx("inline-flex h-6 max-w-full items-center rounded-full px-2.5 text-xs leading-none font-medium whitespace-nowrap",
+    // Short statuses stay compact; long labels wrap inside the available width.
+    <span className={cx("inline-flex min-h-6 max-w-full items-center rounded-full px-2.5 py-1 text-xs leading-tight font-medium whitespace-normal",
       TONE_CLASS[tone], variant === "outline" ? "outline-tone" : variant, className)}>
       {children}
     </span>
@@ -81,6 +82,7 @@ export function Modal({ open, onClose, title, children, wide }: {
   open: boolean; onClose: () => void; title: string; children: React.ReactNode; wide?: boolean;
 }) {
   const [mounted, setMounted] = useState(false);
+  useBodyScrollLock(open);
   useEffect(() => setMounted(true), []);
   useEffect(() => {
     if (!open) return;
@@ -94,16 +96,17 @@ export function Modal({ open, onClose, title, children, wide }: {
   return createPortal(
     <div className="fixed inset-0 z-[60] flex items-end justify-center bg-gray-900/80 p-0 backdrop-blur-sm sm:items-center sm:p-4" onClick={onClose}>
       <div
-        className={cx("w-full overflow-hidden rounded-t-xl bg-gray-800 shadow-2xl ring-1 ring-gray-700 sm:rounded-xl", wide ? "sm:max-w-3xl" : "sm:max-w-lg")}
+        role="dialog" aria-modal="true" aria-label={title}
+        className={cx("flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-t-xl bg-gray-800 shadow-2xl ring-1 ring-gray-700 sm:rounded-xl", wide ? "sm:max-w-3xl" : "sm:max-w-lg")}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-gray-700 px-5 py-3">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-700 px-5 py-3">
           <h3 className="text-lg font-semibold">{title}</h3>
           <button onClick={onClose} className="rounded p-1 text-gray-400 hover:bg-gray-700 hover:text-white" aria-label="Закрыть">
             <XMarkIcon className="h-5 w-5" />
           </button>
         </div>
-        <div className="max-h-[75vh] overflow-y-auto p-5">{children}</div>
+        <div className="min-h-0 overflow-y-auto overscroll-contain p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))]">{children}</div>
       </div>
     </div>,
     document.body,
@@ -115,6 +118,32 @@ export function EmptyState({ title, children }: { title: string; children?: Reac
     <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-700 px-6 py-16 text-center">
       <p className="text-lg font-semibold text-gray-200">{title}</p>
       {children && <div className="mt-2 max-w-md text-sm text-gray-400">{children}</div>}
+    </div>
+  );
+}
+
+/**
+ * Заглушка на время загрузки — того же размера, что придёт (размер задаёт className). Правило приложения: всё,
+ * что не зависит от данных (заголовки, ссылки, кнопки, раскладка), рисуется сразу; заглушкой — только место под данные.
+ */
+export function Skel({ className }: { className?: string }) {
+  return <span aria-hidden className={cx("block max-w-full animate-pulse rounded-md bg-gray-700/50", className ?? "h-4 w-24")} />;
+}
+
+/** Абзац-заглушка: строки разной длины, последняя короче. */
+export function SkelText({ lines = 3, className }: { lines?: number; className?: string }) {
+  return (
+    <span aria-hidden className={cx("block space-y-2", className)}>
+      {Array.from({ length: lines }, (_, i) => <Skel key={i} className={cx("h-3.5", i === lines - 1 ? "w-3/5" : i % 2 ? "w-11/12" : "w-full")} />)}
+    </span>
+  );
+}
+
+/** Сетка постеров-заглушек 2:3 (карточки тайтлов и персонажей): классы сетки — те же, что у настоящей. */
+export function SkelPosters({ count, className }: { count: number; className: string }) {
+  return (
+    <div aria-hidden className={className}>
+      {Array.from({ length: count }, (_, i) => <Skel key={i} className="aspect-2/3 w-full rounded-xl" />)}
     </div>
   );
 }
@@ -155,10 +184,10 @@ export function Segmented<T extends string>({ value, onChange, options }: {
   options: [T, string][];
 }) {
   return (
-    <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-inset ring-gray-600">
+    <div className="inline-flex max-w-full flex-wrap gap-1 rounded-lg bg-gray-800 p-1 ring-1 ring-inset ring-gray-600">
       {options.map(([v, text]) => (
         <button key={v} type="button" onClick={() => onChange(v)}
-          className={cx("h-9 px-3 text-sm transition", value === v ? "bg-indigo-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700")}>
+          className={cx("min-h-9 shrink-0 whitespace-nowrap rounded-md px-3 py-2 text-sm transition", value === v ? "bg-indigo-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700")}>
           {text}
         </button>
       ))}

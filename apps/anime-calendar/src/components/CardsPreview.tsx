@@ -14,7 +14,7 @@ import { ListControl } from "./ListControl";
 import { Poster } from "./Poster";
 import { RecCard } from "./RecommendationsView";
 import { TitleCard } from "./TitleCard";
-import { Spinner } from "./ui";
+import { SkelPosters } from "./ui";
 
 // Временная страница (TASKS.md 3.9): все варианты представления тайтла на реальных данных —
 // для обратной связи по унификации карточек и всплывающего окна при наведении.
@@ -44,7 +44,27 @@ export function CardsPreview() {
   const byDay = useMemo(() => (cal ? groupByDay(cal.airings, cal.media, tz) : new Map<string, DayItem[]>()), [cal, tz]);
   const { data: reco } = useQuery({ queryKey: ["recommendations"], queryFn: () => api<RecoResponse>("/api/recommendations"), staleTime: 10 * 60_000 });
 
-  if (!list) return <Spinner />;
+  const intro = (
+    <div>
+      <h1 className="text-2xl font-bold">Варианты карточек</h1>
+      <p className="mt-1 text-sm text-gray-400">
+        Все места, где показывается тайтл, — на ваших данных. Ссылайтесь на номера (A1, B2…) в отзыве:
+        что унифицировать, какой вариант взять за основу, где нужно всплывающее окно при наведении.
+      </p>
+    </div>
+  );
+  // Список ещё не пришёл: заголовки вариантов настоящие, постеры — заглушки
+  if (!list) return (
+    <div className="space-y-6" aria-busy>
+      {intro}
+      <Variant id="A1" title="Постер-карточка" where="каталог, «Связанное», «Похожее» (без статуса)">
+        <SkelPosters count={3} className="grid max-w-3xl grid-cols-2 gap-4 sm:grid-cols-4" />
+      </Variant>
+      <Variant id="A2" title="Постер-карточка со статусом / прогнозом" where="каталог (тайтл в списке), «Похожее» (прогноз в углу)">
+        <SkelPosters count={4} className="grid max-w-3xl grid-cols-2 gap-4 sm:grid-cols-4" />
+      </Variant>
+    </div>
+  );
   const withMedia = list.filter((e) => e.media);
   const watching = withMedia.find((e) => e.status === "watching") ?? withMedia[0];
   const completed = withMedia.find((e) => e.status === "completed" && e.score) ?? withMedia.find((e) => e.status === "completed") ?? withMedia[1];
@@ -54,13 +74,7 @@ export function CardsPreview() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Варианты карточек</h1>
-        <p className="mt-1 text-sm text-gray-400">
-          Все места, где показывается тайтл, — на ваших данных. Ссылайтесь на номера (A1, B2…) в отзыве:
-          что унифицировать, какой вариант взять за основу, где нужно всплывающее окно при наведении.
-        </p>
-      </div>
+      {intro}
 
       <Variant id="A1" title="Постер-карточка" where="каталог, «Связанное», «Похожее» (без статуса)">
         <div className="grid max-w-3xl grid-cols-2 gap-4 sm:grid-cols-4">

@@ -206,8 +206,8 @@ export function GraphView() {
   };
 
   return (
-    <div className="-mx-4 -mb-24 -mt-6 lg:-mx-8 lg:-mb-10">
-      <div className="relative h-[calc(100vh-4rem)] overflow-hidden bg-gray-950">
+    <div className="-mx-4 -mb-24 -mt-4 md:-mt-6 lg:-mx-8 lg:-mb-10">
+      <div className="relative h-[calc(100dvh-14rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] md:h-[calc(100dvh-4rem)] overflow-hidden bg-gray-950">
         {isLoading ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-gray-400">
             <Spinner className="h-8 w-8" /> Строю граф: профили тайтлов, связи и кластеры…
@@ -220,7 +220,7 @@ export function GraphView() {
 
         {/* Панель управления */}
         {data && (
-          <div className="absolute left-4 top-4 w-72 space-y-3 rounded-xl bg-gray-900/90 p-4 shadow-xl ring-1 ring-gray-700 backdrop-blur">
+          <div className="absolute left-4 top-4 w-72 max-w-[calc(100%-2rem)] max-h-[calc(100%-2rem)] overflow-y-auto space-y-3 rounded-xl bg-gray-900/90 p-4 shadow-xl ring-1 ring-gray-700 backdrop-blur">
             <div className="flex items-center justify-between">
               <h1 className="text-lg font-bold">Граф аниме</h1>
               <Button size="sm" variant="ghost" onClick={refresh} disabled={isFetching} title="Пересчитать">

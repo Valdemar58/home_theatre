@@ -1,0 +1,427 @@
+import "server-only";
+import { randomBytes } from "node:crypto";
+import {
+  chapterLabel, deviceProfile, isSignsTitle, JIMAKU_SUB, SIGNS_SUB, STREAM_SUB, pickAudio, pickSub, trackLabel, WATCHED_SHARE,
+  type PlayCaps, type PlayInfo, type PlayStatus, type PlaySub, type PlayTrack,
+} from "@/lib/player";
+import { ApiError } from "./route";
+import { db, now } from "./db";
+import { applyCoverage } from "./watch-history";
+import { recordMeetingCoverage } from "./meeting-history";
+import { episodeItems } from "./playback";
+import { guarded } from "./sources";
+import { segmentsFromChapters } from "@/lib/fingerprint";
+import { prebufferProgress } from "./prebuffer";
+import { ensureSegments, itemKey, storedSegments } from "./segments";
+import { releaseTag, streamSubs, subsForVideo, syncStreamSubsSoon } from "./stream-subs";
+import { sdhFile } from "./sdh";
+import { episodeVoices, fetchVoice, setVoicePref, voicePref, type EpisodeVoice } from "./stream-voices";
+import { isPrepared, preparedPath } from "./prep";
+import { ensureThumbs, thumbsKey, thumbsOf } from "./thumbs";
+import { dropTorrentCache, jellyfin, torrentCached, torrentStats } from "./stream";
+import { episodeStatus } from "./availability";
+import { coverageAttempt, recordCoverage } from "./watch-coverage";
+import { openLease, closeLease } from "./desktop-stream";
+
+// Плеер календаря: сессия просмотра серии. Jellyfin решает по профилю браузера, что отдать как есть, а что
+// перекодировать (HEVC 10 бит → копия, если браузер умеет; FLAC → AAC), и отдаёт HLS. Браузер ходит только
+// в календарь (/api/play/<sid>/…): ключ Jellyfin остаётся на сервере, плейлисты Jellyfin относительные.
+// У каждой сессии свой DeviceId — перекодирования разных зрителей не мешают друг другу.
+
+type MediaStream = {
+  Type: "Video" | "Audio" | "Subtitle" | "Attachment" | string;
+  Index: number; Codec?: string; Language?: string; Title?: string; IsDefault?: boolean; IsForced?: boolean; IsExternal?: boolean;
+};
+type MediaSource = {
+  Id: string; RunTimeTicks?: number; SupportsDirectPlay?: boolean; TranscodingUrl?: string; TranscodeReasons?: string[];
+  MediaStreams: MediaStream[]; MediaAttachments?: { Index: number; FileName?: string; MimeType?: string }[];
+};
+
+export type PlaySession = {
+  desktopLease?: string;
+  sid: string;
+  userId: number;
+  anilistId: number;
+  ep: number;
+  itemId: string;
+  /** Серия видна пользователю в Jellyfin (иначе позицию туда не пишем — друг без библиотек) */
+  jfOwn: boolean;
+  mediaSourceId: string;
+  playSessionId: string;
+  deviceId: string;
+  /** Серия «Стрима»: раздача и файл в TorrServer (состояние для плеера) */
+  stream: { hash: string; index: number } | null;
+  /** Путь и запрос HLS у Jellyfin (/videos/<id>/master.m3u8?...) или null — файл как есть */
+  hlsPath: string | null;
+  duration: number;
+  /** Дорожки звука сессии — при перезапуске выбранная ищется заново (внешний файл озвучки сдвигает номера) */
+  audio: PlayTrack[];
+  /** Субтитры сессии (надписи из полной дорожки берут исходник отсюда) и файл серии (ключ сохранённого перевода) */
+  subs: PlaySub[];
+  itemKey: string;
+  marked: boolean;
+  coverageId?: string;
+  marking?: Promise<boolean>;
+  /** Когда последний раз сообщили позицию в Jellyfin */
+  jfAt: number;
+  seenAt: number;
+};
+
+const g = globalThis as unknown as { __playSessions?: Map<string, PlaySession> };
+const sessions = (g.__playSessions ??= new Map());
+// Плеер шлёт позицию раз в 10 с (и на паузе): дольше 3 мин тишины — вкладку закрыли
+const IDLE_MS = 3 * 60_000;
+export function startDesktopPlayback(userId: number, room: string, anilistId: number, ep: number, start?: number | null): PlayInfo {
+  const l = openLease(userId, room, anilistId, ep), sid = l.id;
+  if (start == null && room.startsWith("device:")) {
+    const saved = db.prepare<[number, number, number], {pos:number;dur:number|null}>("SELECT pos,dur FROM playback_pos WHERE user_id=? AND anilist_id=? AND ep=?").get(userId,anilistId,ep);
+    start = saved && (!saved.dur || saved.pos < saved.dur * WATCHED_SHARE) ? saved.pos : 0;
+  }
+  start ??= 0;
+  const coverageId = coverageAttempt({ sid, userId, anilistId, ep, duration: l.duration }, l.version);
+  sessions.set(sid, { sid, userId, anilistId, ep, itemId: "", jfOwn: false, mediaSourceId: "", playSessionId: "", deviceId: l.device, stream: null, hlsPath: null, duration: l.duration, audio: [], subs: [], itemKey: l.version, marked: false, coverageId, jfAt: 0, seenAt: Date.now(), desktopLease: l.id });
+  return { sid, src: `/desktop-media/${l.id}/file.mp4`, hls: false, stream: false, duration: l.duration, start: Math.max(0, Math.min(l.duration, Number.isFinite(start) ? start : 0)), audio: [], audioIndex: null, subs: [], subIndex: null, fonts: [], chapters: [], extVoices: [], segments: [], trickplay: null, transcode: [], desktop: { lease: l.id, device: l.device, version: l.version } };
+}
+/** Выбор озвучки «оригинал» в voice_pref: «lang:jpn». */
+const ORIG = "lang:";
+
+export function playSession(sid: string, userId: number): PlaySession {
+  const s = sessions.get(sid);
+  if (!s || s.userId !== userId) throw new ApiError(404, "Сессия просмотра закончилась — откройте серию заново");
+  s.seenAt = Date.now();
+  return s;
+}
+
+/** Начать (или перезапустить с другой озвучкой/с позиции) просмотр серии. */
+export async function startPlayback(user: { id: number; jellyfin_id: string }, anilistId: number, ep: number, opts: {
+  caps: PlayCaps; source?: string; audio?: number | null; voice?: string | null; start?: number | null; replace?: string | null;
+}): Promise<PlayInfo> {
+  const items = (await episodeItems(anilistId)).get(ep) ?? [];
+  const item = opts.source ? items.find((i) => i.hash === opts.source) : items.find((i) => i.where === "library") ?? items[0];
+  if (!item) throw new ApiError(404, "Этой серии нет ни в библиотеке, ни в «Стриме»");
+  // Сменили озвучку — старое перекодирование больше не нужно
+  const replaced = opts.replace ? sessions.get(opts.replace) : undefined;
+  const prev = opts.replace && opts.audio != null ? sessions.get(opts.replace)?.audio.find((a: PlayTrack) => a.index === opts.audio) : undefined;
+  if (opts.replace) await stopPlayback(opts.replace, user.id).catch(() => undefined);
+
+  const saved = db.prepare<[number, number, number], { pos: number; dur: number | null }>(
+    "SELECT pos, dur FROM playback_pos WHERE user_id = ? AND anilist_id = ? AND ep = ?").get(user.id, anilistId, ep);
+  // Досмотрено почти до конца — сначала
+  const resume = saved && (!saved.dur || saved.pos < saved.dur * WATCHED_SHARE) ? saved.pos : 0;
+  const start = Math.max(0, opts.start ?? resume);
+
+  // Студия озвучки, отмеченная у тайтла, — дорожка по умолчанию
+  // (выбранная в плеере — раньше отмеченной в «Впечатлениях»)
+  const voice = opts.voice ?? voicePref(user.id, anilistId)
+    ?? db.prepare<[number, number], { voice: string | null }>("SELECT voice FROM list_entries WHERE user_id = ? AND anilist_id = ?").get(user.id, anilistId)?.voice ?? null;
+  const jf = await jellyfinUser(user.jellyfin_id, item.itemId);
+  // Серия «Стрима», а озвучки в раздаче отдельными файлами: нужную — скачать и положить рядом с .strm
+  const voices = item.strmPath ? await episodeVoices(item).catch(() => [] as EpisodeVoice[]) : [];
+  // «lang:jpn» — выбрали оригинал, а не студию
+  const origLang = voice?.startsWith(ORIG) ? voice.slice(ORIG.length) : null;
+  const want = voice && !origLang ? voices.find((v) => v.group.toLowerCase().includes(voice.toLowerCase())) : undefined;
+  if (want && !want.have) want.have = await placeVoice(item, want, Boolean(opts.voice));
+  let probe = await info(item.itemId, jf, opts.caps, start);
+  let audio = probe.MediaStreams.filter((m) => m.Type === "Audio").map(track);
+  // Русской дорожки нет ни в файле, ни рядом — первая озвучка раздачи (дальше её и готовим к следующим сериям)
+  const first = voices.find((v) => v.lang === "ru");
+  if (!want && !origLang && !audio.some((a) => a.lang === "rus") && first && !first.have && await placeVoice(item, first, false)) {
+    first.have = true;
+    setVoicePref(user.id, anilistId, first.group);
+    probe = await info(item.itemId, jf, opts.caps, start);
+    audio = probe.MediaStreams.filter((m) => m.Type === "Audio").map(track);
+  }
+  const same = prev && audio.find((a) => a.lang === prev.lang && a.title === prev.title && a.codec === prev.codec && a.external === prev.external);
+  const audioIndex = opts.voice ? audio.find((a) => a.external && a.title === opts.voice)?.index ?? pickAudio(audio, voice)
+    : opts.audio != null ? same?.index ?? (prev ? pickAudio(audio, voice) : opts.audio)
+    : origLang ? audio.find((a) => a.lang === origLang && !a.external)?.index ?? pickAudio(audio, null)
+    : pickAudio(audio, voice);
+  // Выбрали озвучку сами — запомнить студию (следующие серии «Стрима» готовятся с ней), оригинал — языком
+  const chosen = audio.find((a) => a.index === audioIndex);
+  if ((opts.voice || opts.audio != null) && chosen) {
+    if (chosen.lang === "rus" && chosen.title) setVoicePref(user.id, anilistId, chosen.title);
+    else if (chosen.lang && chosen.lang !== "rus") setVoicePref(user.id, anilistId, `${ORIG}${chosen.lang}`);
+  }
+  // Озвучка не та, что Jellyfin выбрал сам, — второй запрос уже с нужной дорожкой (перекодирование звука под неё)
+  const ms = audioIndex !== null && audioIndex !== defaultAudio(probe) ? await info(item.itemId, jf, opts.caps, start, audioIndex) : probe;
+
+  const sid = randomBytes(9).toString("base64url");
+  const deviceId = `ac-${sid}`;
+  const playSessionId = new URLSearchParams(ms.TranscodingUrl?.split("?")[1] ?? "").get("PlaySessionId") ?? sid;
+  const hlsPath = ms.TranscodingUrl && !ms.SupportsDirectPlay
+    ? ms.TranscodingUrl.replace(/([?&])ApiKey=[^&]*&?/i, "$1").replace(/([?&])DeviceId=[^&]*/i, `$1DeviceId=${deviceId}`)
+      // С внешними дорожками рядом Jellyfin пропускает AudioStreamIndex из PlaybackInfo и ставит первую внешнюю —
+      // поток же берёт дорожку из ссылки
+      .replace(/([?&])AudioStreamIndex=\d+/i, audioIndex !== null ? `$1AudioStreamIndex=${audioIndex}` : "$&")
+    : null;
+  const duration = (ms.RunTimeTicks ?? 0) / 1e7 || (item.runtimeSec ?? 0);
+  const sameAttempt = replaced?.userId === user.id && replaced.anilistId === anilistId && replaced.ep === ep
+    && replaced.itemKey === itemKey(item) && replaced.duration === duration;
+  const coverageId = sameAttempt && replaced.coverageId ? replaced.coverageId
+    : duration > 0 ? coverageAttempt({ sid, userId: user.id, anilistId, ep, duration }, itemKey(item)) : sid;
+  sessions.set(sid, {
+    sid, userId: user.id, anilistId, ep, itemId: item.itemId, jfOwn: jf === user.jellyfin_id, mediaSourceId: ms.Id, playSessionId, deviceId, hlsPath,
+    stream: item.hash && item.index ? { hash: item.hash, index: item.index } : null,
+    duration, audio, subs: [], itemKey: itemKey(item), marked: Boolean(sameAttempt && replaced?.marked), coverageId, jfAt: 0, seenAt: Date.now(),
+  });
+
+  const base = `/api/play/${sid}`;
+  const subs: PlaySub[] = ms.MediaStreams.filter((m) => m.Type === "Subtitle" && isText(m.Codec)).map((m) => {
+    const ass = /^(ass|ssa)$/i.test(m.Codec ?? "");
+    return {
+      ...track(m), url: `${base}/sub/${m.Index}.${ass ? "ass" : "vtt"}`, ass,
+      forced: Boolean(m.IsForced), signs: Boolean(m.IsForced) || isSignsTitle(m.Title ?? null), external: Boolean(m.IsExternal),
+    };
+  });
+  const extVoices = voices.map((v) => ({ group: v.group, size: v.size, have: v.have }));
+  // Русские субтитры из раздачи «Стрима» («RUS Subs/[Студия]») со шрифтами раздачи; ещё не скачаны — в фон
+  const fonts = (ms.MediaAttachments ?? []).filter((a) => /font|ttf|otf|woff/i.test(`${a.MimeType} ${a.FileName}`)).map((a) => `${base}/font/${a.Index}`);
+  if (item.hash && item.index) {
+    const m = streamSubs(item.hash);
+    if (!m) syncStreamSubsSoon(item.hash);
+    const url = (f: string) => `/api/stream-subs/${item.hash}/${f}`;
+    (m ? subsForVideo(m, item.index) : []).forEach((x, i) => subs.push({
+      index: STREAM_SUB + i, lang: "rus", codec: x.file.split(".").pop() ?? "ass", title: x.group,
+      label: `Русский · ${x.group ?? "из раздачи"}${x.signs ? " (надписи)" : ""}`, url: url(x.file), ass: !x.file.endsWith(".srt"),
+      forced: false, signs: x.signs, external: true, torrent: true,
+    }));
+    if (m?.subs.length) fonts.push(...m.fonts.map(url));
+  }
+  // Субтитры, взятые из других раздач («Озвучки» → «Субтитры»): та же серия, тайминг — сдвигом
+  for (const r of db.prepare<[number], { hash: string; title: string; episodes: string }>("SELECT hash, title, episodes FROM release_subs WHERE anilist_id = ?").all(anilistId)) {
+    const video = (JSON.parse(r.episodes) as Record<string, number>)[ep];
+    const m = video !== undefined && r.hash !== item.hash ? streamSubs(r.hash) : null;
+    const own = m ? subsForVideo(m, video) : [];
+    own.forEach((x) => subs.push({
+      index: STREAM_SUB + subs.length, lang: "rus", codec: x.file.split(".").pop() ?? "ass", title: x.group,
+      label: `Русский · ${x.group ?? releaseTag(r.title) ?? "другая раздача"}${x.signs ? " (надписи)" : ""} · другая раздача`, url: `/api/stream-subs/${r.hash}/${x.file}`,
+      ass: !x.file.endsWith(".srt"), forced: false, signs: x.signs, external: true, torrent: true,
+    }));
+    if (own.length) fonts.push(...m!.fonts.map((f) => `/api/stream-subs/${r.hash}/${f}`));
+  }
+  // Японские субтитры с Jimaku (скачаны для «Глубокого разбора» или кнопкой в плеере): тайминг другого релиза — есть сдвиг
+  const jp = sdhFile(anilistId, ep);
+  if (jp) {
+    const ass = /\.(ass|ssa)$/i.test(jp.path);
+    subs.push({
+      index: JIMAKU_SUB, lang: "jpn", codec: ass ? "ass" : "srt", title: "Jimaku", label: "Японский · Jimaku (для слабослышащих)",
+      url: `/api/anime/${anilistId}/subs/${ep}`, ass, forced: false, signs: false, external: true, jimaku: true,
+    });
+  }
+  // Надписи из полных ASS-дорожек: из русской — как есть, из остальных — с переводом (слой «Надписи поверх»)
+  for (const s of [...subs]) {
+    if (!s.ass || s.signs || s.jimaku) continue;
+    const translate = s.lang !== "rus";
+    subs.push({
+      index: SIGNS_SUB + s.index, lang: "rus", codec: "ass", title: s.title, ass: true, forced: false, signs: true, external: true,
+      label: translate ? `По-русски · из «${s.label}»` : `Из «${s.label}»`, url: `${base}/signs/${s.index}.ass`,
+      fromSub: { index: s.index, translate },
+    });
+  }
+  const live = sessions.get(sid);
+  if (live) live.subs = subs;
+  const meta = await chaptersOf(item.itemId, ms.Id);
+  const chapters = meta.chapters.filter((c) => c.start < duration);
+  // Миниатюры шкалы: Jellyfin (библиотеки), у скачанной серии «Стрима» — свои (ещё нет — делаются в фоне)
+  let trickplay = meta.trickplay && { ...meta.trickplay, url: `${base}/trickplay/${meta.trickplay.width}` };
+  const local = !trickplay && item.hash && item.index ? preparedPath(item.hash, item.index) : null;
+  if (local) {
+    const own = thumbsOf(item.hash!, item.index!);
+    if (own) trickplay = { ...own, url: `/api/thumbs/${thumbsKey(item.hash!, item.index!)}` };
+    else ensureThumbs(item.hash!, item.index!, local);
+  }
+  // Опенинг и эндинг: главы файла точнее всего; нет глав — найденные по звуку (нет отпечатка — поиск в фон)
+  const byChapters = segmentsFromChapters(chapters, duration);
+  const key = itemKey(item);
+  if (!byChapters.length) ensureSegments(anilistId, key);
+  const segments = byChapters.length ? byChapters : storedSegments(key);
+  return {
+    sid,
+    src: hlsPath ? `${base}/${hlsPath.replace(/^\/videos\/[^/]+\//i, "")}` : `${base}/stream`,
+    hls: Boolean(hlsPath),
+    stream: Boolean(item.hash && item.index),
+    duration,
+    start,
+    audio,
+    audioIndex,
+    subs,
+    subIndex: pickSub(subs, audio.find((a) => a.index === audioIndex)),
+    fonts,
+    chapters,
+    trickplay,
+    segments,
+    extVoices,
+    // Причины — в ответе или (Jellyfin 12) только в ссылке потока
+    transcode: ms.TranscodeReasons?.length ? ms.TranscodeReasons : (new URLSearchParams(ms.TranscodingUrl?.split("?")[1] ?? "").get("TranscodeReasons")?.split(",").filter(Boolean) ?? []),
+  };
+}
+
+const isText = (codec?: string) => /^(ass|ssa|srt|subrip|vtt|webvtt|mov_text|text)$/i.test(codec ?? "");
+const track = (m: MediaStream): PlayTrack => ({
+  index: m.Index, lang: m.Language ?? null, codec: m.Codec ?? "", title: m.Title ?? null,
+  label: trackLabel(m.Language ?? null, m.Title ?? null, m.Codec ?? ""), external: Boolean(m.IsExternal),
+});
+
+/**
+ * Скачать озвучку серии и дождаться Jellyfin. Выбрали в плеере — ждём сколько нужно; сама при открытии серии — не
+ * дольше 20 с (серия откроется с другим звуком, файл докачается в фоне и будет в следующий раз).
+ */
+async function placeVoice(item: Parameters<typeof fetchVoice>[0], v: EpisodeVoice, chosen: boolean): Promise<boolean> {
+  const p = fetchVoice(item, v.group);
+  if (chosen) return p.then(() => true);
+  const ok = await Promise.race([p.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 20_000))])
+    .catch((e) => { console.warn(`[player] озвучка ${v.group}: ${String(e)}`); return false; });
+  if (!ok) p.catch(() => undefined);
+  return ok;
+}
+const defaultAudio = (ms: MediaSource) => {
+  const a = ms.MediaStreams.filter((m) => m.Type === "Audio");
+  return (a.find((m) => m.IsDefault) ?? a[0])?.Index ?? null;
+};
+
+/**
+ * Пользователь Jellyfin для PlaybackInfo (без него Jellyfin отвечает 400): свой, а у друзей без аккаунта Jellyfin
+ * (или без доступа к библиотекам) — администратор календаря; поток от этого не зависит.
+ */
+async function jellyfinUser(own: string, itemId: string): Promise<string> {
+  // Друг без библиотек: аккаунт есть, а серию Jellyfin ему не покажет (404) — смотрит через календарь
+  const ok = await jellyfin(`/Items/${itemId}?userId=${own}`).then(() => true).catch(() => false);
+  if (ok) return own;
+  const admin = db.prepare<[], { jellyfin_id: string }>("SELECT jellyfin_id FROM users WHERE is_admin = 1 ORDER BY id LIMIT 1").get();
+  if (!admin) throw new ApiError(403, "Нет пользователя Jellyfin, от имени которого смотреть");
+  return admin.jellyfin_id;
+}
+
+async function info(itemId: string, userId: string, caps: PlayCaps, start: number, audio?: number): Promise<MediaSource> {
+  const r = await guarded("jellyfin", () => jellyfin<{ MediaSources: MediaSource[] }>(`/Items/${itemId}/PlaybackInfo?userId=${userId}`, {
+    method: "POST",
+    body: JSON.stringify({
+      DeviceProfile: deviceProfile(caps), MaxStreamingBitrate: caps.maxBitrate, StartTimeTicks: Math.round(start * 1e7),
+      AudioStreamIndex: audio, SubtitleStreamIndex: -1, EnableDirectPlay: true, EnableDirectStream: true, EnableTranscoding: true,
+      AutoOpenLiveStream: true,
+    }),
+  }));
+  const ms = r.MediaSources[0];
+  if (!ms) throw new ApiError(502, "Jellyfin не отдал видео серии");
+  return ms;
+}
+
+type TrickInfo = { Width: number; Height: number; TileWidth: number; TileHeight: number; ThumbnailCount: number; Interval: number };
+
+/** Главы и миниатюры шкалы (trickplay Jellyfin — есть, если библиотека их делает; у «Стрима» — нет). */
+async function chaptersOf(itemId: string, mediaSourceId: string) {
+  const r = await jellyfin<{ Items: { Chapters?: { Name?: string; StartPositionTicks: number }[]; Trickplay?: Record<string, Record<string, TrickInfo>> }[] }>(
+    `/Items?Ids=${itemId}&Fields=Chapters,Trickplay`).catch(() => null);
+  const it = r?.Items[0];
+  // Самая мелкая ширина — для подсказки на шкале хватает
+  const t = Object.values(it?.Trickplay?.[mediaSourceId] ?? Object.values(it?.Trickplay ?? {})[0] ?? {}).sort((a, b) => a.Width - b.Width)[0];
+  return {
+    // Названия глав — по-русски (Intro → «Вступление», Part A → «Часть A»)
+    chapters: (it?.Chapters ?? []).map((c) => ({ name: chapterLabel(c.Name ?? ""), start: c.StartPositionTicks / 1e7 })),
+    trickplay: t ? { width: t.Width, height: t.Height, cols: t.TileWidth, rows: t.TileHeight, count: t.ThumbnailCount, interval: t.Interval } : null,
+  };
+}
+
+/** Адрес у Jellyfin для запроса браузера к /api/play/<sid>/<rest>. */
+export function upstreamPath(s: PlaySession, rest: string, search: string): string {
+  const sub = /^sub\/(\d+)\.(ass|vtt)$/.exec(rest);
+  if (sub) return `/Videos/${s.itemId}/${s.mediaSourceId}/Subtitles/${sub[1]}/0/Stream.${sub[2]}`;
+  const trick = /^trickplay\/(\d+)\/(\d+)\.jpg$/.exec(rest);
+  if (trick) return `/Videos/${s.itemId}/Trickplay/${trick[1]}/${trick[2]}.jpg?mediaSourceId=${s.mediaSourceId}`;
+  const font = /^font\/(\d+)$/.exec(rest);
+  if (font) return `/Videos/${s.itemId}/${s.mediaSourceId}/Attachments/${font[1]}`;
+  if (rest === "stream") return `/Videos/${s.itemId}/stream?static=true&mediaSourceId=${s.mediaSourceId}`;
+  if (!s.hlsPath || !/^[\w./-]+$/.test(rest) || rest.includes("..")) throw new ApiError(404, "Нет такого файла");
+  // Плейлисты и сегменты HLS — в той же папке, что и master.m3u8; запрос — как есть (без ключа)
+  const dir = s.hlsPath.split("?")[0].replace(/[^/]+$/, "");
+  return `${dir}${rest}${search.replace(/([?&])ApiKey=[^&]*/i, "$1")}`;
+}
+
+/** Resume position is not watch evidence. Only actual played intervals can mark an episode. */
+export async function reportProgress(user: { id: number; name: string; jellyfin_id: string }, s: PlaySession, pos: number, played?: unknown, room?: { id: string; revision: number }) {
+  const dur = s.duration || null;
+  db.prepare(`INSERT INTO playback_pos (user_id, anilist_id, ep, pos, dur, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT (user_id, anilist_id, ep) DO UPDATE SET pos = excluded.pos, dur = excluded.dur, updated_at = excluded.updated_at`)
+    .run(user.id, s.anilistId, s.ep, pos, dur, now());
+  let done = s.marked;
+  if (dur) {
+    const attempt = s.coverageId ?? s.sid;
+    const evidence = recordCoverage({ ...s, sid: attempt }, played);
+    done = applyCoverage(user.id,s.anilistId,s.ep,attempt,dur,evidence.changed);
+    if (room) recordMeetingCoverage(user.id,room.id,room.revision,s.anilistId,s.ep,s.sid,dur,played);
+    s.marked = done;
+  }
+  if (s.jfOwn && Date.now() - s.jfAt > 30_000) {
+    s.jfAt = Date.now();
+    if (done) db.prepare("INSERT INTO watch_sync_receipts (key) VALUES (?) ON CONFLICT DO NOTHING")
+      .run(`jellyfin:${user.id}:${s.itemId}:${Math.floor(s.jfAt/1000)}`);
+    await jellyfin(`/UserItems/${s.itemId}/UserData?userId=${user.jellyfin_id}`, {
+      method: "POST",
+      body: JSON.stringify(done ? { Played: true, PlaybackPositionTicks: 0, LastPlayedDate: new Date(s.jfAt).toISOString() } : { PlaybackPositionTicks: Math.round(pos * 1e7) }),
+    }).catch((e) => console.warn(`[player] позиция в Jellyfin: ${String(e)}`));
+  }
+  return { marked: s.marked };
+}
+
+/**
+ * Что с потоком серии «Стрима» (как на странице «Загрузки»): раздача, скорость против нужной, подготовка буфера.
+ * Файл из библиотеки — null (качать нечего).
+ */
+export async function playStatus(s: PlaySession): Promise<PlayStatus> {
+  if (!s.stream) return { stream: null };
+  // Скачанная серия (prep.ts) отдаётся с диска — вся «скачана»; TorrServer не спрашиваем: статистика будит раздачу,
+  // и она начинает качать впустую, а пиры и сиды в панели плеера путают — смотрится будто стрим
+  if (isPrepared(s.stream.hash, s.stream.index)) {
+    return { stream: { state: "скачана", speed: 0, peers: 0, seeders: 0, totalPeers: 0, fileSize: null, rate: null, prebuffer: null, cached: [[0, 1]], local: true } };
+  }
+  const [t, cached] = await Promise.all([
+    torrentStats(s.stream.hash, s.stream.index).catch(() => null),
+    torrentCached(s.stream.hash, s.stream.index, s.duration).catch(() => []),
+  ]);
+  const p = prebufferProgress().find((x) => x.key === `${s.stream!.hash}:${s.stream!.index}`);
+  return {
+    stream: t && {
+      ...t,
+      rate: t.fileSize && s.duration ? t.fileSize / s.duration : null,
+      prebuffer: p ? { read: p.read, size: p.size, ready: p.ready, done: p.done, etaSec: p.etaSec } : null,
+      cached,
+    },
+  };
+}
+
+/** Закрыли плеер: остановить перекодирование у Jellyfin. */
+export async function stopPlayback(sid: string, userId: number) {
+  const s = sessions.get(sid);
+  if (!s || s.userId !== userId) return;
+  sessions.delete(sid);
+  if (s.desktopLease) closeLease(s.desktopLease, userId);
+  if (s.hlsPath) {
+    await jellyfin(`/Videos/ActiveEncodings?deviceId=${encodeURIComponent(s.deviceId)}&playSessionId=${s.playSessionId}`, { method: "DELETE" })
+      .catch(() => undefined);
+  }
+  if (s.marked && s.stream) await cleanAfterWatched(s).catch((e) => console.warn(`[player] очистка кэша: ${String(e)}`));
+}
+
+/**
+ * Досмотрели серию «Стрима» и закрыли плеер: если у раздачи не осталось подготовленных непросмотренных серий —
+ * сбросить её кэш (TorrServer не умеет удалять из кэша одну серию). Кто-то ещё смотрит эту раздачу — не трогаем.
+ */
+async function cleanAfterWatched(s: PlaySession) {
+  const hash = s.stream?.hash;
+  if (!hash || [...sessions.values()].some((x) => x.stream?.hash === hash)) return;
+  const watched = db.prepare<[number, number], { episodes: number }>("SELECT episodes FROM list_entries WHERE user_id = ? AND anilist_id = ? AND deleted = 0")
+    .get(s.userId, s.anilistId)?.episodes ?? s.ep;
+  const { episodes } = await episodeStatus(s.anilistId);
+  const waiting = episodes.some((e) => e.hash === hash && e.ep > Math.max(watched, s.ep) && (e.cached ?? 0) > 0.05);
+  if (!waiting) await dropTorrentCache(hash);
+}
+
+/** Что сейчас смотрят в плеере календаря из «Стрима» — подготовка следующей серии (prebuffer.ts). */
+export const playingStreams = () => [...sessions.values()]
+  .filter((s) => s.stream && Date.now() - s.seenAt < 60_000)
+  .map((s) => ({ hash: s.stream!.hash, index: s.stream!.index, userId: s.userId }));
+
+/** Брошенные сессии (вкладку закрыли без «стоп») — убрать (из jobs.ts). */
+export function sweepPlayback() {
+  for (const [sid, s] of sessions) if (Date.now() - s.seenAt > IDLE_MS) void stopPlayback(sid, s.userId);
+}

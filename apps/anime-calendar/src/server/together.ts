@@ -1,14 +1,16 @@
 import "server-only";
+import { DEFAULT_GROUP_PERMISSIONS, GROUP_CAPABILITIES } from "@/lib/group-policy";
+import { groupAccess, requireGroupCapability } from "./group-policy";
 import { defaultUpTo, episodesRange, togetherChange, type MemberState } from "@/lib/together-rules";
 import type {
   CoWatcher, SharedItem, SharedListDetail, SharedListSummary, SharedMember, WatchSessionInfo,
 } from "@/lib/types";
 import { db, now } from "./db";
-import { ensureMedia, getMedia, getRow, logWatch, upsertEntry, type EntryRow } from "./lists";
+import { ensureMedia, getMedia, getRow, logWatch, pushSoon, upsertEntry, type EntryRow } from "./lists";
 import { notify, resolveActions } from "./notifications";
 import { ApiError } from "./route";
 import { areFriends, friendIds } from "./social";
-import { pushEntry } from "./sync";
+import { groupEpisodes } from "./meeting-history";
 
 // Совместный просмотр: общие списки, «посмотрели вместе» (с отменой) и режим «Смотрим вместе с…».
 // Статусы участников в общем списке не хранятся отдельно — это их личные записи (живые данные);
@@ -21,12 +23,12 @@ const userName = (id: number) => db.prepare<[number], { name: string }>("SELECT 
 
 // ---------------------------------------------------------------- общие списки
 
-const listRow = (id: number) => db.prepare<[number], ListRow>("SELECT * FROM shared_lists WHERE id = ?").get(id);
-const membersOf = (listId: number) => db.prepare<[number], MemberRow>(
+export const listRow = (id: number) => db.prepare<[number], ListRow>("SELECT * FROM shared_lists WHERE id = ?").get(id);
+export const membersOf = (listId: number) => db.prepare<[number], MemberRow>(
   `SELECT m.list_id, m.user_id, m.status, u.name FROM shared_list_members m JOIN users u ON u.id = m.user_id
    WHERE m.list_id = ? ORDER BY m.joined_at`).all(listId);
 
-function roleIn(listId: number, userId: number): "owner" | "member" | "invited" | null {
+export function roleIn(listId: number, userId: number): "owner" | "member" | "invited" | null {
   const l = listRow(listId);
   if (!l) return null;
   if (l.owner_id === userId) return "owner";
@@ -34,7 +36,7 @@ function roleIn(listId: number, userId: number): "owner" | "member" | "invited" 
     "SELECT status FROM shared_list_members WHERE list_id = ? AND user_id = ?").get(listId, userId)?.status ?? null;
 }
 
-function requireMember(listId: number, userId: number) {
+export function requireMember(listId: number, userId: number) {
   const role = roleIn(listId, userId);
   if (role !== "owner" && role !== "member") throw new ApiError(403, "Вы не участник этого списка");
   return role;
@@ -43,7 +45,7 @@ function requireMember(listId: number, userId: number) {
 export function createList(owner: { id: number; name: string }, name: string, invite: number[]): number {
   const clean = name.trim().slice(0, 80);
   if (!clean) throw new ApiError(400, "Нужно название");
-  const id = Number(db.prepare("INSERT INTO shared_lists (name, owner_id, created_at) VALUES (?, ?, ?)").run(clean, owner.id, now()).lastInsertRowid);
+  const id = Number(db.prepare("INSERT INTO shared_lists (name, owner_id, created_at, permissions) VALUES (?, ?, ?, ?)").run(clean, owner.id, now(), JSON.stringify(DEFAULT_GROUP_PERMISSIONS)).lastInsertRowid);
   db.prepare("INSERT INTO shared_list_members (list_id, user_id, status, invited_by, joined_at) VALUES (?, ?, 'member', NULL, ?)").run(id, owner.id, now());
   for (const u of invite) inviteToList(owner, id, u);
   return id;
@@ -51,10 +53,11 @@ export function createList(owner: { id: number; name: string }, name: string, in
 
 export function inviteToList(by: { id: number; name: string }, listId: number, userId: number) {
   requireMember(listId, by.id);
+  requireGroupCapability(listId, by.id, "invite");
   if (!areFriends(by.id, userId)) throw new ApiError(400, "Пригласить можно только друга");
   if (roleIn(listId, userId)) return;
   db.prepare("INSERT INTO shared_list_members (list_id, user_id, status, invited_by, joined_at) VALUES (?, ?, 'invited', ?, ?)").run(listId, userId, by.id, now());
-  notify(userId, { kind: "shared-list", actorId: by.id, title: `зовёт в общий список «${listRow(listId)!.name}»`, href: `/lists/shared/${listId}`, actions: [{ type: "shared-invite", listId }] });
+  notify(userId, { kind: "shared-list", actorId: by.id, title: `зовёт в группу «${listRow(listId)!.name}»`, href: `/groups/${listId}`, actions: [{ type: "shared-invite", listId }] });
 }
 
 export function memberAction(user: { id: number; name: string }, listId: number, action: "accept" | "decline" | "leave" | "remove", target?: number) {
@@ -65,7 +68,7 @@ export function memberAction(user: { id: number; name: string }, listId: number,
   if (action === "accept" && role === "invited") {
     db.prepare("UPDATE shared_list_members SET status = 'member', joined_at = ? WHERE list_id = ? AND user_id = ?").run(now(), listId, user.id);
     for (const m of membersOf(listId)) if (m.user_id !== user.id && m.status === "member")
-      notify(m.user_id, { kind: "shared-list", actorId: user.id, title: `присоединился к «${list.name}»`, href: `/lists/shared/${listId}` });
+      notify(m.user_id, { kind: "shared-list", actorId: user.id, title: `присоединился к «${list.name}»`, href: `/groups/${listId}` });
   } else if (action === "decline" && role === "invited") del(user.id);
   if (action === "accept" || action === "decline") resolveActions(user.id, (a) => a.type === "shared-invite" && a.listId === listId);
   else if (action === "leave" && role === "member") del(user.id);
@@ -85,16 +88,20 @@ export function deleteList(userId: number, listId: number) {
 
 export async function addItem(user: { id: number; name: string }, listId: number, anilistId: number) {
   requireMember(listId, user.id);
-  const media = await ensureMedia(anilistId);
-  const res = db.prepare("INSERT OR IGNORE INTO shared_list_items (list_id, anilist_id, added_by, added_at) VALUES (?, ?, ?, ?)").run(listId, anilistId, user.id, now());
+  requireGroupCapability(listId, user.id, "suggest");
+  await ensureMedia(anilistId);
+  // Re-check after the asynchronous metadata fetch: membership may have changed.
+  requireGroupCapability(listId, user.id, "suggest");
+  const res = db.prepare("INSERT INTO shared_list_items (list_id, anilist_id, added_by, added_at, planning_state) VALUES (?, ?, ?, ?, 'proposed') ON CONFLICT DO NOTHING").run(listId, anilistId, user.id, now());
   if (!res.changes) return;
   const list = listRow(listId)!;
   for (const m of membersOf(listId)) if (m.user_id !== user.id && m.status === "member")
-    notify(m.user_id, { kind: "shared-list", anilistId, actorId: user.id, title: `${user.name} добавил в «${list.name}»`, href: `/lists/shared/${listId}` });
+    notify(m.user_id, { kind: "shared-list", anilistId, actorId: user.id, title: `${user.name} добавил в «${list.name}»`, href: `/groups/${listId}` });
 }
 
 export function removeItem(userId: number, listId: number, anilistId: number) {
   requireMember(listId, userId);
+  requireGroupCapability(listId, userId, "queue");
   db.prepare("DELETE FROM shared_list_items WHERE list_id = ? AND anilist_id = ?").run(listId, anilistId);
 }
 
@@ -136,9 +143,9 @@ export function myLists(userId: number): SharedListSummary[] {
   });
 }
 
-function itemsOf(listId: number, members: MemberRow[], ids?: number[]): SharedItem[] {
-  const rows = db.prepare<[number], { anilist_id: number; added_by: number | null; added_at: number }>(
-    "SELECT anilist_id, added_by, added_at FROM shared_list_items WHERE list_id = ? ORDER BY added_at DESC").all(listId)
+export function itemsOf(listId: number, members: MemberRow[], ids?: number[]): SharedItem[] {
+  const rows = db.prepare<[number], { anilist_id: number; added_by: number | null; added_at: number; planning_state: "proposed" | "accepted" }>(
+    "SELECT anilist_id, added_by, added_at, planning_state FROM shared_list_items WHERE list_id = ? ORDER BY added_at DESC").all(listId)
     .filter((r) => !ids || ids.includes(r.anilist_id));
   const active = members.filter((m) => m.status === "member");
   const entries = entriesOf(active.map((m) => m.user_id), rows.map((r) => r.anilist_id));
@@ -151,7 +158,10 @@ function itemsOf(listId: number, members: MemberRow[], ids?: number[]): SharedIt
       if (e?.private) return { userId: m.user_id, status: null, episodes: 0, score: 0, updatedAt: null, hidden: true };
       return { userId: m.user_id, status: e?.status ?? null, episodes: e?.episodes ?? 0, score: e?.score ?? 0, updatedAt: e?.updated_at ?? null, hidden: false };
     });
-    out.push({ media, addedBy: r.added_by, addedAt: r.added_at, members: states, state: itemState(states) });
+    const watched = groupEpisodes(listId,r.anilist_id);
+    const completed = media.status === "FINISHED" && media.episodes && Array.from({length:media.episodes},(_,i)=>i+1).every(ep=>watched.includes(ep));
+    out.push({ media, addedBy: r.added_by, addedAt: r.added_at, members: states, planningState: r.planning_state,
+      state: r.planning_state === "proposed" ? "proposed" : completed ? "done" : watched.length ? "watching" : "planned" });
   }
   return out;
 }
@@ -161,10 +171,12 @@ export function listDetail(userId: number, listId: number): SharedListDetail {
   const l = listRow(listId);
   if (!l || !role) throw new ApiError(404, "Список не найден");
   const members = membersOf(listId);
+  const access = role === "invited" ? null : groupAccess(listId, userId);
   return {
     id: l.id, name: l.name, ownerId: l.owner_id, role,
     members: members.map((m) => ({ id: m.user_id, name: m.name, status: m.status })),
     items: role === "invited" ? [] : itemsOf(listId, members),
+    capabilities: !access ? undefined : Object.fromEntries(GROUP_CAPABILITIES.map(k => [k, access.can(k)])) as SharedListDetail["capabilities"],
   };
 }
 
@@ -226,7 +238,6 @@ export async function markTogether(actor: { id: number; name: string }, anilistI
     upsertEntry(userId, media, { episodes: ch.to });
     logWatch(userId, media, ch.from, ch.to);
     changes.push({ userId, ...ch, before: live, afterAt: getRow(userId, anilistId)!.updated_at });
-    void pushEntry(userId, anilistId).catch(() => undefined);
   }
   if (!changes.length) return { eventId: null, changes: [] };
   const eventId = Number(db.prepare("INSERT INTO watch_events (actor_id, anilist_id, changes, created_at) VALUES (?, ?, ?, ?)")
@@ -264,7 +275,7 @@ export function undoTogether(userId: number, eventId: number): { undone: number;
     } else {
       db.prepare("UPDATE list_entries SET status = ?, episodes = ?, waiting = ?, aired_mark = ?, updated_at = ?, dirty = 1 WHERE user_id = ? AND anilist_id = ?")
         .run(c.before.status, c.before.episodes, c.before.waiting, c.before.aired_mark, now(), c.userId, ev.anilist_id);
-      void pushEntry(c.userId, ev.anilist_id).catch(() => undefined);
+      pushSoon(c.userId, ev.anilist_id);
     }
     c.undone = true;
     undone++;
@@ -341,7 +352,7 @@ export function endSession(userId: number, anilistId: number) {
  *  • идёт «Смотрим вместе» — те же серии засчитываются участникам;
  *  • иначе, если тайтл в общем списке и кто-то из участников отстаёт, — подсказка «Отметить и для …?».
  */
-export async function onProgress(user: { id: number; name: string }, anilistId: number, before: number, after: number, source: "manual" | "jellyfin") {
+export async function onProgress(user: { id: number; name: string }, anilistId: number, before: number, after: number, source: "manual" | "jellyfin" | "player") {
   if (after <= before) return;
   const media = getMedia(anilistId);
   if (!media) return;
@@ -357,7 +368,7 @@ export async function onProgress(user: { id: number; name: string }, anilistId: 
     .filter(({ s: st, e }) => !e?.private && togetherChange(st, after, media.episodes));
   if (!behind.length) return;
   const names = behind.map((b) => userName(b.id)).join(", ");
-  const where = source === "jellyfin" ? `Посмотрели до серии ${after} в Jellyfin` : `Вы отметили до серии ${after}`;
+  const where = source === "jellyfin" ? `Посмотрели до серии ${after} в Jellyfin` : source === "player" ? `Посмотрели до серии ${after}` : `Вы отметили до серии ${after}`;
   notify(user.id, {
     kind: "together-suggest", anilistId, title: `${where}. Отметить и для ${names}?`,
     href: `/anime/${anilistId}?together=${after}`,

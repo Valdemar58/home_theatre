@@ -13,7 +13,7 @@ import { FORMAT_LABELS, GENRE_LABELS, LIST_LABELS, label } from "@/lib/labels";
 import type { ListEntry, ListStatus } from "@/lib/types";
 import { ListControl } from "./ListControl";
 import { MatchBadge } from "./MatchBadge";
-import { Button, cx, ErrorBox, Spinner } from "./ui";
+import { Button, cx, ErrorBox, Skel, Spinner } from "./ui";
 
 // Карта тайтлов (как MAL Map): раскладка готова заранее — открывается сразу, без тряски.
 // Острова — сообщества похожих тайтлов; мои тайтлы — кольцо цвета статуса; подписи появляются при приближении.
@@ -627,15 +627,48 @@ export function MapView() {
     else void sigmaRef.current?.getCamera().animate({ x: 0.5, y: 0.5, ratio: 1 }, { duration: 600 });
   };
 
-  if (isLoading) return <Shell><div className="flex h-full items-center justify-center"><Spinner className="h-8 w-8" /></div></Shell>;
+  const filterCount = filters.statuses.length + filters.formats.length + (filters.genre ? 1 : 0) + (filters.yearFrom || filters.yearTo ? 1 : 0) + (filters.recs ? 1 : 0);
+  const toggle = <K extends "statuses" | "formats">(key: K, value: Filters[K][number]) =>
+    setFilters((f) => ({ ...f, [key]: (f[key] as string[]).includes(value) ? (f[key] as string[]).filter((x) => x !== value) : [...f[key], value] }));
+
+  // Карта грузится: панель с фильтрами уже настоящая (выбор применится, когда карта придёт),
+  // счётчики, жанры и острова — заглушками; на месте карты — пульсирующее пятно
+  if (isLoading) return (
+    <Shell>
+      <Skel className="absolute left-1/2 top-1/2 h-[60%] w-[60%] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-30 blur-2xl" />
+      <div aria-busy className="absolute left-3 top-3 flex max-h-[calc(100%-1.5rem)] w-80 max-w-[calc(100%-1.5rem)] flex-col rounded-xl bg-gray-900/90 shadow-xl ring-1 ring-gray-700 backdrop-blur">
+        <div className="flex items-center gap-2 p-3">
+          <span className="rounded-md p-1 text-gray-400"><AdjustmentsHorizontalIcon className="h-5 w-5" /></span>
+          <h1 className="mr-auto font-bold">Карта аниме</h1>
+          {filterCount > 0 && <button onClick={() => setFilters(NO_FILTERS)} className="text-xs text-accent-300 hover:text-accent-200">Сбросить ({filterCount})</button>}
+        </div>
+        <div className="space-y-4 overflow-y-auto px-3 pb-3">
+          <Skel className="h-4 w-56" />
+          <Skel className="h-8 w-full" />
+          <Group title="Мой список">
+            {STATUS_FILTERS.map(([k, name]) => (
+              <Chip key={k} on={filters.statuses.includes(k)} onClick={() => toggle("statuses", k)}
+                dot={k === "none" ? undefined : `var(--color-${STATUS_TONE[k as ListStatus]}-400)`}>{name}</Chip>
+            ))}
+            <Chip on={filters.recs} onClick={() => setFilters((f) => ({ ...f, recs: !f.recs }))}>Рекомендации мне</Chip>
+          </Group>
+          <Group title="Формат">
+            {FORMAT_GROUPS.map(([k, name]) => <Chip key={k} on={filters.formats.includes(k)} onClick={() => toggle("formats", k)}>{name}</Chip>)}
+          </Group>
+          <Skel className="h-8 w-full" />
+          <div>
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-gray-500">Острова</p>
+            <div className="space-y-1.5">{Array.from({ length: 8 }, (_, i) => <Skel key={i} className={cx("h-5", i % 3 ? "w-2/3" : "w-full")} />)}</div>
+          </div>
+        </div>
+      </div>
+    </Shell>
+  );
   if (error) return <Shell><div className="p-6"><ErrorBox error={error} /></div></Shell>;
   const st = live ?? data!.status;
   if (!atlas) return <Shell><Progress status={st} admin={Boolean(me?.isAdmin)} /></Shell>;
 
   const mineOnMap = atlas.nodes.filter((n) => myList.has(n.id)).length;
-  const filterCount = filters.statuses.length + filters.formats.length + (filters.genre ? 1 : 0) + (filters.yearFrom || filters.yearTo ? 1 : 0) + (filters.recs ? 1 : 0);
-  const toggle = <K extends "statuses" | "formats">(key: K, value: Filters[K][number]) =>
-    setFilters((f) => ({ ...f, [key]: (f[key] as string[]).includes(value) ? (f[key] as string[]).filter((x) => x !== value) : [...f[key], value] }));
 
   return (
     <Shell>
@@ -767,8 +800,8 @@ function neighborsOf(g: Graph | null, key: string): string[] {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="-mx-4 -mb-24 -mt-6 lg:-mx-8 lg:-mb-10">
-      <div className="relative h-[calc(100dvh-4rem)] overflow-hidden" style={{ background: `radial-gradient(ellipse at center, #0b1220 0%, ${BG} 70%)` }}>{children}</div>
+    <div className="-mx-4 -mb-24 -mt-4 md:-mt-6 lg:-mx-8 lg:-mb-10">
+      <div className="relative h-[calc(100dvh-14rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] md:h-[calc(100dvh-4rem)] overflow-hidden" style={{ background: `radial-gradient(ellipse at center, #0b1220 0%, ${BG} 70%)` }}>{children}</div>
     </div>
   );
 }
@@ -893,7 +926,7 @@ function Selected({ node, island, rec, neighbors, onPick, onClose }: {
             <div className="flex flex-wrap items-center gap-2"><ListControl media={a} compact /></div>
             <MatchBadge id={node.id} />
           </>
-        ) : <Spinner className="h-5 w-5" />}
+        ) : <Skel className="h-7 w-28 rounded-lg" />}
         <p className="text-xs text-gray-500">{node.genres.map((g) => GENRE_LABELS[g] ?? g).join(" · ")}</p>
         {desc && <p className="line-clamp-[8] whitespace-pre-line text-sm leading-relaxed text-gray-300">{desc}</p>}
         {neighbors.length > 0 && (

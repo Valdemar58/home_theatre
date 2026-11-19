@@ -3,3 +3,10 @@ node_modules
 data
 next-env.d.ts
 *.tsbuildinfo
+# копируется из node_modules/jassub при сборке образа
+public/jassub
+
+.npm-cache/
+.pg-planning-test/
+.browser-review/
+*-results.xml

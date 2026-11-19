@@ -8,7 +8,7 @@ import { useNoticeActions, useNotices, useNoticeTab } from "@/lib/client";
 import { NOTICE_GROUPS } from "@/lib/notice-kinds";
 import type { Notice, NoticeCounts } from "@/lib/types";
 import { NoticeItem } from "./NoticeItem";
-import { Spinner, cx } from "./ui";
+import { Skel, cx } from "./ui";
 
 // Колокольчик в шапке: компактное окно с вкладками «Все / Тайтлы / Друзья / Важное» (последние 8),
 // «Прочитать все», ссылка на страницу со всей историей. Новые (пришедшие, пока вкладка открыта) — тостом.
@@ -38,6 +38,20 @@ export function NoticeTabs({ value, onChange, unread }: { value: string; onChang
 export function NoticeList({ items, empty, onNavigate }: { items: Notice[]; empty: string; onNavigate?: () => void }) {
   if (!items.length) return <p className="px-4 py-10 text-center text-sm text-gray-400">{empty}</p>;
   return <div className="divide-y divide-gray-700/60">{items.map((n) => <NoticeItem key={n.id} n={n} onNavigate={onNavigate} />)}</div>;
+}
+
+/** Уведомления-заглушки той же формы: обложка, строка вида и времени, две строки текста. */
+export function NoticeListSkeleton({ count }: { count: number }) {
+  return (
+    <div aria-busy className="divide-y divide-gray-700/60">
+      {Array.from({ length: count }, (_, i) => (
+        <div key={i} className="flex gap-3 px-4 py-3">
+          <Skel className="h-21 w-14 shrink-0" />
+          <div className="min-w-0 flex-1 space-y-1.5"><Skel className="h-3 w-32" /><Skel className="h-4 w-3/4" /><Skel className="h-4 w-1/2" /></div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export const EMPTY: Record<string, string> = {
@@ -108,7 +122,7 @@ export function Notifications() {
           )}
         </button>
         {open && (
-          <div className="fixed inset-x-2 top-16 z-40 flex max-h-[calc(100dvh-5rem)] flex-col overflow-hidden rounded-xl bg-gray-800 shadow-2xl ring-1 ring-gray-700 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 sm:w-104">
+          <div className="fixed inset-x-2 top-[calc(6.5rem+env(safe-area-inset-top))] z-40 flex max-h-[calc(100dvh-12rem)] flex-col overflow-hidden rounded-xl bg-gray-800 shadow-2xl ring-1 ring-gray-700 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 sm:max-h-[calc(100dvh-5rem)] sm:w-104">
             <div className="flex items-center gap-2 px-4 pb-2 pt-3">
               <p className="mr-auto text-sm font-semibold">Уведомления</p>
               <button onClick={() => act.read(undefined, tab)} disabled={!(unread?.[tab as keyof NoticeCounts] ?? 0)}
@@ -118,7 +132,7 @@ export function Notifications() {
             </div>
             <div className="border-b border-gray-700 px-3 pb-2"><NoticeTabs value={tab} onChange={setTab} unread={unread} /></div>
             <div className="min-h-0 flex-1 overflow-y-auto sm:max-h-112">
-              {isLoading || !page ? <div className="flex justify-center py-10"><Spinner /></div>
+              {isLoading || !page ? <NoticeListSkeleton count={4} />
                 : <NoticeList items={page.items} empty={EMPTY[tab]} onNavigate={() => setOpen(false)} />}
             </div>
             <Link href={`/notifications${tab === "all" ? "" : `?tab=${tab}`}`} onClick={() => setOpen(false)}

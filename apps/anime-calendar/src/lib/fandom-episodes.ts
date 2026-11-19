@@ -12,16 +12,20 @@ export function episodeCategory(categories: string[]): string | null {
 
 const MONTHS = "january|february|march|april|may|june|july|august|september|october|november|december";
 
-/** Первая дата в строке: «October 2, 2018», «2 October 2018», «2020-12-05», {{Start date|2018|10|2}}. */
+// Месяц полностью или сокращённо («Sep 29, 2023», «Sept. 5» — так отдаёт Jikan-Edge)
+const MON = `(?:${MONTHS.split("|").map((x) => x.slice(0, 3)).join("|")})[a-z]*`;
+
+/** Первая дата в строке: «October 2, 2018», «Sep 29, 2023», «2 October 2018», «2020-12-05», {{Start date|2018|10|2}}. */
 export function parseDate(s: string): string | null {
   const tpl = s.match(/\{\{\s*(?:start date|dts|date)[^|]*\|\s*(\d{4})\s*\|\s*(\d{1,2})\s*\|\s*(\d{1,2})/i);
   if (tpl) return `${tpl[1]}-${tpl[2].padStart(2, "0")}-${tpl[3].padStart(2, "0")}`;
   const iso = s.match(/(\d{4})-(\d{2})-(\d{2})/);
   if (iso) return iso[0];
-  const m = s.match(new RegExp(`(${MONTHS})\\.?\\s+(\\d{1,2}),?\\s+(\\d{4})|(\\d{1,2})\\s+(${MONTHS})\\.?,?\\s+(\\d{4})`, "i"));
+  // День бывает с суффиксом: «April 1st, 2020» («Башня Бога»)
+  const m = s.match(new RegExp(`\\b(${MON})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})|(\\d{1,2})(?:st|nd|rd|th)?\\s+(${MON})\\.?,?\\s+(\\d{4})`, "i"));
   if (!m) return null;
   const [month, day, year] = m[1] ? [m[1], m[2], m[3]] : [m[5], m[4], m[6]];
-  const n = MONTHS.split("|").indexOf(month.toLowerCase()) + 1;
+  const n = MONTHS.split("|").findIndex((x) => x.startsWith(month.toLowerCase().slice(0, 3))) + 1;
   return `${year}-${String(n).padStart(2, "0")}-${day.padStart(2, "0")}`;
 }
 
@@ -35,7 +39,7 @@ function infoboxFields(wikitext: string): Map<string, string> {
   return fields;
 }
 
-export type FandomInfo = { date: string | null; season: string | null; number: string | null };
+export type FandomInfo = { date: string | null; season: string | null; number: string | null; titleJa: string | null };
 
 /**
  * Дата японского показа и сезон серии по инфобоксу. Дата — первая в поле, кроме предпоказов,
@@ -43,8 +47,8 @@ export type FandomInfo = { date: string | null; season: string | null; number: s
  */
 export function infoboxInfo(wikitext: string): FandomInfo {
   const f = infoboxFields(wikitext);
-  const keys = [...f.keys()].filter((k) => /air ?date/.test(k) && !/english|^us |dub|^en /.test(k));
-  const key = keys.find((k) => /jp|japan/.test(k)) ?? keys[0];
+  const keys = [...f.keys()].filter((k) => /air ?date|release date/.test(k) && !/english|^us |\(us\)|dub|^en /.test(k));
+  const key = keys.find((k) => /jp|japan|\(ja\)/.test(k)) ?? keys[0];
   let date: string | null = null;
   if (key) {
     for (const part of f.get(key)!.split(/<br\s*\/?>|\n/i)) {
@@ -54,11 +58,16 @@ export function infoboxInfo(wikitext: string): FandomInfo {
     }
   }
   const clean = (v: string | undefined) => v?.replace(/\[\[(?:[^|\]]*\|)?([^\]]*)\]\]/g, "$1").replace(/\{\{[^}]*\}\}|<[^>]+>/g, "").trim() || null;
-  return { date, season: clean(f.get("season") ?? f.get("season number")), number: clean(f.get("episode") ?? f.get("ep number") ?? f.get("number")) };
+  // Японское название — как есть (с фуриганой {{Ruby|…}}): к сравнимому виду его приводит normJaTitle
+  const ja = f.get("kanji") ?? f.get("japanese") ?? f.get("japanese title") ?? f.get("title (japanese)");
+  return {
+    date, season: clean(f.get("season") ?? f.get("season number")), number: clean(f.get("episode") ?? f.get("ep number") ?? f.get("number")),
+    titleJa: ja?.replace(/<ref.*$/i, "").trim() || null,
+  };
 }
 
-const PLOT = /^(summary|plot|plot details|plot summary|story|recap|full summary)$/i;
-const SHORT = /^(synopsis|overview|brief)$/i;
+const PLOT = /^(summary|plot|plot details|plot summary|story|recap|full summary|detailed summary)$/i;
+const SHORT = /^(synopsis|overview|brief|short summary|official synopsis)$/i;
 
 /** Разделы страницы серии: короткий анонс и подробный пересказ (самый длинный из «Summary / Plot / …»). */
 export function plotSections(html: string): { synopsis: string | null; plot: string | null } {

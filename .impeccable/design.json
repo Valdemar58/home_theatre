@@ -1,0 +1,238 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-11T21:57:03.301975+00:00",
+  "title": "Design System: home_theater",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "accent",
+        "tonalRamp": [
+          "oklch(0.25 0.077 277)",
+          "oklch(0.32 0.094 277)",
+          "oklch(0.40 0.119 277)",
+          "oklch(0.48 0.145 277)",
+          "oklch(0.56 0.162 277)",
+          "oklch(0.64 0.170 277)",
+          "oklch(0.72 0.153 277)",
+          "oklch(0.80 0.119 277)",
+          "oklch(0.87 0.085 277)",
+          "oklch(0.93 0.051 277)",
+          "oklch(0.97 0.026 277)"
+        ]
+      },
+      "special": {
+        "role": "semantic",
+        "displayName": "special",
+        "tonalRamp": [
+          "oklch(0.25 0.068 302)",
+          "oklch(0.32 0.083 302)",
+          "oklch(0.40 0.105 302)",
+          "oklch(0.48 0.128 302)",
+          "oklch(0.56 0.142 302)",
+          "oklch(0.64 0.150 302)",
+          "oklch(0.72 0.135 302)",
+          "oklch(0.80 0.105 302)",
+          "oklch(0.87 0.075 302)",
+          "oklch(0.93 0.045 302)",
+          "oklch(0.97 0.022 302)"
+        ]
+      },
+      "positive": {
+        "role": "semantic",
+        "displayName": "positive",
+        "tonalRamp": [
+          "oklch(0.25 0.054 158)",
+          "oklch(0.32 0.066 158)",
+          "oklch(0.40 0.084 158)",
+          "oklch(0.48 0.102 158)",
+          "oklch(0.56 0.114 158)",
+          "oklch(0.64 0.120 158)",
+          "oklch(0.72 0.108 158)",
+          "oklch(0.80 0.084 158)",
+          "oklch(0.87 0.060 158)",
+          "oklch(0.93 0.036 158)",
+          "oklch(0.97 0.018 158)"
+        ]
+      },
+      "negative": {
+        "role": "semantic",
+        "displayName": "negative",
+        "tonalRamp": [
+          "oklch(0.25 0.059 18)",
+          "oklch(0.32 0.072 18)",
+          "oklch(0.40 0.091 18)",
+          "oklch(0.48 0.111 18)",
+          "oklch(0.56 0.123 18)",
+          "oklch(0.64 0.130 18)",
+          "oklch(0.72 0.117 18)",
+          "oklch(0.80 0.091 18)",
+          "oklch(0.87 0.065 18)",
+          "oklch(0.93 0.039 18)",
+          "oklch(0.97 0.019 18)"
+        ]
+      },
+      "warning": {
+        "role": "semantic",
+        "displayName": "warning",
+        "tonalRamp": [
+          "oklch(0.25 0.054 78)",
+          "oklch(0.32 0.066 78)",
+          "oklch(0.40 0.084 78)",
+          "oklch(0.48 0.102 78)",
+          "oklch(0.56 0.114 78)",
+          "oklch(0.64 0.120 78)",
+          "oklch(0.72 0.108 78)",
+          "oklch(0.80 0.084 78)",
+          "oklch(0.87 0.060 78)",
+          "oklch(0.93 0.036 78)",
+          "oklch(0.97 0.018 78)"
+        ]
+      },
+      "info": {
+        "role": "semantic",
+        "displayName": "info",
+        "tonalRamp": [
+          "oklch(0.25 0.045 232)",
+          "oklch(0.32 0.055 232)",
+          "oklch(0.40 0.070 232)",
+          "oklch(0.48 0.085 232)",
+          "oklch(0.56 0.095 232)",
+          "oklch(0.64 0.100 232)",
+          "oklch(0.72 0.090 232)",
+          "oklch(0.80 0.070 232)",
+          "oklch(0.87 0.050 232)",
+          "oklch(0.93 0.030 232)",
+          "oklch(0.97 0.015 232)"
+        ]
+      },
+      "neutral": {
+        "role": "neutral",
+        "displayName": "neutral",
+        "tonalRamp": [
+          "oklch(0.25 0.008 262)",
+          "oklch(0.32 0.010 262)",
+          "oklch(0.40 0.013 262)",
+          "oklch(0.48 0.015 262)",
+          "oklch(0.56 0.017 262)",
+          "oklch(0.64 0.018 262)",
+          "oklch(0.72 0.016 262)",
+          "oklch(0.80 0.013 262)",
+          "oklch(0.87 0.009 262)",
+          "oklch(0.93 0.005 262)",
+          "oklch(0.97 0.003 262)"
+        ]
+      }
+    },
+    "motion": [
+      {
+        "name": "shell-opacity",
+        "value": "150ms",
+        "purpose": "Существующая прозрачность элементов AppShell; не универсальный стандарт."
+      },
+      {
+        "name": "shell-layout",
+        "value": "200ms",
+        "purpose": "Существующие ширина панели и отступы AppShell."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "md",
+        "value": "768px"
+      },
+      {
+        "name": "xl",
+        "value": "1280px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Button primary",
+      "kind": "button",
+      "description": "Вариант общего Button из ui.tsx; CSS развёрнут для автономного превью.",
+      "html": "<button class=\"ds-button-primary\">Смотреть</button>",
+      "css": ".ds-button-primary{font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-size:14px;font-weight:500;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:36px;padding:0 14px;border:0;border-radius:8px;transition:background-color 150ms;background:oklch(.56 .162 277);color:white;} .ds-button-primary:hover{background:oklch(.64 .170 277)} .ds-button-primary:focus-visible{outline:2px solid oklch(.80 .119 277);outline-offset:3px} .ds-button-primary:disabled{opacity:.5;cursor:not-allowed}"
+    },
+    {
+      "name": "Button default",
+      "kind": "button",
+      "description": "Вариант общего Button из ui.tsx; CSS развёрнут для автономного превью.",
+      "html": "<button class=\"ds-button-default\">В список</button>",
+      "css": ".ds-button-default{font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-size:14px;font-weight:500;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:36px;padding:0 14px;border:0;border-radius:8px;transition:background-color 150ms;background:oklch(27.8% .033 256.848 / .8);color:oklch(96.7% .003 264.542);box-shadow:inset 0 0 0 1px oklch(44.6% .03 256.802);} .ds-button-default:hover{background:oklch(37.3% .034 259.733)} .ds-button-default:focus-visible{outline:2px solid oklch(.80 .119 277);outline-offset:3px} .ds-button-default:disabled{opacity:.5;cursor:not-allowed}"
+    },
+    {
+      "name": "Button ghost",
+      "kind": "button",
+      "description": "Вариант общего Button из ui.tsx; CSS развёрнут для автономного превью.",
+      "html": "<button class=\"ds-button-ghost\">Подробнее</button>",
+      "css": ".ds-button-ghost{font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-size:14px;font-weight:500;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:36px;padding:0 14px;border:0;border-radius:8px;transition:background-color 150ms;background:transparent;color:oklch(87.2% .01 258.338);} .ds-button-ghost:hover{background:oklch(37.3% .034 259.733 / .6)} .ds-button-ghost:focus-visible{outline:2px solid oklch(.80 .119 277);outline-offset:3px} .ds-button-ghost:disabled{opacity:.5;cursor:not-allowed}"
+    },
+    {
+      "name": "Badge positive",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "Мягкий смысловой бейдж; текущая формула soft.",
+      "html": "<span class=\"ds-badge\">Готово</span>",
+      "css": ".ds-badge{display:inline-flex;align-items:center;height:24px;padding:0 10px;border-radius:9999px;font:500 12px/1 Inter,sans-serif;color:oklch(.87 .060 158);background:color-mix(in oklch,oklch(.64 .120 158) 14%,transparent);box-shadow:inset 0 0 0 1px color-mix(in oklch,oklch(.72 .108 158) 28%,transparent)}"
+    },
+    {
+      "name": "Chip selected",
+      "kind": "chip",
+      "description": "Выбранный Chip из ui.tsx.",
+      "html": "<button class=\"ds-chip\" aria-pressed=\"true\">Фэнтези</button>",
+      "css": ".ds-chip{border:1px solid transparent;border-radius:9999px;padding:4px 12px;font:500 12px/16px Inter,sans-serif;color:white;background:oklch(.56 .162 277)}.ds-chip:hover{background:oklch(.64 .170 277)}.ds-chip:focus-visible{outline:2px solid oklch(.80 .119 277);outline-offset:3px}"
+    },
+    {
+      "name": "Navigation item",
+      "kind": "nav",
+      "description": "Невыбранный пункт текущего AppShell; не новая раскладка навигации.",
+      "html": "<a class=\"ds-nav\" href=\"#\">Медиатека</a>",
+      "css": ".ds-nav{display:flex;padding:10px;border-radius:6px;font:500 16px/24px Inter,sans-serif;color:oklch(87.2% .01 258.338);text-decoration:none}.ds-nav:hover{background:oklch(37.3% .034 259.733 / .6);color:white}.ds-nav:focus-visible{outline:2px solid oklch(.80 .119 277);outline-offset:3px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Сдержанная элегантность",
+    "overview": "Медиахаб с простым первым уровнем и доступной глубиной. Планирование, просмотр и чтение имеют ясные следующие действия; анализ произведений и личного вкуса раскрывается из связанного контекста. Компактность достигается иерархией, группировкой и последовательным раскрытием, а не уменьшением всего текста.\n\nВыразительность сосредоточена на содержании и значимых состояниях. Спокойные тёмные поверхности, умеренный акцент и функциональное движение помогают ориентироваться, не превращая управление медиатекой в декоративную витрину. Это выбранное пользователем направление развития, а не утверждение, что каждый существующий экран уже ему соответствует.",
+    "keyCharacteristics": [
+      "Прямой основной путь; детали доступны рядом.",
+      "Сдержанные вторичные действия и узнаваемые состояния.",
+      "Плотная, но читаемая информация.",
+      "Глубина через оттенки поверхностей; движение сохраняет контекст."
+    ],
+    "rules": [
+      {
+        "name": "Правило смыслового цвета",
+        "body": "Цвет дополняется текстом, иконкой, формой или доступным названием. Нельзя делать его единственным способом различить важные состояния.",
+        "section": "colors"
+      },
+      {
+        "name": "Правило читаемой плотности",
+        "body": "Сначала сокращать повторы и улучшать группировку, затем менять расстояния. Не уменьшать основной текст ради помещения дополнительных данных. Длинные описания ограничивать читаемой шириной, числа времени и прогресса выравнивать табличными цифрами.",
+        "section": "typography"
+      },
+      {
+        "name": "Правило близких деталей",
+        "body": "Первое действие доступно без исследования страницы. Подробности раскрываются рядом с объектом; раскрытие не теряет выбранный тайтл, серию, позицию или контекст комнаты. Разделять группы расстоянием и заголовками; не заключать каждый ряд в отдельную карточку.",
+        "section": "layout"
+      }
+    ],
+    "dos": [
+      "- **Do** использовать существующие семантические тона и общие компоненты.",
+      "- **Do** сохранять прямой путь к действию и доступ к глубине из того же контекста.",
+      "- **Do** оценивать изменения на реальном содержимом, узком и широком экранах, с hover, focus, ожиданием и ошибкой.",
+      "- **Do** улучшать систему итерационно: проблема → локальный вариант → проверка → обновление компонента, `/palette`, DESIGN.md и sidecar в одной согласованной доработке."
+    ],
+    "donts": [
+      "- **Don't** превращать случайное текущее решение или композицию одного макета в правило всех экранов.",
+      "- **Don't** конкурировать с содержанием постоянным свечением, объёмом и анимацией.",
+      "- **Don't** смешивать продуктовые правила со стилем: права, пороги просмотра и сценарии комнаты остаются в спецификациях, связанных из PRODUCT.md.",
+      "- **Don't** выдавать выбранное направление за уже выполненный редизайн или проверенную доступность всего приложения."
+    ]
+  }
+}

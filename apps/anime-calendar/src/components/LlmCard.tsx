@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/client";
 import { LLM_TASKS, TASK_LABELS, type LlmMode, type LlmSettings, type LlmStatus, type LlmTask, type LlmUsageRow, type Pool } from "@/lib/llm-tasks";
 import { useConfirm } from "./Dialogs";
-import { Badge, Button, cx, ErrorBox, Segmented, Spinner } from "./ui";
+import { Badge, Button, cx, ErrorBox, Segmented, Skel } from "./ui";
 
 // Настройки ИИ (для админа): режим, какие задачи идут во внешний API (DeepSeek), бюджет и расход.
 // Ключ API — только в .env: здесь видно, задан ли он.
@@ -57,7 +57,7 @@ export function LlmCard() {
     void qc.invalidateQueries({ queryKey: ["llm"] });
   };
 
-  if (isLoading || !st) return <Spinner />;
+  if (isLoading || !st) return <LlmCardSkeleton />;
   const s = st.settings;
   const spentShare = st.month.budget > 0 ? Math.min(1, st.month.spent / st.month.budget) : 1;
 
@@ -84,9 +84,9 @@ export function LlmCard() {
       </div>
 
       <div className="space-y-2">
-        <div className="flex items-baseline justify-between">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
           <span className="text-gray-300">Расход в этом месяце</span>
-          <span className="tabular-nums text-gray-300">{usd(st.month.spent)} из {usd(st.month.budget)}</span>
+          <span className="whitespace-nowrap tabular-nums text-gray-300">{usd(st.month.spent)} из {usd(st.month.budget)}</span>
         </div>
         <div className="h-1.5 overflow-hidden rounded-full bg-gray-700">
           <div className={cx("h-full rounded-full", spentShare >= 1 ? "tone-negative solid" : spentShare > 0.8 ? "tone-warning solid" : "tone-accent solid")}
@@ -150,6 +150,37 @@ export function LlmCard() {
             }
           }
         }}>Сбросить к .env</Button>
+      </div>
+    </div>
+  );
+}
+
+/** Пока настройки не пришли: подписи и список задач — настоящие (они постоянные), значения — плашками. */
+function LlmCardSkeleton() {
+  return (
+    <div className="space-y-5 text-sm" aria-busy>
+      <div className="flex flex-wrap gap-2">{["w-44", "w-52", "w-36"].map((w) => <Skel key={w} className={cx("h-6 rounded-full", w)} />)}</div>
+      <div className="space-y-2"><Skel className="h-9 w-96 max-w-full rounded-lg" /><Skel className="h-4 w-80 max-w-full" /></div>
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-2"><span className="text-gray-300">Расход в этом месяце</span><Skel className="h-4 w-24" /></div>
+        <Skel className="h-1.5 w-full rounded-full" />
+        <p className="text-xs text-gray-500">Бюджет исчерпан — задачи до конца месяца идут локально.</p>
+      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        {["w-44", "w-44", "w-28"].map((w, i) => <div key={i} className="space-y-1"><Skel className="h-3 w-24" /><Skel className={cx("h-9.5 rounded-md", w)} /></div>)}
+        <Skel className="h-9 w-28 rounded-lg" />
+      </div>
+      <div className="space-y-1">
+        <h3 className="font-medium text-gray-200">Куда идёт задача</h3>
+        <p className="text-xs text-gray-500">«Улучшать» — переделать старые результаты, когда задача назначена на модель сильнее той, что их сделала.</p>
+        <div className="divide-y divide-gray-700/60">
+          {LLM_TASKS.map((t) => (
+            <div key={t} className="flex flex-wrap items-center justify-between gap-3 py-2">
+              <div className="min-w-0 flex-1"><p className="text-gray-200">{TASK_LABELS[t].title}</p><p className="text-xs text-gray-500">{TASK_LABELS[t].hint}</p></div>
+              <Skel className="h-9 w-64 rounded-lg" />
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

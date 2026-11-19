@@ -1,5 +1,5 @@
 import "@/server/prebuffer";
-import { ApiError, authed, json } from "@/server/route";
+import { adminOnly, ApiError, authed, json } from "@/server/route";
 import { cancelTask, startTask } from "@/server/tasks";
 
 const keyOf = (body: { hash?: unknown; index?: unknown }) => {
@@ -9,12 +9,14 @@ const keyOf = (body: { hash?: unknown; index?: unknown }) => {
 
 /** Подготовить серию (фоновая задача, уведомление — когда можно смотреть без остановок). */
 export const POST = authed(async (req, user) => {
+  adminOnly(user);
   const key = keyOf(await req.json().catch(() => ({})));
   return json({ task: await startTask("prebuffer", key, { userId: user.id, origin: "user" }) });
 });
 
 /** Отменить подготовку. */
-export const DELETE = authed(async (req) => {
+export const DELETE = authed(async (req, user) => {
+  adminOnly(user);
   cancelTask("prebuffer", keyOf(await req.json().catch(() => ({}))));
   return json({ ok: true });
 });

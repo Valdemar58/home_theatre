@@ -11,11 +11,13 @@ import { cx } from "./ui";
  * Галерея на странице тайтла: большой кадр со стрелками и лента миниатюр под ним.
  * Индекс общий с полноэкранным просмотром (onOpen), лента догружается порциями.
  */
-export function Gallery({ images, index, onIndex, onOpen }: {
+export function Gallery({ images, index, onIndex, onOpen, portrait }: {
   images: GalleryImage[];
   index: number;
   onIndex: (n: number) => void;
   onOpen: () => void;
+  /** Вертикальный кадр (облики персонажа) */
+  portrait?: boolean;
 }) {
   const [loaded, setLoaded] = useState<string | null>(null);
   const { shown, more } = usePortion(images.length, index);
@@ -33,7 +35,7 @@ export function Gallery({ images, index, onIndex, onOpen }: {
           if (e.key === "Enter") onOpen();
         }}
         {...swipe}
-        className="group relative aspect-video max-h-[70vh] w-full overflow-hidden rounded-xl bg-black ring-1 ring-gray-700 outline-none focus-visible:ring-indigo-400"
+        className={cx("group relative max-h-[70vh] w-full overflow-hidden rounded-xl bg-black ring-1 ring-gray-700 outline-none focus-visible:ring-indigo-400", portrait ? "aspect-4/5" : "aspect-video")}
       >
         {/* Пока грузится оригинал — размытая миниатюра */}
         {loaded !== img.url && (
@@ -59,7 +61,7 @@ export function Gallery({ images, index, onIndex, onOpen }: {
           </>
         )}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between bg-linear-to-t from-black/70 to-transparent px-3 pb-2 pt-8 text-xs text-gray-200">
-          <span>{index + 1} / {images.length} · {IMAGE_KIND_LABELS[img.kind]} · {img.source}</span>
+          <span>{index + 1} / {images.length} · {img.caption ?? `${IMAGE_KIND_LABELS[img.kind]} · ${img.source}`}</span>
           <ArrowsPointingOutIcon className="h-4 w-4 opacity-0 transition group-hover:opacity-100" />
         </div>
       </div>

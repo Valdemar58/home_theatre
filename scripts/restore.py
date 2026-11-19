@@ -46,6 +46,13 @@ def main() -> None:
 
     # Каталоги данных под новый DATA_ROOT
     subprocess.run([sys.executable, str(Path(__file__).with_name("init.py"))], cwd=ROOT, check=True)
+    postgres_dump = config_root / "anime-calendar" / "postgres.dump"
+    if postgres_dump.exists():
+        print("+ дамп календаря PostgreSQL найден; восстанавливается только в пустую БД")
+        current_env = parse_env(ENV_FILE)
+        if not current_env.get("DATABASE_URL") and current_env.get("CALENDAR_DB_HOST", "calendar-db") == "calendar-db":
+            subprocess.run(["docker", "compose", "up", "-d", "--wait", "calendar-db"], cwd=ROOT, check=True)
+        subprocess.run(["docker", "compose", "run", "--rm", "--no-deps", "anime-calendar", "node", "database/restore.mjs"], cwd=ROOT, check=True)
     print("\nДальше: docker compose up -d")
 
 

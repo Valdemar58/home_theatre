@@ -51,7 +51,7 @@ export async function updateThemeCanon(): Promise<number> {
   const v = db.prepare<[], { value: string }>("SELECT value FROM app_settings WHERE key = 'theme-canon-v'").get();
   if (v?.value !== CANON_V) {
     db.exec("DELETE FROM theme_canon");
-    db.prepare("INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES ('theme-canon-v', ?, ?)").run(CANON_V, Math.floor(Date.now() / 1000));
+    db.prepare("INSERT INTO app_settings (key, value, updated_at) VALUES ('theme-canon-v', ?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at").run(CANON_V, Math.floor(Date.now() / 1000));
   }
   const counts = new Map<string, number>();
   for (const a of allAnalyses().values()) for (const t of a.themes) {
@@ -63,7 +63,7 @@ export async function updateThemeCanon(): Promise<number> {
   // Опорные — канонические темы со своими векторами
   const anchors = known.filter((k) => k.theme === k.canon && k.embedding).map((k) => ({ theme: k.theme, v: toVec(k.embedding!) }));
   const fresh = [...counts].filter(([t]) => !have.has(t)).sort((a, b) => b[1] - a[1]).map(([t]) => t);
-  const put = db.prepare("INSERT OR REPLACE INTO theme_canon (theme, canon, embedding) VALUES (?, ?, ?)");
+  const put = db.prepare("INSERT INTO theme_canon (theme, canon, embedding) VALUES (?, ?, ?) ON CONFLICT (theme) DO UPDATE SET canon = excluded.canon, embedding = excluded.embedding");
   for (let i = 0; i < fresh.length; i += 64) {
     const batch = fresh.slice(i, i + 64);
     const vecs = await embed(batch);

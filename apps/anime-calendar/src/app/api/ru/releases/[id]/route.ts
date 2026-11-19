@@ -1,5 +1,5 @@
 import { env } from "@/server/env";
-import { ApiError, authed, intParam, json } from "@/server/route";
+import { adminOnly, ApiError, authed, intParam, json } from "@/server/route";
 import type { VoicesState } from "@/lib/types";
 import { grabRuRelease } from "@/server/ru/releases";
 import { cachedVoices, latestTask } from "@/server/tasks";
@@ -21,7 +21,8 @@ export const GET = authed<{ id: string }>(async (_req, _user, { id }) => {
 });
 
 /** Скачать выбранную раздачу через Sonarr */
-export const POST = authed<{ id: string }>(async (req, _user, { id }) => {
+export const POST = authed<{ id: string }>(async (req, user, { id }) => {
+  adminOnly(user);
   requireRu();
   const { guid } = (await req.json().catch(() => ({}))) as { guid?: string };
   if (!guid) throw new ApiError(400, "Не выбрана раздача");

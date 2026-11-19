@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { db, now, stmt } from "./db";
 import { env } from "./env";
 
-export type SessionData = { userId?: number; shikiState?: string };
+export type SessionData = { userId?: number; shikiState?: string; shikiRedirect?: string; oidc?: { state: string; verifier: string; next: string; redirect: string } };
 
 export type User = {
   id: number;
@@ -23,6 +23,10 @@ export type User = {
   lib_synced_at: number | null;
   lib_error: string | null;
   visibility: import("@/lib/social-rules").Visibility;
+  auth_sub: string | null;
+  email: string | null;
+  blocked: number;
+  invited_by: number | null;
 };
 
 function options(): SessionOptions {
@@ -44,7 +48,9 @@ const byId = stmt<[number], User>("SELECT * FROM users WHERE id = ?");
 
 export async function currentUser(): Promise<User | null> {
   const s = await getSession();
-  return s.userId ? (byId().get(s.userId) ?? null) : null;
+  const user = s.userId ? (byId().get(s.userId) ?? null) : null;
+  // Заблокированный выходит сразу, даже с живой cookie
+  return user && !user.blocked ? user : null;
 }
 
 export function upsertUser(jellyfinId: string, name: string, isAdmin: boolean): User {

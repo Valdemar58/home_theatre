@@ -22,31 +22,45 @@ import {
   SwatchIcon,
   TrophyIcon,
   UserCircleIcon,
+  IdentificationIcon,
   UsersIcon,
+  UserGroupIcon,
+  Bars3Icon,
+  HomeIcon,
 } from "@heroicons/react/24/outline";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { api, useMe } from "@/lib/client";
 import { SIDEBAR_COOKIE, type SidebarMode } from "@/lib/sidebar";
+import { SidebarNavigation } from "./SidebarNavigation";
 import { Avatar } from "./Avatar";
 import { HoverCardHost } from "./HoverCard";
+import { ModeProvider, ModeSwitch, sectionHref, sectionOf, useMode, type Section } from "./Mode";
 import { Notifications } from "./Notifications";
 import { SearchBox } from "./SearchBox";
+import { Drawer } from "./Drawer";
+import { useGroupInvites } from "./SharedListsView";
+import { StaleBanner } from "./StaleBanner";
 import { cx } from "./ui";
 
-const NAV = [
-  { href: "/calendar", label: "Календарь", icon: CalendarDaysIcon },
-  { href: "/browse", label: "Каталог", icon: Squares2X2Icon },
-  { href: "/lists", label: "Мои списки", icon: QueueListIcon },
+// section — пункт с содержимым по режиму (аниме или книги, TASKS 5.10)
+const NAV: { href: string; label: string; icon: typeof CalendarDaysIcon; section?: Section; bookLabel?: string }[] = [
+  { href: "/", label: "Главная", icon: HomeIcon },
+  { href: "/calendar", label: "Календарь", icon: CalendarDaysIcon, section: "calendar", bookLabel: "Выход глав" },
+  { href: "/browse", label: "Каталог", icon: Squares2X2Icon, section: "catalog" },
+  { href: "/lists", label: "Мои списки", icon: QueueListIcon, section: "lists" },
   { href: "/friends", label: "Друзья", icon: UsersIcon },
-  { href: "/recommendations", label: "Для тебя", icon: SparklesIcon },
+  { href: "/groups", label: "Группы", icon: UserGroupIcon },
+  { href: "/recommendations", label: "Для тебя", icon: SparklesIcon, section: "picks" },
   { href: "/graph", label: "Карта", icon: MapIcon },
   { href: "/downloads", label: "Загрузки", icon: ArrowDownTrayIcon },
   { href: "/settings", label: "Настройки", icon: Cog6ToothIcon },
 ];
 // Служебные страницы (превью, лаборатории) — только админу, отдельным блоком меню
 export const ADMIN_NAV = [
+  { href: "/accounts", label: "Пользователи", icon: IdentificationIcon },
+  { href: "/import/animego", label: "Импорт AnimeGo", icon: InboxArrowDownIcon },
   { href: "/cards-preview", label: "Варианты карточек", icon: BeakerIcon },
   { href: "/upscale-lab", label: "ИИ-апскейл", icon: SparklesIcon },
   { href: "/achievements-preview", label: "Награды (прототип)", icon: TrophyIcon },
@@ -63,12 +77,24 @@ const SERVICE_ICONS: Record<string, React.ComponentType<{ className?: string }>>
 const browserUrl = (url: string) =>
   typeof window !== "undefined" && window.location.hostname !== "localhost" ? url.replace("//localhost", `//${window.location.hostname}`) : url;
 
-// На телефоне внизу помещается пять пунктов; друзья, настройки и загрузки — значками в шапке
+// Основные разделы — внизу; полный набор ссылок доступен в мобильном меню.
 const MOBILE_NAV = NAV.filter((n) => !["/settings", "/downloads", "/friends"].includes(n.href));
+
+/** Пункты меню в режиме: разделы книг — свои адреса и подписи; active — пункт текущей страницы. */
+function useNav(pathname: string) {
+  const mode = useMode(true) ?? "anime";
+  const section = sectionOf(pathname);
+  return (items: typeof NAV) => items.map((n) => {
+    const href = n.section ? sectionHref(n.section, mode) : n.href;
+    const label = n.section && mode !== "anime" ? n.bookLabel ?? n.label : n.label;
+    const active = n.section ? section === n.section : (n.href === "/" ? pathname === "/" : pathname.startsWith(n.href));
+    return { ...n, href, label, active };
+  });
+}
 
 function Logo({ compact, textClass }: { compact?: boolean; textClass?: string }) {
   return (
-    <Link href="/calendar" className="flex shrink-0 items-center gap-2 px-2">
+    <Link href="/" className="flex shrink-0 items-center gap-2 px-2">
       <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-linear-to-br from-indigo-600 to-purple-600 text-lg font-black">
         A
       </span>
@@ -82,7 +108,7 @@ function Logo({ compact, textClass }: { compact?: boolean; textClass?: string })
  * режим «по ширине» задан только классами (xl:), поэтому первая отрисовка тоже без мигания.
  * Свёрнутая при наведении раскрывается поверх страницы (как вкладки слева в браузере).
  */
-function useSidebar(initial: SidebarMode) {
+function useSidebar(initial: SidebarMode, menuOpen = false) {
   const [mode, setMode] = useState<SidebarMode>(initial);
   const [hover, setHover] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -105,13 +131,14 @@ function useSidebar(initial: SidebarMode) {
   };
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
   const pick = (collapsed: string, auto: string, expanded: string) => (mode === "collapsed" ? collapsed : mode === "auto" ? auto : expanded);
+  const overlay = hover || (menuOpen && mode !== "expanded");
   return {
-    mode, toggle, enter, leave, overlay: hover,
-    width: hover ? "w-64" : pick("w-16", "w-16 xl:w-64", "w-64"),
+    mode, toggle, enter, leave, overlay,
+    width: overlay ? "w-64" : pick("w-16", "w-16 xl:w-64", "w-64"),
     pad: pick("md:pl-16", "md:pl-16 xl:pl-64", "md:pl-64"),
     // Подписи в свёрнутой панели прозрачны (иначе из-под иконок торчат первые буквы); линия вместо заголовка раздела — наоборот
-    label: hover ? "" : pick("opacity-0", "opacity-0 xl:opacity-100", ""),
-    rule: hover ? "opacity-0" : pick("", "xl:opacity-0", "opacity-0"),
+    label: overlay ? "" : pick("opacity-0", "opacity-0 xl:opacity-100", ""),
+    rule: overlay ? "opacity-0" : pick("", "xl:opacity-0", "opacity-0"),
     title: (s: string) => (mode === "expanded" ? undefined : s),
   };
 }
@@ -121,83 +148,43 @@ const Label = ({ cls, children }: { cls: string; children: React.ReactNode }) =>
   <span className={cx("transition-opacity duration-150", cls)}>{children}</span>
 );
 
-/** Заголовок раздела; в свёрнутой панели — линия на том же месте и той же высоты (иконки ниже не прыгают). */
-function Section({ bar, children }: { bar: { label: string; rule: string }; children: React.ReactNode }) {
-  return (
-    <div className="relative h-6">
-      <p className={cx("absolute inset-x-0 top-0 whitespace-nowrap px-3 text-xs font-semibold uppercase leading-6 tracking-wider text-gray-500 transition-opacity duration-150", bar.label)}>{children}</p>
-      <div className={cx("absolute inset-x-2 top-1/2 border-t border-gray-700 transition-opacity duration-150", bar.rule)} />
-    </div>
-  );
+type ShellProps = { userName: string; sidebar?: SidebarMode; children: React.ReactNode };
+
+export function AppShell(props: ShellProps) {
+  return <ModeProvider><Shell {...props} /></ModeProvider>;
 }
 
-export function AppShell({ userName, sidebar = "auto", children }: { userName: string; sidebar?: SidebarMode; children: React.ReactNode }) {
+function Shell({ userName, sidebar = "collapsed", children }: ShellProps) {
   const pathname = usePathname();
+  useEffect(() => { const device = new URLSearchParams(window.location.search).get("desktopDevice"); if (device && /^[a-f0-9]{24}$/.test(device)) sessionStorage.setItem("home-theater-device", device); }, []);
+  const nav = useNav(pathname);
   const { data: me } = useMe();
-  const bar = useSidebar(sidebar);
+  const [moreOpen,setMoreOpen]=useState(false);
+  const bar = useSidebar(sidebar,moreOpen);
+  const [mobileMenu, setMobileMenu] = useState(false);
+  useEffect(() => setMobileMenu(false), [pathname]);
+  // Приглашения в группы — значком у пункта меню
+  const groupInvites = useGroupInvites();
   const logout = async () => {
-    await api("/api/auth/logout", { method: "POST" });
-    window.location.href = "/login";
+    const res = await api<{ redirect: string | null }>("/api/auth/logout", { method: "POST" });
+    window.location.href = res.redirect ?? "/login";
   };
 
   return (
     <div className="min-h-screen">
       {/* Боковая панель (десктоп) */}
       <aside onMouseEnter={bar.enter} onMouseLeave={bar.leave}
-        className={cx("fixed inset-y-0 left-0 z-30 hidden flex-col overflow-hidden border-r border-gray-800 backdrop-blur transition-[width] duration-200 md:flex",
+        className={cx("fixed inset-y-0 left-0 z-50 hidden flex-col border-r border-gray-800 backdrop-blur transition-[width] duration-200 md:flex",
           bar.width, bar.overlay ? "bg-gray-800/95 shadow-2xl" : "bg-gray-800/60")}>
-        <div className="flex h-16 shrink-0 items-center px-1">
+        <div className="flex h-16 shrink-0 items-center overflow-hidden px-1">
           <Logo textClass={bar.label} />
         </div>
-        <nav className="mt-4 flex-1 space-y-1 overflow-y-auto overflow-x-hidden px-3">
-          {NAV.map(({ href, label, icon: Icon }) => {
-            const active = pathname.startsWith(href);
-            return (
-              <Link
-                key={href}
-                href={href}
-                title={bar.title(label)}
-                className={cx(
-                  "flex items-center gap-3 whitespace-nowrap rounded-md px-2.5 py-2.5 text-base font-medium transition",
-                  active ? "bg-linear-to-br from-indigo-600 to-purple-600 text-white shadow" : "text-gray-300 hover:bg-gray-700/60 hover:text-white",
-                )}
-              >
-                <Icon className="h-6 w-6 shrink-0" />
-                <Label cls={bar.label}>{label}</Label>
-              </Link>
-            );
-          })}
-          {me && me.services.length > 0 && (
-            <div className="pt-4">
-              <Section bar={bar}>Сервисы</Section>
-              {me.services.map((sv) => {
-                const Icon = SERVICE_ICONS[sv.id] ?? ArrowTopRightOnSquareIcon;
-                return (
-                  <a key={sv.id} href={browserUrl(sv.url)} target="_blank" rel="noreferrer" title={bar.mode === "expanded" ? sv.hint : sv.name}
-                    className="group flex items-center gap-3 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium text-gray-400 transition hover:bg-gray-700/60 hover:text-white">
-                    <Icon className="h-5 w-5 shrink-0" />
-                    <Label cls={bar.label}>{sv.name}</Label>
-                    <ArrowTopRightOnSquareIcon className="ml-auto h-3.5 w-3.5 opacity-0 transition group-hover:opacity-60" />
-                  </a>
-                );
-              })}
-            </div>
-          )}
-          {me?.isAdmin && (
-            <div className="pt-4">
-              <Section bar={bar}>Для админа</Section>
-              {ADMIN_NAV.map(({ href, label, icon: Icon }) => (
-                <Link key={href} href={href} title={bar.title(label)}
-                  className={cx("flex items-center gap-3 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition",
-                    pathname.startsWith(href) ? "bg-gray-700 text-white" : "text-gray-400 hover:bg-gray-700/60 hover:text-white")}>
-                  <Icon className="h-5 w-5 shrink-0" />
-                  <Label cls={bar.label}>{label}</Label>
-                </Link>
-              ))}
-            </div>
-          )}
-        </nav>
-        <div className="px-3 pb-1">
+        <SidebarNavigation labelClass={bar.label} onOpenChange={setMoreOpen} items={[
+          ...nav(NAV).map(n=>({...n,badge:n.href==="/groups"?groupInvites:0})),
+          ...(me?.services??[]).map(s=>({href:browserUrl(s.url),label:s.name,icon:SERVICE_ICONS[s.id]??ArrowTopRightOnSquareIcon,external:true,group:"Сервисы"})),
+          ...(me?.isAdmin?ADMIN_NAV.map(n=>({...n,active:(n.href === "/" ? pathname === "/" : pathname.startsWith(n.href)),group:"Для админа"})):[]),
+        ]}/>
+        <div className="overflow-hidden px-3 pb-1">
           <button onClick={bar.toggle} title={bar.mode === "expanded" ? "Свернуть панель до иконок" : "Закрепить панель развёрнутой"}
             className="flex w-full items-center gap-3 whitespace-nowrap rounded-md px-3 py-2 text-sm text-gray-500 transition hover:bg-gray-700/60 hover:text-white">
             {/* «По ширине»: на широком экране панель развёрнута — кнопка сворачивает */}
@@ -209,7 +196,7 @@ export function AppShell({ userName, sidebar = "auto", children }: { userName: s
             </Label>
           </button>
         </div>
-        <div className="border-t border-gray-700/60 px-2 py-3">
+        <div className="overflow-hidden border-t border-gray-700/60 px-2 py-3">
           {/* Ширина постоянная: при сворачивании ничего не переносится, правое просто уходит за край */}
           <div className="flex w-60 items-center justify-between gap-2 rounded-md px-1 py-2">
             <Link href={me ? `/users/${me.id}` : "#"} title="Мой профиль" className="flex min-w-0 items-center gap-2 rounded-md hover:text-indigo-300">
@@ -225,31 +212,44 @@ export function AppShell({ userName, sidebar = "auto", children }: { userName: s
 
       <div className={cx("transition-[padding] duration-200", bar.pad)}>
         {/* Верхняя панель с поиском */}
-        <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-gray-800 bg-gray-900/85 px-4 backdrop-blur lg:px-8">
+        <header className="app-header sticky top-0 z-40 flex flex-wrap items-center gap-1.5 border-b md:h-16 md:flex-nowrap md:gap-3 border-gray-800 bg-gray-900 px-4 py-2 md:py-0 lg:px-8">
           <div className="md:hidden">
             <Logo compact />
           </div>
+          <ModeSwitch className="hidden md:flex" />
           <SearchBox />
-          <div className="shrink-0 md:ml-auto"><Notifications /></div>
-          <Link href="/friends" className="rounded-md p-2 text-gray-400 hover:bg-gray-800 hover:text-white md:hidden" aria-label="Друзья">
-            <UsersIcon className="h-6 w-6" />
-          </Link>
-          <Link href="/downloads" className="rounded-md p-2 text-gray-400 hover:bg-gray-800 hover:text-white md:hidden" aria-label="Загрузки">
-            <ArrowDownTrayIcon className="h-6 w-6" />
-          </Link>
-          <Link href="/settings" className="rounded-md p-2 text-gray-400 hover:bg-gray-800 hover:text-white md:hidden" aria-label="Настройки">
-            <Cog6ToothIcon className="h-6 w-6" />
-          </Link>
+          <div className="ml-auto shrink-0"><Notifications /></div>
+          <button onClick={() => setMobileMenu(true)} aria-label="Открыть меню" aria-expanded={mobileMenu}
+            className="rounded-md p-2 text-gray-400 hover:bg-gray-800 hover:text-white md:hidden">
+            <Bars3Icon className="h-6 w-6" />
+          </button>
         </header>
 
-        <main className="px-4 pb-24 pt-6 md:pb-10 lg:px-8"><HoverCardHost>{children}</HoverCardHost></main>
+        {/* На телефоне режимы — отдельной строкой под шапкой */}
+        <div className="relative z-10 bg-gray-900 px-4 pt-3 md:hidden"><ModeSwitch wide /></div>
+        <main className="app-main min-w-0 px-4 pb-24 pt-4 md:pb-10 md:pt-6 lg:px-8"><StaleBanner /><HoverCardHost>{children}</HoverCardHost></main>
       </div>
 
+      <Drawer open={mobileMenu} onClose={() => setMobileMenu(false)} title="Меню">
+        <nav aria-label="Все разделы" className="space-y-1">
+          {nav(NAV).map(({ href, label, icon: Icon, active }) => (
+            <Link key={href} href={href} onClick={() => setMobileMenu(false)}
+              className={cx("flex items-center gap-3 rounded-lg px-3 py-3", active ? "bg-indigo-600 text-white" : "hover:bg-gray-800")}>
+              <Icon className="h-6 w-6 shrink-0" />{label}
+            </Link>
+          ))}
+          {me && <Link href={`/users/${me.id}`} onClick={() => setMobileMenu(false)} className="flex items-center gap-3 rounded-lg px-3 py-3 hover:bg-gray-800"><Avatar user={me} />Мой профиль</Link>}
+          {me?.services.map((sv) => <a key={sv.id} href={browserUrl(sv.url)} target="_blank" rel="noreferrer" className="flex items-center gap-3 rounded-lg px-3 py-3 hover:bg-gray-800"><ArrowTopRightOnSquareIcon className="h-5 w-5 shrink-0" />{sv.name}</a>)}
+          {me?.isAdmin && <div className="border-t border-gray-700 pt-2">{ADMIN_NAV.map(({ href, label }) => <Link key={href} href={href} onClick={() => setMobileMenu(false)} className="block rounded-lg px-3 py-3 hover:bg-gray-800">{label}</Link>)}</div>}
+          <button onClick={logout} className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-gray-400 hover:bg-gray-800"><ArrowRightStartOnRectangleIcon className="h-5 w-5" />Выйти</button>
+        </nav>
+      </Drawer>
+
       {/* Нижняя навигация (мобильные) */}
-      <nav className="fixed inset-x-0 bottom-0 z-30 flex border-t border-gray-800 bg-gray-900/95 backdrop-blur md:hidden">
-        {MOBILE_NAV.map(({ href, label, icon: Icon }) => (
+      <nav aria-label="Основная навигация" className="mobile-nav fixed inset-x-0 bottom-0 z-30 flex border-t border-gray-800 bg-gray-900/95 backdrop-blur md:hidden">
+        {nav(MOBILE_NAV).map(({ href, label, icon: Icon, active }) => (
           <Link key={href} href={href}
-            className={cx("flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px]", pathname.startsWith(href) ? "text-indigo-400" : "text-gray-400")}>
+            className={cx("flex min-w-0 flex-1 flex-col items-center gap-0.5 py-2 text-[10px] sm:text-[11px]", active ? "text-indigo-400" : "text-gray-400")}>
             <Icon className="h-6 w-6" />
             {label}
           </Link>

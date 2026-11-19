@@ -49,7 +49,17 @@ export const env = {
   /** Та же папка стрима, но путь внутри контейнера Jellyfin */
   jellyfinStreamPath: process.env.JELLYFIN_STREAM_PATH ?? "/data/media/stream",
   jellyfinPublicUrl: trimSlash(process.env.JELLYFIN_PUBLIC_URL ?? "http://localhost:8096"),
+  // Единый вход (Authentik): внутренний адрес — для обмена кода и API, публичный — для браузера
+  authUrl: trimSlash(process.env.AUTH_URL ?? "http://authentik:9000"),
+  authPublicUrl: trimSlash(process.env.AUTH_PUBLIC_URL ?? ""),
+  authClientId: process.env.AUTH_CLIENT_ID ?? "",
+  authClientSecret: process.env.AUTH_CLIENT_SECRET ?? "",
+  authApiToken: process.env.AUTH_API_TOKEN ?? "",
+  /** Адрес календаря из интернета (https://<домен>) */
+  publicUrl: trimSlash(process.env.PUBLIC_URL ?? ""),
 };
+
+export const ssoConfigured = () => Boolean(env.authPublicUrl && env.authClientId && env.authClientSecret);
 
 export const shikimoriConfigured = () => Boolean(env.shikiClientId && env.shikiClientSecret);
 export const seerrConfigured = () => Boolean(env.seerrApiKey);

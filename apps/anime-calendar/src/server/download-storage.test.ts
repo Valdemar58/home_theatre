@@ -1,0 +1,22 @@
+import {mkdtempSync,mkdirSync,writeFileSync,existsSync,readFileSync} from "node:fs";
+import {tmpdir} from "node:os";
+import path from "node:path";
+import {expect,it,vi} from "vitest";
+vi.mock("server-only",()=>({}));
+const state=vi.hoisted(()=>({playing:false,fail:false}));
+vi.mock("./player",()=>({playingStreams:()=>state.playing?[{hash:"a".repeat(40),index:1}]:[]}));
+vi.mock("./tasks",()=>({activeTasks:()=>[]}));
+vi.mock("./prebuffer",()=>({prebufferProgress:()=>[]}));
+vi.mock("./qbit",()=>({qbitFiles:async()=>{if(state.fail)throw Error("offline");return [{index:1,name:"one.mp4"}];},qbitFilePrio:async()=>{}}));
+const dir=mkdtempSync(path.join(tmpdir(),"server-storage-"));process.env.DATA_DIR=dir;process.env.STREAM_DIR=dir;
+const {db}=await import("./db");
+const {removeServerEpisode}=await import("./download-storage");
+it("preserves files and tracking on active viewing or downloader failure; deletes just the selected file",async()=>{
+  const hash="a".repeat(40),root=path.join(dir,".prep",hash),file=path.join(root,"one.mp4"),other=path.join(root,"two.mp4");mkdirSync(root,{recursive:true});writeFileSync(file,"one");writeFileSync(other,"two");
+  db.prepare("INSERT INTO prepared_files(key,hash,idx,rel,size,users,created_at,done_at) VALUES(?,?,?,?,3,'[]',0,1)").run(`${hash}:1`,hash,1,`${hash}/one.mp4`);
+  state.playing=true;await expect(removeServerEpisode(`${hash}:1`)).rejects.toThrow(/используется/);expect(existsSync(file)).toBe(true);
+  state.playing=false;state.fail=true;await expect(removeServerEpisode(`${hash}:1`)).rejects.toThrow("offline");expect(existsSync(file)).toBe(true);
+  expect(db.prepare("SELECT key FROM prepared_files").all()).toHaveLength(1);
+  state.fail=false;await removeServerEpisode(`${hash}:1`);await removeServerEpisode(`${hash}:1`);
+  expect(existsSync(file)).toBe(false);expect(readFileSync(other,"utf8")).toBe("two");expect(db.prepare("SELECT key FROM prepared_files").all()).toHaveLength(0);
+});

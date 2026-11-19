@@ -18,6 +18,22 @@ x-common: &common
       max-file: "3"
 
 services:
+  # База календаря. Именованный том нужен в том числе для Docker Desktop/Windows.
+  calendar-db:
+    image: ${CALENDAR_POSTGRES_IMAGE:-postgres:17-alpine}
+    container_name: calendar-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${CALENDAR_DB_NAME:-calendar}
+      POSTGRES_USER: ${CALENDAR_DB_USER:-calendar}
+      POSTGRES_PASSWORD: ${CALENDAR_DB_PASSWORD:?Run python scripts/init.py to generate the database password}
+    volumes:
+      - calendar-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
   # ---------- Просмотр ----------
   jellyfin:
     <<: *common
@@ -73,6 +89,16 @@ services:
     user: "${PUID}:${PGID}"
     environment:
       TZ: ${TZ}
+      DATABASE_DRIVER: ${DATABASE_DRIVER:-postgres}
+      DATABASE_URL: ${DATABASE_URL:-}
+      PGHOST: ${CALENDAR_DB_HOST:-calendar-db}
+      PGPORT: ${CALENDAR_DB_PORT:-5432}
+      PGDATABASE: ${CALENDAR_DB_NAME:-calendar}
+      PGUSER: ${CALENDAR_DB_USER:-calendar}
+      PGPASSWORD: ${CALENDAR_DB_PASSWORD}
+      PGSSLMODE: ${CALENDAR_DB_SSLMODE:-disable}
+      DATABASE_MIGRATE: ${DATABASE_MIGRATE:-true}
+      DATABASE_IMPORT_SQLITE: ${DATABASE_IMPORT_SQLITE:-auto}
       JELLYFIN_URL: http://jellyfin:8096
       SEERR_URL: http://seerr:5055
       SEERR_PUBLIC_URL: ${SEERR_PUBLIC_URL:-http://localhost:5055}
@@ -83,6 +109,16 @@ services:
       SHIKIMORI_APP_NAME: ${SHIKIMORI_APP_NAME:-}
       SHIKIMORI_REDIRECT_URI: ${SHIKIMORI_REDIRECT_URI:-}
       SESSION_SECRET: ${ANIME_CALENDAR_SECRET}
+      DESKTOP_STUN_URLS: ${DESKTOP_STUN_URLS:-}
+      DESKTOP_HANDOVER_ENABLED: ${DESKTOP_HANDOVER_ENABLED:-1}
+      DESKTOP_RELAY_ENABLED: ${DESKTOP_RELAY_ENABLED:-1}
+      # Единый вход (Authentik, профиль public): без ключей — вход паролем Jellyfin, как раньше
+      AUTH_URL: http://authentik:9000
+      AUTH_PUBLIC_URL: ${AUTH_PUBLIC_URL:-}
+      AUTH_CLIENT_ID: ${AUTH_CLIENT_ID:-}
+      AUTH_CLIENT_SECRET: ${AUTH_CLIENT_SECRET:-}
+      AUTH_API_TOKEN: ${AUTH_API_TOKEN:-}
+      PUBLIC_URL: ${PUBLIC_URL:-}
       # RU-индексатор: Sonarr ищет русские раздачи через календарь, календарь — через Prowlarr
       TORZNAB_API_KEY: ${ANIME_CALENDAR_TORZNAB_KEY}
       SONARR_URL: http://sonarr:8989
@@ -91,7 +127,15 @@ services:
       PROWLARR_API_KEY: ${PROWLARR_API_KEY}
       FLARESOLVERR_URL: http://flaresolverr:8191
       # «Смотреть сейчас»: TorrServer + библиотека Jellyfin «Стрим»
-      TORRSERVER_URL: http://torrserver:8090
+      TORRSERVER_URL: http://torrserver-core:8090
+      # В .strm пишется адрес маршрутизатора (stream-router): подготовленные серии он отдаёт с диска
+      TORRSERVER_INTERNAL_URL: http://torrserver:8090
+      # «Подготовить серию» — скачать её qBittorrent в ${DATA_ROOT}/media/stream/.prep (TASKS 9.8)
+      QBIT_URL: http://qbittorrent:8080
+      QBIT_USER: ${QBIT_USER:-admin}
+      QBIT_PASSWORD: ${QBIT_PASSWORD:-}
+      PREP_LIMIT_GB: ${PREP_LIMIT_GB:-20}
+      PREP_MIN_FREE_GB: ${PREP_MIN_FREE_GB:-15}
       STREAM_DIR: /stream
       JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:-}
       JELLYFIN_PUBLIC_URL: ${JELLYFIN_PUBLISHED_URL:-http://localhost:8096}
@@ -112,6 +156,11 @@ services:
       IMG_UPSCALE_MAX_SCALE: ${IMG_UPSCALE_MAX_SCALE:-4}
       IMG_UPSCALE_MIN_SRC: ${IMG_UPSCALE_MIN_SRC:-150}
       IMG_UPSCALE_TTL_MULT: ${IMG_UPSCALE_TTL_MULT:-4}
+      # Векторизация карт мира (контейнер mapvec; нет — карта картинкой, подписи читает Ollama)
+      MAPVEC_URL: http://mapvec:8000
+      SUWAYOMI_URL: http://suwayomi:4567
+      # Проверка работы без внешних сервисов: перечисленные считаются недоступными (anilist,shikimori,seerr,kitsu)
+      SOURCES_OFFLINE: ${SOURCES_OFFLINE:-}
       LLM_MODEL: ${LLM_MODEL:-qwen3.5:9b}
       EMBED_MODEL: ${EMBED_MODEL:-bge-m3}
       # Внешняя LLM (DeepSeek) для тяжёлых задач; без ключа всё локально. Правится в «Настройках»
@@ -128,12 +177,17 @@ services:
       # Приоритеты озвучек для окна выбора раздачи (те же баллы, что у Sonarr)
       - ./profiles.toml:/profiles.toml:ro
       - ${DATA_ROOT}/media/stream:/stream
+      # База TorrServer: из неё — .torrent раздач, добавленных до «Подготовить» через qBittorrent
+      - ${CONFIG_ROOT}/torrserver:/torrserver:ro
     ports:
       - "5056:5056"
     depends_on:
-      - jellyfin
+      jellyfin:
+        condition: service_started
+      calendar-db:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:5056/login"]
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:5056/api/health/database"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -141,10 +195,132 @@ services:
 
   # Стриминг серий прямо из торрента («Смотреть сейчас» в календаре):
   # календарь кладёт .strm-ссылки на TorrServer в библиотеку Jellyfin «Стрим»
-  torrserver:
+  # ---------- Доступ из интернета и единый вход (профиль public) ----------
+  # Календарь по HTTPS на ${DUCKDNS_DOMAIN}.duckdns.org, сервисы — на поддоменах (apps/caddy/Caddyfile):
+  # на роутере — проброс TCP 443 на этот компьютер. Вход — Authentik (auth.<домен>), служебные — только админам.
+  caddy:
+    <<: *common
+    image: caddy:2.10-alpine
+    container_name: caddy
+    profiles: ["public"]
+    environment:
+      PUBLIC_HOST: ${DUCKDNS_DOMAIN:-}.duckdns.org
+    volumes:
+      - ./apps/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${CONFIG_ROOT}/caddy/data:/data
+      - ${CONFIG_ROOT}/caddy/config:/config
+    ports:
+      - "443:443"
+    networks:
+      default:
+        # Jellyfin (SSO-плагин) ходит к Authentik по публичному адресу — внутри docker-сети он ведёт прямо сюда,
+        # а не наружу через прокси/VPN и обратно
+        aliases:
+          - auth.${DUCKDNS_DOMAIN:-none}.duckdns.org
+    depends_on:
+      - anime-calendar
+      - authentik
+
+  # Единый вход (Authentik): учётные записи, приглашения, OIDC для календаря и Jellyfin, forward-auth для остального.
+  # Настройка — `python scripts/bootstrap.py --only authentik`; пользователями управляет календарь через API.
+  authentik-db:
+    image: postgres:16-alpine
+    container_name: authentik-db
+    restart: unless-stopped
+    profiles: ["public"]
+    environment:
+      POSTGRES_DB: authentik
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: ${AUTHENTIK_DB_PASSWORD:-}
+    volumes:
+      # Именованный том: Postgres на смонтированной папке Windows не стартует (права)
+      - authentik-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d authentik -U authentik"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  authentik:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2026.8.5}
+    container_name: authentik
+    restart: unless-stopped
+    profiles: ["public"]
+    command: server
+    shm_size: 512mb
+    environment: &authentik-env
+      TZ: ${TZ}
+      AUTHENTIK_POSTGRESQL__HOST: authentik-db
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_DB_PASSWORD:-}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:-}
+      # Только при первом запуске: пароль akadmin и токен API для bootstrap.py
+      AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_BOOTSTRAP_PASSWORD:-}
+      AUTHENTIK_BOOTSTRAP_TOKEN: ${AUTHENTIK_BOOTSTRAP_TOKEN:-}
+      AUTHENTIK_BOOTSTRAP_EMAIL: ${AUTHENTIK_BOOTSTRAP_EMAIL:-akadmin@kino.local}
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+    volumes:
+      - ${CONFIG_ROOT}/authentik/data:/data
+      - ${CONFIG_ROOT}/authentik/templates:/templates
+    ports:
+      - "9000:9000"
+    depends_on:
+      authentik-db:
+        condition: service_healthy
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2026.8.5}
+    container_name: authentik-worker
+    restart: unless-stopped
+    profiles: ["public"]
+    command: worker
+    shm_size: 512mb
+    environment: *authentik-env
+    volumes:
+      - ${CONFIG_ROOT}/authentik/data:/data
+      - ${CONFIG_ROOT}/authentik/templates:/templates
+    depends_on:
+      authentik-db:
+        condition: service_healthy
+
+  # Домашний IP → DuckDNS (адрес узнаётся по STUN мимо VPN, раз в 5 минут)
+  ddns:
+    <<: *common
+    image: node:22-alpine
+    container_name: ddns
+    profiles: ["public"]
+    command: ["node", "/app/ddns.mjs"]
+    environment:
+      DUCKDNS_DOMAIN: ${DUCKDNS_DOMAIN:-}
+      DUCKDNS_TOKEN: ${DUCKDNS_TOKEN:-}
+    volumes:
+      - ./apps/ddns:/app:ro
+
+  # Ссылки .strm ведут на http://torrserver:8090 — это маршрутизатор: серию, заранее скачанную через qBittorrent
+  # («Подготовить»), он отдаёт с диска, остальное — в TorrServer (torrserver-core). Jellyfin .strm не перечитывает,
+  # поэтому подмена — здесь, а не в ссылках
+  stream-router:
+    <<: *common
+    image: node:22-alpine
+    container_name: stream-router
+    command: ["node", "/app/router.mjs"]
+    volumes:
+      - ./apps/stream-router:/app:ro
+      - ${DATA_ROOT}/media/stream:/stream:ro
+    networks:
+      default:
+        aliases:
+          - torrserver
+    depends_on:
+      - torrserver-core
+
+  torrserver-core:
     <<: *common
     image: ghcr.io/yourok/torrserver:MatriX.145.1
-    container_name: torrserver
+    container_name: torrserver-core
     environment:
       TZ: ${TZ}
       TS_PORT: 8090
@@ -158,9 +334,8 @@ services:
         # постоянный адрес — для правила «мимо VPN» в VPN-клиенте: через VPN поток ~1,3 МБ/с и без входящих пиров
         ipv4_address: ${DOCKER_NET:-172.25}.0.250
     volumes:
+      # Кэш раздач — в памяти (1 ГБ, bootstrap.py): серии заранее качает qBittorrent («Подготовить», TASKS 9.8)
       - ${CONFIG_ROOT}/torrserver:/opt/ts/config
-      # Кэш раздач на диске: серию можно «подготовить» целиком заранее (в памяти — только 256 МБ)
-      - ${DATA_ROOT}/torrserver-cache:/cache
 
   # ИИ-апскейл постеров и кадров (Real-ESRGAN): необязательный, включается профилем
   # (COMPOSE_PROFILES=upscaler в .env). Без него календарь показывает лучший оригинал.
@@ -171,6 +346,35 @@ services:
     container_name: upscaler
     restart: unless-stopped
     profiles: ["upscaler"]
+
+  # Векторизация карт мира (карта мест сюжета): подписи читает dots.mocr, сушу и страны выделяет SAM 2.
+  # Необязательный, профиль mapvec (COMPOSE_PROFILES=upscaler,mapvec). Без него карта — картинка с вики,
+  # подписи читает модель Ollama. Веса (~6 ГБ) качаются в config/mapvec при первом запросе.
+  # GPU — compose.nvidia.yml; без GPU подписи читаются минутами
+  mapvec:
+    build: ./apps/mapvec
+    image: home-theater/mapvec:local
+    container_name: mapvec
+    restart: unless-stopped
+    profiles: ["mapvec"]
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - ${CONFIG_ROOT}/mapvec:/models
+
+  # Мост к расширениям Tachiyomi/Mihon (TASKS 5.9): источники манги, которых нет среди встроенных провайдеров.
+  # Календарь ходит в его GraphQL; репозиторий расширений задаётся в Настройках → «Провайдеры глав». Профиль suwayomi
+  suwayomi:
+    image: ghcr.io/suwayomi/suwayomi-server:stable
+    container_name: suwayomi
+    restart: unless-stopped
+    profiles: ["suwayomi"]
+    environment:
+      TZ: ${TZ}
+      WEB_UI_ENABLED: "false"
+      JAVA_TOOL_OPTIONS: -Xmx512m
+    volumes:
+      - ${CONFIG_ROOT}/suwayomi:/home/suwayomi/.local/share/Tachidesk
 
   # Локальная LLM для рекомендаций: анализ тайтлов, портрет вкуса, объяснения.
   # GPU подключается через compose.nvidia.yml; без GPU работает на CPU (медленнее)
@@ -187,6 +391,8 @@ services:
       - "11434:11434"
 
   # ---------- Управление библиотекой ----------
+  # Вход в *arr — External: из интернета их пускает Caddy после входа в Authentik (только kino-admins),
+  # порты на хосте — только для домашней сети (роутер пробрасывает лишь 443)
   sonarr:
     <<: *common
     image: lscr.io/linuxserver/sonarr:latest
@@ -194,7 +400,7 @@ services:
     environment:
       <<: *common-env
       SONARR__AUTH__APIKEY: ${SONARR_API_KEY}
-      SONARR__AUTH__METHOD: Forms
+      SONARR__AUTH__METHOD: External
       SONARR__AUTH__REQUIRED: DisabledForLocalAddresses
     volumes:
       - ${CONFIG_ROOT}/sonarr:/config
@@ -216,7 +422,7 @@ services:
     environment:
       <<: *common-env
       RADARR__AUTH__APIKEY: ${RADARR_API_KEY}
-      RADARR__AUTH__METHOD: Forms
+      RADARR__AUTH__METHOD: External
       RADARR__AUTH__REQUIRED: DisabledForLocalAddresses
     volumes:
       - ${CONFIG_ROOT}/radarr:/config
@@ -271,7 +477,7 @@ services:
     environment:
       <<: *common-env
       PROWLARR__AUTH__APIKEY: ${PROWLARR_API_KEY}
-      PROWLARR__AUTH__METHOD: Forms
+      PROWLARR__AUTH__METHOD: External
       PROWLARR__AUTH__REQUIRED: DisabledForLocalAddresses
     volumes:
       - ${CONFIG_ROOT}/prowlarr:/config
@@ -320,6 +526,10 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+
+volumes:
+  calendar-db:
+  authentik-db:
 
 networks:
   default:

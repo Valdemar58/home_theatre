@@ -4,16 +4,19 @@ import Link from "next/link";
 import { useState } from "react";
 import { api, useMe } from "@/lib/client";
 import { formatDateTime } from "@/lib/time";
+import { WatchHistorySettings } from "./WatchHistorySettings";
 import { AnilibCard } from "./AnilibCard";
 import { ADMIN_NAV } from "./AppShell";
 import { LlmCard } from "./LlmCard";
-import { Badge, Button, ErrorBox, Spinner } from "./ui";
+import { BridgesCard } from "./books/BridgesCard";
+import { ProvidersCard } from "./books/ProvidersCard";
+import { Badge, Button, ErrorBox, Skel, SkelText } from "./ui";
 
 type SyncStats = { pushed: number; pulled: number; imported: number; removed: number; skipped: number };
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-xl bg-gray-800/60 p-6 ring-1 ring-gray-700">
+    <section className="rounded-xl bg-gray-800/60 p-4 sm:p-6 ring-1 ring-gray-700">
       <h2 className="mb-4 text-lg font-semibold">{title}</h2>
       {children}
     </section>
@@ -28,7 +31,17 @@ export function SettingsView() {
   const [error, setError] = useState<unknown>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  if (isLoading || !me) return <Spinner />;
+  // Пока нет «me»: карточки, не зависящие от пользователя, уже настоящие (AniLib грузится сам)
+  if (isLoading || !me) return (
+    <div className="max-w-3xl space-y-6" aria-busy>
+      <h1 className="text-2xl font-bold sm:text-3xl">Настройки</h1>
+      <Card title="Shikimori"><SkelText lines={2} /><Skel className="mt-4 h-9 w-48 rounded-lg" /></Card>
+      <Card title="AniLib"><AnilibCard /></Card>
+      <Card title="Seerr"><SkelText lines={2} /></Card>
+      <TimeCard />
+      <WatchHistorySettings />
+    </div>
+  );
   const s = me.shikimori;
 
   const run = async (name: string, fn: () => Promise<string>) => {
@@ -51,8 +64,8 @@ export function SettingsView() {
 
   const authorize = () =>
     run("authorize", async () => {
-      const { url } = await api<{ url: string }>("/api/shikimori/authorize");
-      if (s.oob) {
+      const { url, oob } = await api<{ url: string; oob: boolean }>("/api/shikimori/authorize");
+      if (oob) {
         window.open(url, "_blank", "noopener");
         return "Разреши доступ на Shikimori, скопируй код и вставь его ниже";
       }
@@ -63,6 +76,7 @@ export function SettingsView() {
   return (
     <div className="max-w-3xl space-y-6">
       <h1 className="text-2xl font-bold sm:text-3xl">Настройки</h1>
+      <Link href="/devices" className="inline-flex min-h-9 items-center rounded-lg bg-gray-800 px-3 py-2 text-sm text-gray-200 hover:bg-gray-700">Мои устройства и доступ к раздаче</Link>
       {me.isAdmin && (
         // На телефоне нет бокового меню — служебные страницы здесь
         <div className="lg:hidden">
@@ -85,7 +99,7 @@ export function SettingsView() {
           <div className="space-y-2 text-sm text-gray-300">
             <p>Синхронизация не настроена. Администратору нужно:</p>
             <ol className="list-decimal space-y-1 pl-5 text-gray-400">
-              <li>Создать приложение на <a className="text-indigo-300 underline" href={`${s.url}/oauth/applications`} target="_blank" rel="noreferrer">{s.url}/oauth/applications</a> (Redirect URI: <code>urn:ietf:wg:oauth:2.0:oob</code>, права: user_rates).</li>
+              <li>Создать приложение на <a className="text-indigo-300 underline" href={`${s.url}/oauth/applications`} target="_blank" rel="noreferrer">{s.url}/oauth/applications</a> (Redirect URI — две строки: <code>https://&lt;домен&gt;/api/shikimori/callback</code> и <code>urn:ietf:wg:oauth:2.0:oob</code>, права: user_rates).</li>
               <li>Вписать <code>SHIKIMORI_CLIENT_ID</code>, <code>SHIKIMORI_CLIENT_SECRET</code> и <code>SHIKIMORI_APP_NAME</code> в .env.</li>
               <li>Перезапустить: <code>docker compose up -d anime-calendar</code>.</li>
             </ol>
@@ -102,7 +116,7 @@ export function SettingsView() {
               Изменения отправляются в Shikimori сразу, а изменения с Shikimori подтягиваются каждые 15 минут.
               Статус «Жду выхода» хранится только здесь; в Shikimori он виден как «Запланировано».
             </p>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button variant="primary" disabled={Boolean(busy)}
                 onClick={() => run("sync", async () => describe(await api<SyncStats>("/api/shikimori/sync", { method: "POST" })))}>
                 {busy === "sync" ? "Синхронизация…" : "Синхронизировать сейчас"}
@@ -133,7 +147,7 @@ export function SettingsView() {
                   });
                 }}>
                 <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Код авторизации"
-                  className="min-w-64 flex-1 rounded-md border border-gray-600 bg-gray-900 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
+                  className="w-full min-w-0 flex-1 sm:min-w-64 rounded-md border border-gray-600 bg-gray-900 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
                 <Button type="submit" disabled={!code.trim() || Boolean(busy)}>{busy === "code" ? "Импорт…" : "Подтвердить"}</Button>
               </form>
             )}
@@ -144,6 +158,18 @@ export function SettingsView() {
       <Card title="AniLib">
         <AnilibCard />
       </Card>
+
+      {me.isAdmin && (
+        <Card title="Провайдеры глав">
+          <ProvidersCard />
+        </Card>
+      )}
+
+      {me.isAdmin && (
+        <Card title="Мосты к расширениям">
+          <BridgesCard />
+        </Card>
+      )}
 
       {me.isAdmin && (
         <Card title="ИИ">
@@ -164,11 +190,18 @@ export function SettingsView() {
         )}
       </Card>
 
-      <Card title="Время">
-        <p className="text-sm text-gray-300">
-          Даты выхода показываются в часовом поясе браузера: <b>{Intl.DateTimeFormat().resolvedOptions().timeZone}</b>.
-        </p>
-      </Card>
+      <TimeCard />
+      <WatchHistorySettings />
     </div>
+  );
+}
+
+function TimeCard() {
+  return (
+    <Card title="Время">
+      <p className="text-sm text-gray-300">
+        Даты выхода показываются в часовом поясе браузера: <b>{Intl.DateTimeFormat().resolvedOptions().timeZone}</b>.
+      </p>
+    </Card>
   );
 }

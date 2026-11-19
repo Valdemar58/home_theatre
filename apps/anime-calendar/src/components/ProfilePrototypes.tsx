@@ -15,7 +15,7 @@ import { useHoverCard } from "./HoverCard";
 import { AchievementCard } from "./AchievementsPreview";
 import { AreaChart, Columns, Donut, Radar, StatBar } from "./charts";
 import { Img } from "./Img";
-import { Badge, Button, Modal, Segmented, Spinner, cx } from "./ui";
+import { Badge, Button, Modal, Segmented, Skel, SkelPosters, cx } from "./ui";
 
 // Прототипы RPG-профиля на реальных данных: A — лист персонажа, B — инфографика, C — карточка игрока.
 
@@ -242,7 +242,7 @@ function VariantC({ user, d }: { user: User; d: Data }) {
         <div className="absolute inset-0 bg-linear-to-t from-gray-950 via-gray-950/75 to-gray-950/20" />
         <div className="relative flex flex-wrap items-end gap-6 p-6 pt-24">
           <LevelRing user={user} s={s} size={124} />
-          <div className="min-w-0 flex-1 pb-1">
+          <div className="min-w-0 basis-full pb-1 sm:basis-0 sm:flex-1">
             <h2 className="text-3xl font-bold drop-shadow">{user.name}</h2>
             <p className="text-lg text-accent-200">{classTitle(s)}</p>
             {s.klass && <p className="text-sm text-gray-300">«{s.klass.motto}»</p>}
@@ -419,6 +419,51 @@ export function RpgProfile({ user, d, self, actions, avatar, extra }: {
   return <VariantD user={user} d={d} self={self} actions={actions} avatar={avatar} extra={extra} />;
 }
 
+const TOTAL_LABELS = ["Часов", "Тайтлов", "Досмотрено", "Серий", "Смотрю", "В планах", "Брошено", "Средняя"];
+
+/** Заглушка профиля, пока считается статистика: те же блоки и заголовки, вместо цифр — плашки.
+ *  Пользователь известен (профиль пришёл раньше статистики) — имя, аватар и кнопки уже настоящие. */
+export function RpgProfileSkeleton({ user, actions, avatar, extra }: {
+  user?: User; actions?: React.ReactNode; avatar?: React.ReactNode; extra?: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-5" aria-busy>
+      <div className="relative z-10 rounded-2xl ring-1 ring-gray-700">
+        <div className="absolute inset-0 overflow-hidden rounded-2xl"><div className="absolute inset-0 bg-linear-to-t from-gray-950 via-gray-950/70 to-gray-950/10" /></div>
+        {actions && <div className="absolute right-3 top-3 z-10 flex gap-2">{actions}</div>}
+        <div className="relative flex flex-wrap items-end gap-6 p-6 pt-28">
+          <div className="relative" style={{ width: 124, height: 124 }}>
+            {user
+              ? <div className="absolute inset-[7%]">{avatar ?? <Avatar user={user} className="h-full w-full text-4xl" />}</div>
+              : <Skel className="h-full w-full rounded-full" />}
+          </div>
+          <div className="min-w-0 flex-1 space-y-2 pb-1">
+            {user ? <h2 className="text-3xl font-bold drop-shadow">{user.name}</h2> : <Skel className="h-9 w-48" />}
+            <Skel className="h-5 w-56" />
+            <Skel className="h-1.5 w-full max-w-sm rounded-full" />
+            <div className="flex gap-1.5 pt-1">{[0, 1, 2].map((i) => <Skel key={i} className="h-6 w-20 rounded-full" />)}</div>
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
+        {TOTAL_LABELS.map((l) => (
+          <div key={l} className="rounded-2xl bg-gray-800/50 px-4 py-3 ring-1 ring-gray-700/80">
+            <Skel className="my-1 h-6 w-14" />
+            <p className="text-xs text-gray-400">{l}</p>
+          </div>
+        ))}
+      </div>
+      {extra}
+      <div className="grid gap-5 lg:grid-cols-[1fr_1.1fr]">
+        <Panel title="Атрибуты"><div className="space-y-3.5">{[0, 1, 2, 3, 4, 5].map((i) => <Skel key={i} className="h-8 w-full" />)}</div></Panel>
+        <Panel title="Стихии — роза жанров"><Skel className="mx-auto aspect-square w-full max-w-80 rounded-full" /></Panel>
+      </div>
+      <Panel title="Награды"><div className="flex flex-wrap gap-3">{Array.from({ length: 8 }, (_, i) => <Skel key={i} className="h-20 w-20 rounded-xl" />)}</div></Panel>
+      <Panel title="Зал славы"><SkelPosters count={10} className="grid grid-cols-3 gap-3 sm:grid-cols-5 lg:grid-cols-10" /></Panel>
+    </div>
+  );
+}
+
 function VariantD({ user, d, self, actions, avatar, extra }: {
   user: User; d: Data; self: boolean; actions?: React.ReactNode; avatar?: React.ReactNode; extra?: React.ReactNode;
 }) {
@@ -455,7 +500,7 @@ function VariantD({ user, d, self, actions, avatar, extra }: {
         </div>
         <div className="relative flex flex-wrap items-end gap-6 p-6 pt-28">
           <LevelRing user={user} s={s} size={124} avatar={avatar} />
-          <div className="min-w-0 flex-1 pb-1">
+          <div className="min-w-0 basis-full pb-1 sm:basis-0 sm:flex-1">
             <h2 className="text-3xl font-bold drop-shadow">{user.name}</h2>
             <p className="text-base text-warning-200">Уровень {s.level.level} · {s.level.rank}</p>
             <div className="group relative mt-2 max-w-sm">
@@ -464,7 +509,7 @@ function VariantD({ user, d, self, actions, avatar, extra }: {
                 <span><b className="tabular-nums text-warning-200">{s.level.inLevel.toLocaleString("ru-RU")}</b> / {s.level.levelSize.toLocaleString("ru-RU")} опыта</span>
                 <span className="text-gray-400">до {s.level.level + 1}-го уровня — {s.level.toNext.toLocaleString("ru-RU")}</span>
               </p>
-              <div className="pointer-events-none invisible absolute left-0 top-full z-30 mt-2 w-72 rounded-xl bg-gray-900/97 p-3 text-xs opacity-0 shadow-2xl ring-1 ring-gray-700 transition group-hover:visible group-hover:opacity-100">
+              <div className="mobile-tooltip pointer-events-none invisible absolute left-0 top-full z-30 mt-2 w-72 rounded-xl bg-gray-900/97 p-3 text-xs opacity-0 shadow-2xl ring-1 ring-gray-700 transition group-hover:visible group-hover:opacity-100">
                 <p className="text-gray-200">Опыт — сумма опыта всех наград: <b>{s.level.xp.toLocaleString("ru-RU")}</b></p>
                 <p className="mt-1 text-gray-400">«Время просмотра»: {s.level.fromHours.toLocaleString("ru-RU")} (10 за час, {s.totals.hours} ч)</p>
                 <p className="text-gray-400">Остальные награды: {s.level.fromBadges.toLocaleString("ru-RU")} (бронза 20, серебро 50, золото 120, платина 300)</p>
@@ -589,7 +634,7 @@ export function ProfilePrototypes({ userId }: { userId?: number }) {
   const { data: profile } = useProfile(id);
   const { data, isLoading, error } = useQuery({ queryKey: ["profile-stats", id], queryFn: () => api<Data>(`/api/users/${id}/stats`), enabled: id > 0 });
   const [v, setV] = useState<"A" | "B" | "C" | "D">("D");
-  if (isLoading || !data || !profile) return error ? <p className="text-negative-300">{String(error)}</p> : <div className="flex h-64 items-center justify-center"><Spinner className="h-8 w-8" /></div>;
+  if (isLoading || !data || !profile) return error ? <p className="text-negative-300">{String(error)}</p> : <div className="max-w-7xl"><RpgProfileSkeleton user={profile?.user} /></div>;
   return (
     <div className="max-w-7xl space-y-6">
       <div className="flex flex-wrap items-center gap-4">

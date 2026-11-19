@@ -15,6 +15,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export class RateLimiter {
   private chain: Promise<unknown> = Promise.resolve();
   private next = 0;
+  /** Сколько запросов ждёт или выполняется (фоновые работы уступают, пока очередь не пуста) */
+  pending = 0;
 
   constructor(private minIntervalMs: number) {}
 
@@ -24,12 +26,13 @@ export class RateLimiter {
   }
 
   run<T>(fn: () => Promise<T>): Promise<T> {
+    this.pending++;
     const task = this.chain.then(async () => {
       const wait = this.next - Date.now();
       if (wait > 0) await sleep(wait);
       this.next = Date.now() + this.minIntervalMs;
       return fn();
-    });
+    }).finally(() => { this.pending--; });
     this.chain = task.catch(() => undefined);
     return task;
   }

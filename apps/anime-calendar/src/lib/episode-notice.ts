@@ -32,3 +32,13 @@ export function episodeNotice(e: { waiting: boolean; episodes: number }, m: Medi
   const behind = aired - e.episodes;
   return { kind: "episode", title, body: behind > 1 ? `Не просмотрено: ${behind}` : null };
 }
+
+/**
+ * «Можно смотреть»: дальняя доступная серия (библиотека или «Стрим») выросла с прошлого раза и она ещё не
+ * просмотрена. prev — о какой сообщали, watched — прогресс в списке.
+ */
+export function readyNotice(prev: number, ready: number, watched: number): { title: string } | null {
+  if (ready <= prev || ready <= watched) return null;
+  const from = Math.max(prev, watched) + 1;
+  return { title: from === ready ? `${ready} серия готова — можно смотреть` : `Серии ${from}–${ready} готовы — можно смотреть` };
+}

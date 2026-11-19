@@ -11,7 +11,7 @@ import { useUrlState } from "@/lib/useUrlState";
 import { FilterPanel } from "./FilterPanel";
 import { FilterPresets } from "./FilterPresets";
 import { TitleCard } from "./TitleCard";
-import { Button, EmptyState, ErrorBox, Modal, Spinner } from "./ui";
+import { Button, EmptyState, ErrorBox, Modal, SkelPosters } from "./ui";
 
 const SORTS: [string, string][] = [
   ["POPULARITY_DESC", "Популярные"],
@@ -75,7 +75,8 @@ export function BrowseView() {
 
         {query.error ? <ErrorBox error={query.error} /> : null}
         {query.isLoading ? (
-          <div className="flex h-64 items-center justify-center"><Spinner className="h-8 w-8" /></div>
+          // Шапка и фильтры уже работают, вместо постеров — заглушки в той же сетке
+          <div aria-busy><SkelPosters count={21} className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 2xl:grid-cols-7" /></div>
         ) : items.length === 0 ? (
           <EmptyState title="Ничего не найдено">Попробуй ослабить фильтры.</EmptyState>
         ) : (

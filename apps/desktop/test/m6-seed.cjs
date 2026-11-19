@@ -1,0 +1,11 @@
+const { DatabaseSync } = require('node:sqlite');
+const { randomBytes, createHash } = require('node:crypto');
+const db = new DatabaseSync('/data/anime-calendar.db');
+const now = Math.floor(Date.now()/1000), token = randomBytes(32).toString('hex'), id = randomBytes(12).toString('hex');
+db.exec("INSERT OR IGNORE INTO users(id,jellyfin_id,name,created_at) VALUES(1,'fixture-host','m6-host',0),(2,'fixture-viewer','m6-viewer',0); INSERT OR IGNORE INTO shared_lists(id,name,owner_id,created_at) VALUES(1,'M6 · тестовая комната',1,0); INSERT OR IGNORE INTO shared_list_members(list_id,user_id,status,joined_at) VALUES(1,1,'member',0),(1,2,'member',0);");
+db.prepare('INSERT INTO desktop_devices(id,token_hash,user_id,label,platform,created_at,expires_at) VALUES(?,?,1,?,\'win32\',?,?)').run(id,createHash('sha256').update(token).digest('hex'),'M6 Windows fixture',now,now+600);
+db.prepare('INSERT INTO desktop_grants(device_id,list_id,anilist_id) VALUES(?,1,42)').run(id);
+db.prepare("INSERT OR REPLACE INTO watch_rooms(id,owner_id,anilist_id,preset,state,created_at,last_activity,group_id) VALUES('m6-room',1,42,'equal',?,?,?,1)").run(JSON.stringify({ep:1,playing:false,pos:0,at:Date.now(),hold:[]}),now,now);
+db.exec("INSERT OR REPLACE INTO watch_room_members(room_id,user_id,status,control,joined_at) VALUES('m6-room',1,'joined',1,0),('m6-room',2,'joined',1,0)");
+db.prepare("INSERT OR REPLACE INTO desktop_room_sources(room_id,device_id) VALUES('m6-room',?)").run(id);
+process.stdout.write(JSON.stringify({id,token}));

@@ -6,8 +6,9 @@ import { api, usePeople } from "@/lib/client";
 import type { FriendState } from "@/lib/social-rules";
 import type { Person } from "@/lib/types";
 import { Avatar } from "./Avatar";
-import { Button, EmptyState, ErrorBox, Spinner } from "./ui";
+import { Button, EmptyState, ErrorBox, Skel } from "./ui";
 import { useConfirm } from "./Dialogs";
+import { InvitePanel } from "./InvitePanel";
 
 // Друзья: входящие заявки, друзья (с совпадением вкусов), отправленные, остальные пользователи сервера.
 
@@ -83,8 +84,25 @@ function Section({ title, people, hint }: { title: string; people: Person[]; hin
 
 export function FriendsView() {
   const { data, isLoading, error } = usePeople();
-  if (isLoading) return <div className="flex h-64 items-center justify-center"><Spinner className="h-8 w-8" /></div>;
   if (error) return <ErrorBox error={error} />;
+  if (isLoading) return (
+    <div className="max-w-4xl space-y-8">
+      <h1 className="text-2xl font-bold sm:text-3xl">Друзья</h1>
+      {/* Какие разделы будут — зависит от данных, поэтому один раздел-заглушка со строками людей */}
+      <section aria-busy>
+        <Skel className="mb-2 h-7 w-40" />
+        <ul className="grid gap-2 md:grid-cols-2">
+          {Array.from({ length: 4 }, (_, i) => (
+            <li key={i} className="flex items-center gap-3 rounded-xl bg-gray-800/50 p-3 ring-1 ring-gray-700">
+              <Skel className="h-11 w-11 shrink-0 rounded-full" />
+              <div className="min-w-0 flex-1 space-y-1.5"><Skel className="h-4 w-28" /><Skel className="h-3 w-40" /></div>
+              <Skel className="h-8 w-36 shrink-0 rounded-lg" />
+            </li>
+          ))}
+        </ul>
+      </section>
+    </div>
+  );
   const all = data ?? [];
   const by = (s: FriendState) => all.filter((p) => p.state === s);
   const friends = by("friends").sort((a, b) => (b.taste ?? -1) - (a.taste ?? -1));
@@ -93,7 +111,7 @@ export function FriendsView() {
       <h1 className="text-2xl font-bold sm:text-3xl">Друзья</h1>
       {!all.length && (
         <EmptyState title="На сервере пока только вы">
-          Друзья появятся здесь, когда войдут со своим аккаунтом Jellyfin (аккаунты заводит администратор Jellyfin).
+          Позовите друзей ссылкой-приглашением ниже: после одобрения админом они появятся здесь.
         </EmptyState>
       )}
       <Section title="Заявки в друзья" people={by("incoming")} />
@@ -101,6 +119,7 @@ export function FriendsView() {
       <Section title="Отправленные заявки" people={by("outgoing")} />
       <Section title="Другие пользователи сервера" people={by("none")}
         hint="Друзья видят профиль и списки друг друга (если не выбрано «Только я»), могут смотреть вместе и вести общие списки." />
+      <InvitePanel />
     </div>
   );
 }

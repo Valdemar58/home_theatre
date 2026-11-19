@@ -7,6 +7,7 @@ import type { JsonSchema } from "@/lib/json-lite";
 import { isStubDescription } from "@/lib/plot";
 import { ensureSynopsis, storedSynopsis } from "../plot";
 import { shikiInfo, ruDescription } from "../shikimori";
+import { isOutage, sourceDown } from "../sources";
 import { similarityIdf, type SimilarityIdf } from "./math";
 
 // Профиль тайтла для рекомендаций и графа: данные AniList + анализ локальной LLM + эмбеддинг.
@@ -186,12 +187,29 @@ function cleanSynopsis(s: string | null): string | null {
   return s ? s.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").replace(/\(Source:[^)]*\)/gi, "").trim().slice(0, 1500) : null;
 }
 
-/** Загрузить из AniList данные тайтлов, которых нет или которые устарели. */
+/**
+ * Загрузить из AniList данные тайтлов, которых нет или которые устарели. Ждём только отсутствующие: устаревшие
+ * обновляются в фоне (рекомендации не ждут AniList); AniList лежит — работаем с тем, что сохранено.
+ */
 export async function ensureProfileData(ids: number[]): Promise<void> {
-  const stale = ids.filter((id) => {
+  const missing: number[] = [];
+  const old: number[] = [];
+  for (const id of ids) {
     const r = getRowStmt().get(id);
-    return !r || r.updated_at < now() - DATA_TTL;
-  });
+    if (!r) missing.push(id);
+    else if (r.updated_at < now() - DATA_TTL && !refreshingProfiles.has(id)) old.push(id);
+  }
+  if (sourceDown("anilist")) return;
+  if (old.length) {
+    old.forEach((id) => refreshingProfiles.add(id));
+    void loadProfileData(old).catch(() => undefined).finally(() => old.forEach((id) => refreshingProfiles.delete(id)));
+  }
+  await loadProfileData(missing).catch((e) => { if (!isOutage(e)) throw e; });
+}
+
+const refreshingProfiles = new Set<number>();
+
+async function loadProfileData(stale: number[]): Promise<void> {
   for (let i = 0; i < stale.length; i += 25) {
     const batch = stale.slice(i, i + 25);
     const data = await gql<{ Page: { media: RawProfile[] } }>(PROFILE_QUERY, { ids: batch, page: 1 });

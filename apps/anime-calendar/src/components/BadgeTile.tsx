@@ -23,7 +23,7 @@ export function BadgeTile({ a, hours, size = 56, label = true, className }: {
       </span>
       {label && <span className="text-[11px] leading-tight text-gray-300">{def.name}</span>}
 
-      <div className="pointer-events-none invisible absolute left-1/2 top-full z-30 mt-2 w-64 -translate-x-1/2 translate-y-1 rounded-xl bg-gray-900/97 p-3 text-left opacity-0 shadow-2xl ring-1 ring-gray-700 transition duration-150 group-hover:visible group-hover:translate-y-0 group-hover:opacity-100">
+      <div className="mobile-tooltip pointer-events-none invisible absolute left-1/2 top-full z-30 mt-2 w-64 md:-translate-x-1/2 md:translate-y-1 rounded-xl bg-gray-900/97 p-3 text-left opacity-0 shadow-2xl ring-1 ring-gray-700 transition duration-150 group-hover:visible md:group-hover:translate-y-0 group-hover:opacity-100">
         <p className="text-[10px] uppercase tracking-wider text-gray-500">{GROUP_LABEL[def.group]}</p>
         <p className="font-semibold">{def.name}
           <span className="ml-1.5 text-xs font-medium" style={{ color: METAL[a.tier].ink }}>{a.tier ? TIER_NAMES[a.tier] : "не получена"}</span>

@@ -2,6 +2,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { HttpError } from "./http";
 import { currentUser, type User } from "./session";
+import { SourceDown, withServedLog } from "./sources";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -13,7 +14,10 @@ export const json = (data: unknown, status = 200) => NextResponse.json(data, { s
 
 type Ctx<P> = { params: Promise<P> };
 
-/** Обёртка маршрута: проверка входа и единый формат ошибок. */
+/**
+ * Обёртка маршрута: проверка входа и единый формат ошибок. Данные, отданные из сохранённого (источник недоступен),
+ * отмечаются заголовком X-Data-Stale: «anilist=<секунды>,shikimori=…» — клиент показывает плашку.
+ */
 export function authed<P = Record<string, string>>(
   handler: (req: Request, user: User, params: P) => Promise<Response>,
 ) {
@@ -21,9 +25,13 @@ export function authed<P = Record<string, string>>(
     try {
       const user = await currentUser();
       if (!user) return json({ error: "Нужно войти" }, 401);
-      return await handler(req, user, await ctx.params);
+      const { value: res, served } = await withServedLog(async () => handler(req, user, await ctx.params));
+      if (served.size) res.headers.set("X-Data-Stale", [...served].map(([s, t]) => `${s}=${t}`).join(","));
+      return res;
     } catch (err) {
       if (err instanceof ApiError) return json({ error: err.message }, err.status);
+      // Источник лежит, а сохранённого нет — честно об этом, без трассировки в логе
+      if (err instanceof SourceDown) return json({ error: `${err.message}, а этих данных нет в сохранённом`, source: err.source }, 503);
       console.error(err);
       const status = err instanceof HttpError && err.status === 404 ? 404 : 502;
       return json({ error: err instanceof Error ? err.message : String(err) }, status);

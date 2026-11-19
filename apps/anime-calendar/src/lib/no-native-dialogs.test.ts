@@ -20,4 +20,5 @@ it("нет системных alert/confirm/prompt", () => {
     .map((line, i) => (NATIVE.test(line) ? `${path.relative(SRC, f)}:${i + 1}: ${line.trim()}` : null))
     .filter((x): x is string => x !== null));
   expect(found).toEqual([]);
-});
+  // Обходит все исходники: на Windows (репозиторий смонтирован в контейнер) это дольше стандартных 5 с
+}, 30_000);

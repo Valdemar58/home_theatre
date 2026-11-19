@@ -6,3 +6,18 @@ backups/
 __pycache__/
 recyclarr/*
 !recyclarr/recyclarr.yml
+
+# Колёса torch/CUDA для сборки mapvec (скачиваются заранее, в git не нужны)
+apps/mapvec/wheels/*.whl
+
+# Local tooling, build caches and private visual verification material.
+.pnpm-store/
+.codex/
+.impeccable/hook.cache.json
+.impeccable/review/
+.impeccable/mocks/
+.impeccable/surfaces/
+docs/screenshots/
+docs/evidence/
+apps/anime-calendar/Dockerfile.title-ui
+apps/desktop/Dockerfile.auth-fix

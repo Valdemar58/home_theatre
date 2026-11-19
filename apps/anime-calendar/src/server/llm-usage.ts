@@ -44,8 +44,8 @@ export function usageByTask(month?: string): LlmUsageRow[] {
   const d = new Date(from * 1000);
   const to = Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1) / 1000);
   return db.prepare<[number, number], LlmUsageRow>(
-    `SELECT task, provider, model, COUNT(*) AS calls, SUM(ok = 0) AS errors,
-            SUM(prompt_tokens) AS prompt, SUM(cache_hit_tokens) AS cacheHit, SUM(completion_tokens) AS completion,
+    `SELECT task, provider, model, COUNT(*) AS calls, SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END) AS errors,
+            SUM(prompt_tokens) AS prompt, SUM(cache_hit_tokens) AS "cacheHit", SUM(completion_tokens) AS completion,
             SUM(cost_usd) AS cost
      FROM llm_usage WHERE at >= ? AND at < ? GROUP BY task, provider, model ORDER BY cost DESC, calls DESC`).all(from, to);
 }

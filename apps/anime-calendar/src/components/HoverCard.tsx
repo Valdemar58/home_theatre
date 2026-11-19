@@ -7,7 +7,8 @@ import { useAnime, useList, useMatch } from "@/lib/client";
 import { FORMAT_LABELS, GENRE_LABELS, SEASON_LABELS, STATUS_LABELS, label } from "@/lib/labels";
 import { displayTitle } from "@/lib/schedule";
 import { pluralEpisodes } from "@/lib/time";
-import type { MediaLite } from "@/lib/types";
+import type { CastMember, MediaLite, NameRef } from "@/lib/types";
+import { CharacterHoverBody } from "./CharacterHover";
 import { Img } from "./Img";
 import { ListControl } from "./ListControl";
 import { NextEpisode } from "./NextEpisode";
@@ -24,7 +25,15 @@ import { Badge, TONE_CLASS, cx, matchTone, modalsOpen } from "./ui";
 /** reason — почему советуем (полный текст рекомендации в «Для тебя»). */
 export type HoverExtra = { similarity?: { value: number; to: string }; reason?: string };
 
-type Shown = { id: number; media?: MediaLite; rect: DOMRect; extra?: HoverExtra };
+/** Карточка персонажа (имя в тексте, карточка в составе): данные на курсор зрителя или размытый спойлер */
+export type CharacterHoverData = {
+  anilistId: number; entity: number; member: CastMember | null; spoilerEp: number | null;
+  /** Имя из текста привязано к особому облику — карточка под этим именем и с этим обликом */
+  as?: NameRef["as"];
+};
+
+/** sheet — на телефоне: карточка шторкой снизу по тапу (наведения нет) */
+type Shown = { id: number; media?: MediaLite; rect: DOMRect; extra?: HoverExtra; character?: CharacterHoverData; sheet?: boolean };
 type Ctx = { show: (s: Shown) => void; hide: () => void; keep: () => void; close: () => void };
 
 const HoverCtx = createContext<Ctx | null>(null);
@@ -32,6 +41,7 @@ const HoverCtx = createContext<Ctx | null>(null);
 const OPEN_DELAY = 400;
 const CLOSE_DELAY = 200;
 const WIDTH = 440;
+const CHAR_WIDTH = 380;
 
 const canHover = () => typeof window !== "undefined" && window.matchMedia("(hover: hover) and (pointer: fine)").matches;
 
@@ -39,6 +49,18 @@ const canHover = () => typeof window !== "undefined" && window.matchMedia("(hove
 type AnchorHandlers = Partial<Pick<React.DOMAttributes<HTMLElement>, "onPointerEnter" | "onPointerLeave" | "onClick">>;
 
 export function useHoverCard(media: MediaLite | number, extra?: HoverExtra): AnchorHandlers {
+  return useAnchor(() => (typeof media === "number" ? { id: media, extra } : { id: media.id, media, extra }));
+}
+
+/**
+ * Карточка персонажа при наведении — та же механика, что у тайтла (задержка, закрытие, позиция).
+ * tapSheet — имя в тексте: на телефоне тап открывает карточку шторкой снизу, а не страницу (там и спойлер не открыть).
+ */
+export function useCharacterHover(character: CharacterHoverData, opts?: { tapSheet?: boolean }): AnchorHandlers {
+  return useAnchor(() => ({ id: -character.entity, character }), opts?.tapSheet);
+}
+
+function useAnchor(make: () => Omit<Shown, "rect">, tapSheet = false): AnchorHandlers {
   const ctx = useContext(HoverCtx);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
@@ -48,16 +70,21 @@ export function useHoverCard(media: MediaLite | number, extra?: HoverExtra): Anc
       if (e.pointerType !== "mouse" || !canHover()) return;
       const el = e.currentTarget;
       if (timer.current) clearTimeout(timer.current);
-      const s = typeof media === "number" ? { id: media } : { id: media.id, media };
-      timer.current = setTimeout(() => ctx.show({ ...s, rect: el.getBoundingClientRect(), extra }), OPEN_DELAY);
+      const s = make();
+      timer.current = setTimeout(() => ctx.show({ ...s, rect: el.getBoundingClientRect() }), OPEN_DELAY);
     },
     onPointerLeave: () => {
       if (timer.current) clearTimeout(timer.current);
       ctx.hide();
     },
     // Клик по карточке-якорю — переход: всплывающая не нужна (и не должна открыться по таймеру уже на новой странице)
-    onClick: () => {
+    onClick: (e: React.MouseEvent<HTMLElement>) => {
       if (timer.current) clearTimeout(timer.current);
+      if (tapSheet && !canHover()) {
+        e.preventDefault();
+        ctx.show({ ...make(), rect: e.currentTarget.getBoundingClientRect(), sheet: true });
+        return;
+      }
       ctx.close();
     },
   };
@@ -95,7 +122,9 @@ export function HoverCardHost({ children }: { children: React.ReactNode }) {
   return (
     <HoverCtx.Provider value={{ show, hide, keep, close }}>
       {children}
-      {shown && createPortal(<Floating key={shown.id} ref={floating} shown={shown} onEnter={keep} onLeave={hide} onClose={() => setShown(null)} />, document.body)}
+      {shown && createPortal(shown.sheet && shown.character
+        ? <Sheet key={shown.id} ref={floating} character={shown.character} onClose={() => setShown(null)} />
+        : <Floating key={shown.id} ref={floating} shown={shown} onEnter={keep} onLeave={hide} onClose={() => setShown(null)} />, document.body)}
     </HoverCtx.Provider>
   );
 }
@@ -105,6 +134,7 @@ function Floating({ ref, shown, onEnter, onLeave, onClose }: {
 }) {
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const { rect } = shown;
+  const width = shown.character ? CHAR_WIDTH : WIDTH;
 
   // Справа от якоря, если влезает, иначе слева; по вертикали — не вылезая за окно
   useLayoutEffect(() => {
@@ -112,16 +142,50 @@ function Floating({ ref, shown, onEnter, onLeave, onClose }: {
     const gap = 12;
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const left = rect.right + gap + WIDTH <= vw - 8 ? rect.right + gap : Math.max(8, rect.left - gap - WIDTH);
-    const top = Math.min(Math.max(8, rect.top), Math.max(8, vh - h - 8));
+    // Имя в строке текста — карточка под ним (сбоку от слова мешает читать), постер — справа или слева
+    const inline = Boolean(shown.character) && rect.height < 40;
+    const left = inline ? Math.min(Math.max(8, rect.left), vw - width - 8)
+      : rect.right + gap + width <= vw - 8 ? rect.right + gap : Math.max(8, rect.left - gap - width);
+    const below = rect.bottom + 6 + h <= vh - 8;
+    const top = inline ? (below ? rect.bottom + 6 : Math.max(8, rect.top - 6 - h)) : Math.min(Math.max(8, rect.top), Math.max(8, vh - h - 8));
     setPos({ left, top });
-  }, [rect]);
+  }, [rect, width, shown.character, ref]);
 
   return (
     <div ref={ref} onPointerEnter={onEnter} onPointerLeave={onLeave}
       className="fixed z-50 rounded-xl bg-gray-800/97 p-4 shadow-2xl ring-1 ring-gray-600 backdrop-blur"
-      style={{ width: WIDTH, left: pos?.left ?? -9999, top: pos?.top ?? 0, visibility: pos ? "visible" : "hidden" }}>
-      <HoverBody id={shown.id} media={shown.media} extra={shown.extra} onNavigate={onClose} />
+      style={{ width, left: pos?.left ?? -9999, top: pos?.top ?? 0, visibility: pos ? "visible" : "hidden" }}>
+      {shown.character
+        ? <CharacterHoverBody data={shown.character} onNavigate={onClose} />
+        : <HoverBody id={shown.id} media={shown.media} extra={shown.extra} onNavigate={onClose} />}
+    </div>
+  );
+}
+
+/** Шторка снизу (телефон): карточка персонажа и «Открыть страницу»; закрывается тапом мимо, свайпом вниз, Esc. */
+function Sheet({ ref, character, onClose }: { ref: React.RefObject<HTMLDivElement | null>; character: CharacterHoverData; onClose: () => void }) {
+  const [drag, setDrag] = useState(0);
+  const start = useRef<number | null>(null);
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [onClose]);
+  const href = character.member?.href;
+  return (
+    <div className="fixed inset-0 z-50">
+      <button aria-label="Закрыть" onClick={onClose} className="absolute inset-0 bg-black/50" />
+      <div ref={ref} role="dialog" aria-modal
+        className="absolute inset-x-0 bottom-0 max-h-[80vh] overflow-y-auto overscroll-contain rounded-t-2xl bg-gray-800 px-4 pt-2 shadow-2xl ring-1 ring-gray-600 pb-[max(1rem,env(safe-area-inset-bottom))]"
+        style={{ transform: drag ? `translateY(${drag}px)` : undefined }}
+        // Свайп вниз от верха шторки — закрыть
+        onTouchStart={(e) => { start.current = e.currentTarget.scrollTop <= 0 ? e.touches[0].clientY : null; }}
+        onTouchMove={(e) => { if (start.current !== null) setDrag(Math.max(0, e.touches[0].clientY - start.current)); }}
+        onTouchEnd={() => { if (drag > 80) onClose(); else setDrag(0); start.current = null; }}>
+        <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-gray-600" />
+        <CharacterHoverBody data={character} onNavigate={onClose} />
+        {href && <Link href={href} onClick={onClose} className="mt-4 block rounded-lg px-3 py-2.5 text-center text-sm font-medium tone-accent soft">Открыть страницу</Link>}
+      </div>
     </div>
   );
 }

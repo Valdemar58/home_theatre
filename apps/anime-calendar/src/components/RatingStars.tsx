@@ -145,11 +145,11 @@ export function RatingStars({ value, onChange, size = 24 }: { value: number; onC
   const [hover, setHover] = useState(0);
   const shown = hover || value;
   return (
-    <div className="flex" onMouseLeave={() => setHover(0)}>
+    <div className="flex w-fit max-w-full" onMouseLeave={() => setHover(0)}>
       {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
         <button key={n} onMouseEnter={() => setHover(n)} onFocus={() => setHover(n)} onBlur={() => setHover(0)}
           onClick={() => onChange(n === value ? 0 : n)} aria-label={`Оценка ${n}`}
-          className={cx("p-0.5 transition-transform duration-200", n === shown && "scale-115")}>
+          className={cx("min-w-0 p-0.5 [&>svg]:max-w-full [&>svg]:h-auto transition-transform duration-200", n === shown && "scale-115")}>
           <ScoreStar score={n} special={n === shown} filled={n <= shown} size={size} />
         </button>
       ))}

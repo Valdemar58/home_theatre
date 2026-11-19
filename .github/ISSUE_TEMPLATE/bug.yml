@@ -1,0 +1,21 @@
+name: Ошибка
+description: Сценарий, который работает неправильно
+labels: [bug]
+body:
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Как воспроизвести
+      description: Шаги, ожидаемый и фактический результат; без паролей и токенов
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Версии сервера / desktop, ОС и браузер
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Влияние и обходной путь

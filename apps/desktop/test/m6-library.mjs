@@ -1,0 +1,11 @@
+import { Library } from '../src/library.mjs';
+import { copyFile, mkdir } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+const profile = resolve('release/m6-profile');
+const lib = new Library(join(profile,'library')); await lib.load();
+const f = await lib.add(resolve('release/m6-sample.mp4'),42,1);
+await mkdir(join(lib.directory,'prepared'),{recursive:true});
+f.output=join(lib.directory,'prepared',`${f.id}.mp4`); await copyFile(f.path,f.output);
+f.duration=60; f.state='ready'; f.progress=1; f.titleName='M6 · синтетическое тестовое видео';
+await lib.refresh(); await lib.save();
+console.log('Synthetic 1080p library ready',f.preparedBytes);

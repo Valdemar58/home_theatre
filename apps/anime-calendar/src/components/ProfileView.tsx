@@ -10,8 +10,8 @@ import { Avatar } from "./Avatar";
 import { AvatarEditor } from "./AvatarEditor";
 import { FriendButtons } from "./FriendsView";
 import { ListsView } from "./ListsView";
-import { RpgProfile } from "./ProfilePrototypes";
-import { ErrorBox, Segmented, Spinner } from "./ui";
+import { RpgProfile, RpgProfileSkeleton } from "./ProfilePrototypes";
+import { ErrorBox, Segmented } from "./ui";
 
 // Профиль пользователя: RPG-характеристика (уровень, награды, атрибуты, жанры, зал славы, достижения,
 // статистика) и списки ниже (чужие — только чтение). Видимость — для своего профиля.
@@ -32,7 +32,8 @@ export function ProfileView({ id }: { id: number }) {
   useEffect(() => {
     if (d && window.location.hash) setTimeout(() => document.getElementById(window.location.hash.slice(1))?.scrollIntoView({ behavior: "smooth" }), 300);
   }, [d]);
-  if (isLoading) return <div className="flex h-64 items-center justify-center"><Spinner className="h-8 w-8" /></div>;
+  // Профиль ещё не пришёл: чей он и открыт ли — неизвестно, рисуем каркас самого частого случая
+  if (isLoading) return <RpgProfileSkeleton />;
   if (error || !p) return <ErrorBox error={error} />;
 
   const setVisibility = async (visibility: Visibility) => {
@@ -60,7 +61,6 @@ export function ProfileView({ id }: { id: number }) {
   );
 
   if (statsError) return <ErrorBox error={statsError} />;
-  if (!d) return <div className="flex h-64 items-center justify-center"><Spinner className="h-8 w-8" /></div>;
 
   const extra = (
     <>
@@ -96,8 +96,14 @@ export function ProfileView({ id }: { id: number }) {
 
   return (
     <div className="space-y-10">
-      <RpgProfile user={p.user} d={d} self={p.self} actions={friend || undefined} extra={extra}
-        avatar={p.self ? <AvatarEditor user={p.user} className="h-full w-full text-4xl" /> : undefined} />
+      {/* Статистика считается дольше профиля: имя, кнопки и списки — уже сейчас, цифры — заглушкой */}
+      {d ? (
+        <RpgProfile user={p.user} d={d} self={p.self} actions={friend || undefined} extra={extra}
+          avatar={p.self ? <AvatarEditor user={p.user} className="h-full w-full text-4xl" /> : undefined} />
+      ) : (
+        <RpgProfileSkeleton user={p.user} actions={friend || undefined} extra={extra}
+          avatar={p.self ? <AvatarEditor user={p.user} className="h-full w-full text-4xl" /> : undefined} />
+      )}
       <section id="lists" className="scroll-mt-20">
         {p.self ? <ListsView /> : (
           <>

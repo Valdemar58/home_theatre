@@ -2,6 +2,8 @@ import { env, seerrConfigured, shikimoriConfigured } from "@/server/env";
 import { authed, json } from "@/server/route";
 import { setVisibility } from "@/server/social";
 import { db } from "@/server/db";
+import { isRemote } from "@/server/remote";
+import { shikiRedirectFor } from "@/server/shikimori";
 import type { Visibility } from "@/lib/social-rules";
 
 export type Me = {
@@ -26,22 +28,25 @@ export type Me = {
   };
 };
 
-export const GET = authed(async (_req, user) => {
+export const GET = authed(async (req, user) => {
+  // Из интернета сервисы — на поддоменах за единым входом (apps/caddy/Caddyfile), дома — по портам
+  const sub = (name: string, local: string) => (isRemote(req) && env.publicUrl ? env.publicUrl.replace("://", `://${name}.`) : local);
+  const seerrUrl = sub("seerr", env.seerrPublicUrl);
   const me: Me = {
     id: user.id,
     name: user.name,
     visibility: user.visibility,
     isAdmin: Boolean(user.is_admin),
-    seerr: { configured: seerrConfigured(), url: env.seerrPublicUrl },
+    seerr: { configured: seerrConfigured(), url: seerrUrl },
     services: [
-      { id: "jellyfin", name: "Jellyfin", hint: "медиатека и плеер", url: env.jellyfinPublicUrl, admin: false },
-      ...(seerrConfigured() ? [{ id: "seerr", name: "Seerr", hint: "запросы фильмов и сериалов", url: env.seerrPublicUrl, admin: false }] : []),
-      { id: "sonarr", name: "Sonarr", hint: "сериалы и аниме: поиск и загрузка", url: env.servicesPublic.sonarr, admin: true },
-      { id: "radarr", name: "Radarr", hint: "фильмы: поиск и загрузка", url: env.servicesPublic.radarr, admin: true },
-      { id: "prowlarr", name: "Prowlarr", hint: "трекеры и индексаторы", url: env.servicesPublic.prowlarr, admin: true },
-      { id: "bazarr", name: "Bazarr", hint: "субтитры", url: env.servicesPublic.bazarr, admin: true },
-      { id: "qbittorrent", name: "qBittorrent", hint: "торрент-клиент", url: env.servicesPublic.qbittorrent, admin: true },
-      { id: "torrserver", name: "TorrServer", hint: "онлайн-просмотр торрентов", url: env.servicesPublic.torrserver, admin: true },
+      { id: "jellyfin", name: "Jellyfin", hint: "медиатека и плеер", url: sub("jellyfin", env.jellyfinPublicUrl), admin: false },
+      ...(seerrConfigured() ? [{ id: "seerr", name: "Seerr", hint: "запросы фильмов и сериалов", url: seerrUrl, admin: false }] : []),
+      { id: "sonarr", name: "Sonarr", hint: "сериалы и аниме: поиск и загрузка", url: sub("sonarr", env.servicesPublic.sonarr), admin: true },
+      { id: "radarr", name: "Radarr", hint: "фильмы: поиск и загрузка", url: sub("radarr", env.servicesPublic.radarr), admin: true },
+      { id: "prowlarr", name: "Prowlarr", hint: "трекеры и индексаторы", url: sub("prowlarr", env.servicesPublic.prowlarr), admin: true },
+      { id: "bazarr", name: "Bazarr", hint: "субтитры", url: sub("bazarr", env.servicesPublic.bazarr), admin: true },
+      { id: "qbittorrent", name: "qBittorrent", hint: "торрент-клиент", url: sub("qbit", env.servicesPublic.qbittorrent), admin: true },
+      { id: "torrserver", name: "TorrServer", hint: "онлайн-просмотр торрентов", url: sub("torrserver", env.servicesPublic.torrserver), admin: true },
     ].filter((s) => !s.admin || user.is_admin),
     ru: { configured: Boolean(env.sonarrApiKey && env.prowlarrApiKey), stream: Boolean(env.jellyfinApiKey && env.prowlarrApiKey) },
     shikimori: {
@@ -51,7 +56,7 @@ export const GET = authed(async (_req, user) => {
       syncedAt: user.shiki_synced_at,
       error: user.shiki_error,
       url: env.shikiUrl,
-      oob: env.shikiRedirectUri.startsWith("urn:"),
+      oob: shikiRedirectFor(isRemote(req)).startsWith("urn:"),
     },
   };
   return json(me);

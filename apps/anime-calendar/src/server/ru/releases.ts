@@ -1,12 +1,15 @@
 import "server-only";
 import { getDetails } from "../anilist";
 import { mappingForAnilist, mappingsForTvdb, type TvdbMapping } from "../idmap";
-import { streamRelease, streamSeriesUrl } from "../stream";
+import { db, now } from "../db";
+import { releaseSubsTorrent, streamRelease, streamSeriesUrl } from "../stream";
+import { releaseTag, syncStreamSubs } from "../stream-subs";
 import { shikiInfo } from "../shikimori";
-import { searchRu, sonarrEpisodes, sonarrGet, sonarrPost, sonarrPut, sonarrSeries, type ProwlarrRelease, type SonarrSeries } from "./arr";
+import { searchOrig, searchRu, sonarrEpisodes, sonarrGet, sonarrPost, sonarrPut, sonarrSeries, type ProwlarrRelease, type SonarrSeries } from "./arr";
 import { anilistNames, baseName, resetIndex } from "./identify";
 import { INDEXER_NAME } from "./importer";
 import { normalizeName, parseRelease, type ParsedRelease } from "./parse";
+import { parseScene, type SceneRelease } from "./parse-scene";
 import { loadProfiles, scoreTitle } from "./profiles";
 import { qualityToken, sonarrTitle, type EpisodeRefLike } from "./title";
 import { cachedTopic, prefetchTopics, topicInfo } from "./topic";
@@ -33,6 +36,11 @@ export type RuRelease = {
   /** Баллы по profiles.toml (как посчитает Sonarr) и сработавшие правила */
   score: number;
   matched: string[];
+  /** ru — русские трекеры; orig — оригинал и другие языки (Nyaa, 1337x; IDEAS #88) */
+  origin: "ru" | "orig";
+  /** Группа релиза и языки субтитров (у оригинальных) */
+  group: string | null;
+  subs: string[];
 };
 
 export type RuReleasesResponse = {
@@ -40,13 +48,18 @@ export type RuReleasesResponse = {
   season: number | "a" | null;
   inSonarr: boolean;
   releases: RuRelease[];
+  /** Оригинал и другие языки (в старых сохранённых результатах поля нет) */
+  orig?: RuRelease[];
   /** Часть тем ещё догружается в фоне: при повторном открытии появятся студии */
   pending: number;
 };
 
 const ENRICH_BUDGET_MS = 15_000;
 
-type Match = { parsed: ParsedRelease; topic: TopicInfo | undefined; release: ProwlarrRelease };
+type Match = { parsed: ParsedRelease | SceneRelease; topic: TopicInfo | undefined; release: ProwlarrRelease; origin: "ru" | "orig" };
+
+// Оригинальных раздач бывают сотни (каждая серия каждой группы) — показываем самые раздаваемые
+const ORIG_LIMIT = 60;
 
 type FindOpts = { signal?: AbortSignal; budgetMs?: number };
 
@@ -65,6 +78,24 @@ async function findReleases(anilistId: number, opts: FindOpts = {}): Promise<{ m
       for (const n of s.names) seriesBase.add(normalizeName(baseName(n)));
     }
   }
+
+  /** Раздача про этот тайтл: название совпало (и сезон не другой) или общее название сериала с нужным сезоном и частью */
+  const accepts = (parsed: ParsedRelease): boolean => {
+    // Сквозная нумерация без сезона («Slime - 96» — это 4-й сезон): серия дальше конца тайтла — не он
+    if (parsed.episodes && details.episodes && mapping?.season !== "a" && parsed.episodes.to > details.episodes) return false;
+    if (parsed.names.some((n) => own.has(normalizeName(n)))) {
+      // Название совпало, но в раздаче явно указан другой сезон (0 — спецвыпуски — тоже другой)
+      return !(parsed.season !== null && mapping && typeof mapping.season === "number" && parsed.season !== mapping.season);
+    }
+    if (parsed.names.some((n) => seriesBase.has(normalizeName(baseName(n)))) && mapping) {
+      // Общее название сериала: выбираем запись AniList по сезону и части из раздачи
+      const wanted = parsed.season ?? 1;
+      const inSeason = siblings.filter((m) => m.season === wanted).sort((a, b) => a.offset - b.offset);
+      const pick = inSeason[(parsed.part ?? 1) - 1] ?? inSeason[0];
+      return pick?.anilistId === anilistId || (!siblings.length && wanted === (mapping.season === "a" ? 1 : mapping.season));
+    }
+    return false;
+  };
 
   const latin = [details.title.romaji, details.title.english].filter((n): n is string => Boolean(n));
   const queries = [...new Set([...latin.map(normalizeName), ...latin.map((n) => normalizeName(baseName(n)))])].slice(0, 3);
@@ -92,22 +123,31 @@ async function findReleases(anilistId: number, opts: FindOpts = {}): Promise<{ m
     const parsed = parseRelease(topic?.title ?? r.title) ?? parsedShort;
     if (!parsed) continue;
     if (details.format === "MOVIE" ? parsed.kind !== "Movie" : parsed.kind === "Movie") continue;
-
-    const exact = parsed.names.some((n) => own.has(normalizeName(n)));
-    let accepted = false;
-    if (exact) {
-      // Название совпало, но в раздаче явно указан другой сезон
-      accepted = !(parsed.season && mapping && typeof mapping.season === "number" && parsed.season !== mapping.season);
-    } else if (parsed.names.some((n) => seriesBase.has(normalizeName(baseName(n)))) && mapping) {
-      // Общее название сериала: выбираем запись AniList по сезону и части из раздачи
-      const wanted = parsed.season ?? 1;
-      const inSeason = siblings.filter((m) => m.season === wanted).sort((a, b) => a.offset - b.offset);
-      const pick = inSeason[(parsed.part ?? 1) - 1] ?? inSeason[0];
-      accepted = pick?.anilistId === anilistId || (!siblings.length && wanted === (mapping.season === "a" ? 1 : mapping.season));
-    }
-    if (accepted) matches.push({ parsed, topic, release: r });
+    if (accepts(parsed)) matches.push({ parsed, topic, release: r, origin: "ru" });
   }
   prefetchTopics(background);
+
+  // Оригинал и другие языки (Nyaa, 1337x): названия «как на Nyaa», тем нет; что уже нашлось среди русских — не дублируем
+  const seen = new Set(matches.map((m) => m.release.guid));
+  const orig = new Map<string, ProwlarrRelease>();
+  // Nyaa отдаёт 75 самых свежих: у старого сезона франшизы, которая выходит сейчас, их все займут новые серии —
+  // поэтому ещё пачки и BD (по ним старые сезоны и раздают) и номер сезона
+  const base = normalizeName(baseName(latin[0] ?? ""));
+  const sn = mapping && typeof mapping.season === "number" ? mapping.season : null;
+  const origQueries = [...new Set([...queries, ...(base ? [`${base} batch`, `${base} bd`, ...(sn ? [`${base} s${String(sn).padStart(2, "0")}`, `${base} season ${sn}`] : [])] : [])])];
+  for (const q of origQueries) {
+    opts.signal?.throwIfAborted();
+    for (const r of await searchOrig(q, details.format === "MOVIE").catch(() => [])) if (!seen.has(r.guid)) orig.set(r.guid, r);
+  }
+  const origMatches: Match[] = [];
+  for (const r of orig.values()) {
+    const parsed = parseScene(r.title);
+    if (!parsed || (details.format === "MOVIE" ? parsed.kind !== "Movie" && (parsed.episodes?.to ?? 1) > 1 : parsed.kind === "Movie")) continue;
+    // OVA и спецвыпуски — у сериала свои записи AniList
+    if ((details.format === "TV" || details.format === "TV_SHORT") && (parsed.kind === "OVA" || parsed.kind === "Special")) continue;
+    if (accepts(parsed)) origMatches.push({ parsed, topic: undefined, release: r, origin: "orig" });
+  }
+  matches.push(...origMatches.sort((a, b) => (b.release.seeders ?? 0) - (a.release.seeders ?? 0)).slice(0, ORIG_LIMIT));
   return { matches, pending: background.length, mapping };
 }
 
@@ -115,13 +155,16 @@ export async function ruReleases(anilistId: number, opts: FindOpts = {}): Promis
   const { matches, pending, mapping } = await findReleases(anilistId, opts);
   const series = mapping ? (await sonarrSeries()).find((s) => s.tvdbId === mapping.tvdb) : undefined;
   const rules = loadProfiles().anime;
-  const releases = matches.map(({ parsed, topic, release: r }): RuRelease => {
+  const all = matches.map(({ parsed, topic, release: r, origin }): RuRelease => {
     const voices = [...new Set([...parsed.voices, ...(topic?.voices ?? [])])];
     const kinds = [...new Set([...parsed.audio.kinds, ...(topic?.kinds ?? [])])];
-    // Оцениваем так же, как Sonarr увидит название от RU-индексатора
+    // Оцениваем так же, как Sonarr увидит название от RU-индексатора (оригинальные — без баллов: правила про русские)
     const forScore = sonarrTitle("X", { kind: "season", season: 1, from: 1, to: 1, full: true }, { ...parsed, audio: { ...parsed.audio, kinds } }, voices);
-    const { score, matched } = scoreTitle(forScore, rules);
+    const { score, matched } = origin === "ru" ? scoreTitle(forScore, rules) : { score: 0, matched: [] };
     return {
+      origin,
+      group: "group" in parsed ? parsed.group : null,
+      subs: "subs" in parsed ? parsed.subs : [],
       guid: r.guid,
       title: topic?.title ?? r.title,
       infoUrl: r.infoUrl ?? null,
@@ -141,8 +184,13 @@ export async function ruReleases(anilistId: number, opts: FindOpts = {}): Promis
       matched,
     };
   });
-  releases.sort((a, b) => b.score - a.score || b.seeders - a.seeders);
-  return { tvdbId: mapping?.tvdb ?? null, season: mapping?.season ?? null, inSonarr: Boolean(series), releases, pending };
+  const releases = all.filter((r) => r.origin === "ru").sort((a, b) => b.score - a.score || b.seeders - a.seeders);
+  // Оригинальные: сначала пачки серий (сезон целиком удобнее), потом качество и раздающие
+  const span = (r: RuRelease) => (r.episodes ? r.episodes.to - r.episodes.from + 1 : 99);
+  const res = (r: RuRelease) => Number(r.quality.match(/(\d{3,4})p/)?.[1] ?? 0);
+  const orig = all.filter((r) => r.origin === "orig")
+    .sort((a, b) => Number(span(b) > 1) - Number(span(a) > 1) || res(b) - res(a) || b.seeders - a.seeders);
+  return { tvdbId: mapping?.tvdb ?? null, season: mapping?.season ?? null, inSonarr: Boolean(series), releases, orig, pending };
 }
 
 // ---------------------------------------------------------------- отправка в Sonarr
@@ -213,7 +261,25 @@ const pluralRu = (n: number, one: string, few: string, many: string) => {
 };
 
 /** «Смотреть сейчас»: раздача в TorrServer, серии — в библиотеку Jellyfin «Стрим». */
-export async function streamRuRelease(anilistId: number, guid: string): Promise<{ ok: boolean; message: string }> {
+/**
+ * Субтитры из раздачи без просмотра её видео: TorrServer → только субтитры и шрифты (stream-subs.ts), сопоставление
+ * «серия тайтла → файл раздачи» — в release_subs; плеер покажет их у любой серии (библиотека или «Стрим»).
+ */
+export async function subsRuRelease(anilistId: number, guid: string): Promise<{ ok: boolean; message: string }> {
+  const { match, mapping } = await pick(anilistId, guid);
+  const series = (await sonarrSeries()).find((s) => s.tvdbId === mapping.tvdb);
+  const r = await releaseSubsTorrent({ anilistId, release: match.release, ref: await refFor(match, mapping, series?.id), title: match.release.title });
+  const m = await syncStreamSubs(r.hash);
+  const eps = Object.entries(r.episodes).filter(([, video]) => m?.subs.some((s) => s.video === video)).length;
+  if (!eps) return { ok: false, message: "В раздаче не нашлось субтитров к сериям этого тайтла" };
+  db.prepare(`INSERT INTO release_subs (anilist_id, hash, title, episodes, created_at) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT (anilist_id, hash) DO UPDATE SET episodes = excluded.episodes, created_at = excluded.created_at`)
+    .run(anilistId, r.hash, match.release.title, JSON.stringify(r.episodes), now());
+  const groups = [...new Set(m!.subs.map((s) => s.group ?? releaseTag(match.release.title) ?? "без подписи"))];
+  return { ok: true, message: `Субтитры (${groups.join(", ")}) — у ${pluralRu(eps, "серии", "серий", "серий")}; выберите их в плеере во вкладке «Субтитры»` };
+}
+
+export async function streamRuRelease(anilistId: number, guid: string): Promise<{ ok: boolean; message: string; hash?: string }> {
   const { match, mapping } = await pick(anilistId, guid);
   const details = await getDetails(anilistId);
   const series = (await sonarrSeries()).find((s) => s.tvdbId === mapping.tvdb);
@@ -228,7 +294,8 @@ export async function streamRuRelease(anilistId: number, guid: string): Promise<
   if (!result.episodes) return { ok: false, message: "Не удалось сопоставить файлы раздачи с сериями" };
   return {
     ok: true,
-    message: `Готово: ${pluralRu(result.episodes, "серия", "серии", "серий")} в Jellyfin → «Стрим»` +
+    hash: result.hash,
+    message: `Источник выбран: ${pluralRu(result.episodes, "серия", "серии", "серий")} для плеера` +
       (result.skipped ? ` (пропущено файлов: ${result.skipped})` : "") +
       ". Первая минута может грузиться дольше, пока торрент набирает скорость.",
   };
@@ -253,10 +320,11 @@ export async function grabRuRelease(anilistId: number, guid: string): Promise<{ 
   await monitorEpisodes(series.id, ref);
 
   const kinds = [...new Set([...parsed.audio.kinds, ...(topic?.kinds ?? [])])];
-  const title = sonarrTitle(series.title, ref, { ...parsed, audio: { ...parsed.audio, kinds } }, topic?.voices ?? []);
+  // Русская раздача — названием, как его строит RU-индексатор; оригинальная — как есть (такие Sonarr разбирает сам)
+  const title = match.origin === "ru" ? sonarrTitle(series.title, ref, { ...parsed, audio: { ...parsed.audio, kinds } }, topic?.voices ?? []) : r.title;
   const decisions = await sonarrPost<{ rejected?: boolean; rejections?: string[] }[] | { rejected?: boolean; rejections?: string[] }>(
     "/api/v3/release/push",
-    { title, downloadUrl: r.downloadUrl ?? r.magnetUrl, protocol: "torrent", publishDate: r.publishDate, size: r.size, indexer: INDEXER_NAME },
+    { title, downloadUrl: r.downloadUrl ?? r.magnetUrl, protocol: "torrent", publishDate: r.publishDate, size: r.size, indexer: match.origin === "ru" ? INDEXER_NAME : r.indexer },
   );
   const d = Array.isArray(decisions) ? decisions[0] : decisions;
   if (d?.rejected) return { ok: false, message: `Sonarr отказался: ${(d.rejections ?? []).join("; ")}` };

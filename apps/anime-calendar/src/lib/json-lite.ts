@@ -54,6 +54,8 @@ export function extractJson(text: string): unknown {
 function coerce(s: JsonSchema, v: unknown, path: string, errors: string[]): unknown {
   switch (s.type) {
     case "object": {
+      // Объект, завёрнутый в массив из одного элемента («[{…}]»), — тот же объект
+      if (Array.isArray(v) && v.length === 1) v = v[0];
       if (!v || typeof v !== "object" || Array.isArray(v)) {
         errors.push(`${path || "ответ"}: нужен объект`);
         return undefined;
@@ -75,7 +77,13 @@ function coerce(s: JsonSchema, v: unknown, path: string, errors: string[]): unkn
       const arr = Array.isArray(v) ? v : typeof v === "string" ? [v] : null;
       if (!arr) return undefined;
       // Неподходящие элементы выбрасываются, а не валят весь ответ
-      const items = arr.map((x, i) => (s.items ? coerce(s.items, x, `${path}${i}.`, []) : x)).filter((x) => x !== undefined);
+      // Элемент без обязательного поля (или с неверным) тоже неподходящий: иначе дальше уходит объект с дырой
+      const items = arr.map((x, i) => {
+        if (!s.items) return x;
+        const errs: string[] = [];
+        const c = coerce(s.items, x, `${path}${i}.`, errs);
+        return errs.length ? undefined : c;
+      }).filter((x) => x !== undefined);
       const capped = s.maxItems ? items.slice(0, s.maxItems) : items;
       if (s.minItems && capped.length < s.minItems) return undefined;
       return capped;
