@@ -94,11 +94,16 @@ HTTPS-сессия получает Secure/HttpOnly/SameSite=Lax cookie. `SESSIO
 - Это веха аккаунтов. Автоматизированный установщик и обновления продукта остаются
   последующими вехами. Пересмотр архитектуры модулей и аккаунтов standalone не включён.
 
-До финального исправления выбора медиапользователя: 585 тестов PostgreSQL,
-742 статических SQL-запроса; 16 native-тестов
-desktop. [CI R2](https://github.com/Valdemar58/home_theatre/actions/runs/44618307222)
+Финальный прогон: 589 тестов PostgreSQL, 741 статический SQL-запрос; 588 тестов
+SQLite (один предназначен только для PostgreSQL); 16 native-тестов
+desktop. [CI R2](https://github.com/Valdemar58/home_theatre/actions/runs/44620227727)
 проверяет сервер и desktop на Windows/Linux, сборку Next и историю на секреты.
 После последующих изменений обязательным остаётся последний CI конкретного коммита.
+
+Код слит через [PR #41](https://github.com/Valdemar58/home_theatre/pull/41),
+main `bb8ffb82adb4cbebfa99cf2bd1cd3820e58fd190`. Проверка GitHub Dependabot
+после слияния: **0 открытых предупреждений**. Задачи R2 переданы на проверку,
+их пользовательская приёмка ещё не выполнена. Рабочая установка 5056 не обновлена.
 
 Собраны Windows NSIS и Linux AppImage `0.5.0-rc.6`. Из обоих app.asar исключён ip.
 Для локальной упаковки повторно использована уже установленная Electron 45.3.3
