@@ -64,7 +64,7 @@ jobs:
     env:
       NEXT_TELEMETRY_DISABLED: '1'
       DATABASE_DRIVER: sqlite
-      DATA_DIR: ${{ runner.temp }}/calendar-ci
+      DATA_DIR: /tmp/calendar-ci
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
