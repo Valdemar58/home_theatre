@@ -1,4 +1,5 @@
 import "server-only";
+import { maintenanceActive, beginMaintenanceWork } from "./maintenance";
 import { EventEmitter } from "node:events";
 import { planUpscale, UPSCALE_MODELS, type UpscaleConfig } from "@/lib/upscale-plan";
 import { IMG_SIZES, isCacheable } from "@/lib/img";
@@ -128,10 +129,13 @@ export async function upscaleStatus(items: { url: string; size: UpSize }[]): Pro
 async function drain() {
   if (running) return;
   running = true;
+  const finish = beginMaintenanceWork("upscale");
   try {
     while (queue.length) {
+      if (maintenanceActive()) break;
       // Видеокарта одна: пока LLM считает рекомендации или анализ — ждём
-      while (llmBusy()) await new Promise((r) => setTimeout(r, 5000));
+      while (llmBusy() && !maintenanceActive()) await new Promise((r) => setTimeout(r, 1000));
+      if (maintenanceActive()) break;
       // Последний запрошенный — первым: это то, что пользователь смотрит прямо сейчас
       // (открыл тайтл после долгой прокрутки каталога — его постер не ждёт всю ленту)
       const key = queue.pop()!;
@@ -141,6 +145,7 @@ async function drain() {
     }
   } finally {
     running = false;
+    finish();
   }
 }
 

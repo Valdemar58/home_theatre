@@ -600,7 +600,8 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
     const t = setInterval(send, 10_000);
     const hide = () => send();
     window.addEventListener("pagehide", hide);
-    return () => { clearInterval(t); window.removeEventListener("pagehide", hide); };
+    window.addEventListener("server-maintenance", hide);
+    return () => { clearInterval(t); window.removeEventListener("pagehide", hide); window.removeEventListener("server-maintenance", hide); };
   }, [send]);
 
   // ---------------------------------------------------------------- управление

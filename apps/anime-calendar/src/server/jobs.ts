@@ -1,4 +1,6 @@
 import "server-only";
+import { beginMaintenanceWork, maintenanceActive } from "./maintenance";
+import { startMaintenanceLoop } from "./maintenance-loop";
 import { fetchRange, monthGrid } from "@/lib/schedule";
 import { getCalendar } from "./anilist";
 import { purgeExpired } from "./cache";
@@ -39,11 +41,13 @@ import {
 const MINUTE = 60_000;
 
 async function safe(name: string, fn: () => Promise<unknown>) {
+  if (maintenanceActive()) return;
+  const finish = beginMaintenanceWork("job:" + name);
   try {
     await fn();
   } catch (err) {
     console.warn(`[jobs] ${name}: ${String(err)}`);
-  }
+  } finally { finish(); }
 }
 
 /** Прогрев кэша: текущий и следующий месяц, чтобы календарь открывался мгновенно. */
@@ -60,6 +64,7 @@ async function prewarm() {
 let started = false;
 
 export function startJobs() {
+  startMaintenanceLoop();
   if (started || process.env.BACKGROUND_JOBS === "0") return;
   started = true;
   setInterval(

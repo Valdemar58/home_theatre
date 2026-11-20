@@ -13,7 +13,7 @@ import tarfile
 import tempfile
 
 FILES = ("installation.json", "server.env", "application.env", "compose.yml", "Caddyfile",
-         "profiles.toml", "modules.json", "home_theater.py", "home-theater", "server_backup.py")
+         "profiles.toml", "modules.json", "home_theater.py", "home-theater", "server_backup.py", "server_update.py")
 EXCLUDED = {"stream", "img-cache", "pages", "thumbs", "lnreader"}
 MEDIA = {".mkv", ".mp4", ".avi", ".mov", ".webm", ".m2ts", ".ts", ".mp3", ".flac", ".wav"}
 
@@ -182,13 +182,13 @@ def chown_tree(root):
             os.chown(Path(directory) / name, 1000, 1000)
 
 
-def restore_backup(installation, source):
+def restore_backup(installation, source, *, allow_active=False, safety_backup=True):
     # Сначала проверяем архив и совместимость; до этого никакие работающие данные не меняются.
     config = installation.config()
     manifest = verify_backup(source)
     if manifest["image"] != config["image"]:
         raise ValueError("Restore requires the same server image; install the recorded image before restoring")
-    if active_rooms(installation):
+    if not allow_active and active_rooms(installation):
         raise RuntimeError("Active rooms found; restore requires a maintenance window")
     with tempfile.TemporaryDirectory(prefix=".restore-", dir=installation.root) as temporary:
         stage = Path(temporary)
@@ -200,7 +200,8 @@ def restore_backup(installation, source):
         installation.compose("exec", "-T", "database", "createdb", "-U", "calendar", "-O", "calendar", new_database)
         binary_compose(installation, ["exec", "-T", "database", "pg_restore", "-U", "calendar", "-d", new_database,
                                      "--single-transaction", "--exit-on-error", "--no-owner", "--no-acl"], source=stage / "database.dump")
-        create_backup(installation, "pre-restore")
+        if safety_backup:
+            create_backup(installation, "pre-restore", allow_active=allow_active)
         old_application = (installation.root / "application.env").read_bytes()
         old_server = (installation.root / "server.env").read_bytes()
         (stage / "data/stream").mkdir(parents=True, exist_ok=True)

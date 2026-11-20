@@ -1,4 +1,5 @@
 import "server-only";
+import { maintenanceActive } from "./maintenance";
 import { groupAccess, requireGroupCapability } from "./group-policy";
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
@@ -75,6 +76,20 @@ function view(r: RoomRow, me: number): RoomView {
 /** Что-то поменялось — открытые страницы участников перечитают снимок. */
 const changed = (id: string) => roomEvents.emit(id);
 
+/** Persist the same pause for every viewer before the updater takes its snapshot. */
+export function pauseRoomsForMaintenance() {
+  const timestamp = Date.now();
+  const rows = db.prepare<[], RoomRow>("SELECT * FROM watch_rooms WHERE ended_at IS NULL").all();
+  for (const row of rows) {
+    const state = JSON.parse(row.state) as RoomState;
+    if (!state.playing && !state.hold.length && (!state.session || !state.session.autoplay)) continue;
+    clearHolds(row.id);
+    saveState(row.id, { ...state, playing: false, pos: positionAt(state, timestamp), at: timestamp, hold: [],
+      session: state.session ? { ...state.session, autoplay: false, deadline: null, revision: state.session.revision + 1 } : undefined });
+    changed(row.id);
+  }
+}
+
 function log(id: string, userId: number, kind: RoomActionKind, pos: number | null, ep?: number) {
   const l = liveOf(id);
   l.actions.push({ userId, kind, pos: pos === null ? null : Math.round(pos), ep, at: Date.now() });
@@ -114,6 +129,7 @@ function moveEpisode(r:RoomRow,state:RoomState,title:number,ep:number,session=st
 
 /** Server clock owns the countdown. Called by the job loop, not by the viewers. */
 export function roomSessionTick() {
+  if (maintenanceActive()) return;
   const rows = db.prepare<[], { id: string }>("SELECT r.id FROM watch_rooms r JOIN group_sessions s ON s.id = r.session_id WHERE s.status = 'live' AND r.ended_at IS NULL").all();
   for (const { id } of rows) {
     let updated = false;
@@ -198,6 +214,7 @@ export type RoomGroup = { id: number; sessionId?: number; preset: RoomPreset; co
 
 /** Создать комнату (прежние комнаты создателя по этому тайтлу заканчиваются) и позвать друзей (или группу). */
 export function createRoom(owner: { id: number; name: string }, anilistId: number, ep: number, ids: number[], pos = 0, playing = false, group?: RoomGroup): RoomView {
+  if (maintenanceActive()) throw new ApiError(503, "Обслуживание сервера: новые просмотры временно недоступны");
   if (group) {
     groupAccess(group.id, owner.id);
     const members = groupMembers(group.id);
@@ -235,6 +252,7 @@ export type RoomCommand = { expectedGeneration?:number; expectedTitle?:number; e
   | { action: "ep"; ep: number });
 
 export function roomCommand(user: { id: number; name: string }, id: string, c: RoomCommand): RoomView {
+  if (maintenanceActive()) throw new ApiError(503, "Обслуживание сервера: просмотр приостановлен");
   const result = db.transaction(() => {
     db.prepare("UPDATE watch_rooms SET state = state WHERE id = ?").run(id);
     return commandLocked(user, id, c);
@@ -381,6 +399,7 @@ function clearHolds(id: string) {
 
 /** Участник больше не грузится (или ждать его хватит) — убрать из ожидания; ждать больше некого — смотреть дальше. */
 function release(id: string, userId: number, kind: "resume" | "skip" = "resume") {
+  if (maintenanceActive()) return;
   const r = roomRow(id);
   if (!r) return;
   const s = JSON.parse(r.state) as RoomState;
