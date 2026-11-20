@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 import sys
-from unittest.mock import patch
+from unittest.mock import patch, Mock, call
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -17,6 +17,21 @@ PIN = "ghcr.io/example/product/server@sha256:" + "a" * 64
 
 
 class InstallerTests(unittest.TestCase):
+    def test_cached_immutable_images_do_not_require_registry_on_restart(self):
+        for images, cached, should_pull in ((PIN + "\n", True, False),
+                                             (PIN + "\n", False, True),
+                                             ("postgres:17-alpine\n", True, True)):
+            with self.subTest(images=images, cached=cached):
+                instance = installer.Installation("/tmp/synthetic-installation")
+                instance.config = Mock(return_value={"modules": []})
+                instance.render = Mock()
+                instance.compose = Mock(side_effect=lambda *args, **kwargs: images if args == ("config", "--images") else "")
+                instance.lock_images = Mock()
+                instance.doctor = Mock()
+                with patch.object(installer.subprocess, "run", return_value=SimpleNamespace(returncode=0 if cached else 1)):
+                    instance.up()
+                self.assertEqual(call("pull") in instance.compose.call_args_list, should_pull)
+
     def test_only_safe_origins(self):
         for value in ("https://test.example.org", "http://127.0.0.1:5056", "http://localhost:5057/"):
             self.assertEqual(installer.validate_origin(value), value.rstrip("/"))
@@ -40,10 +55,11 @@ class InstallerTests(unittest.TestCase):
         return SimpleNamespace(root=folder, image=None, origin=None, http_port=5056,
                                project="home-theater", modules="", bundle=str(ROOT / "deploy/server"), **kwargs)
 
+    @patch("server_backup.daily_schedule")
     @patch.object(installer.Installation, "up")
     @patch.object(installer, "docker_install")
     @patch.object(installer, "check_platform")
-    def test_reinstall_preserves_files_and_identity(self, platform, docker, up):
+    def test_reinstall_preserves_files_and_identity(self, platform, docker, up, schedule):
         with tempfile.TemporaryDirectory() as folder:
             state = {"schemaVersion": 1, "image": PIN, "origin": "http://127.0.0.1:5056",
                      "httpPort": 5056, "project": "home-theater", "modules": []}
@@ -54,6 +70,7 @@ class InstallerTests(unittest.TestCase):
             installer.install(self.args(folder))
             self.assertEqual({file.name: file.read_bytes() for file in Path(folder).iterdir()}, before)
             up.assert_called_once()
+            schedule.assert_called_once()
 
     @patch.object(installer, "check_platform")
     def test_reinstall_cannot_silently_change_image_or_origin(self, platform):

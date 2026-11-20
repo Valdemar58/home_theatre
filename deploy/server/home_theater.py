@@ -181,7 +181,14 @@ class Installation:
         config = self.config()
         self.render(config)
         self.compose("config", "--quiet")
-        self.compose("pull")
+        images = self.compose("config", "--images", capture=True).splitlines()
+        # После первой установки все образы закреплены digest. Повторный запуск
+        # использует проверенный локальный образ и не зависит от доступности registry.
+        cached = bool(images) and all("@sha256:" in image and subprocess.run(
+            ["docker", "image", "inspect", image], stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL).returncode == 0 for image in images)
+        if not cached:
+            self.compose("pull")
         self.lock_images(config)
         self.compose("up", "-d", "--wait", "--wait-timeout", "300", "--remove-orphans")
         if "search" in config["modules"]:
@@ -260,6 +267,8 @@ def install(args):
         print("Existing installation preserved; secrets, data and image unchanged")
         docker_install()
         installation.up()
+        from server_backup import daily_schedule
+        daily_schedule(installation)
         return
     if any(root.iterdir()):
         # Не перезаписываем чужую установку или незавершённый набор секретов.
