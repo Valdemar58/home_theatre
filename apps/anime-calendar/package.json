@@ -23,7 +23,7 @@
     "graphology-communities-louvain": "^2.0.2",
     "graphology-layout-forceatlas2": "^0.10.1",
     "hls.js": "1.7.3",
-    "htmlparser2": "^10.1.0",
+    "htmlparser2": "^12.0.0",
     "iron-session": "^9.0.1",
     "jassub": "1.8.8",
     "next": "^16.4.5",
