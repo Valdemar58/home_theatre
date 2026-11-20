@@ -13,6 +13,13 @@ import server_update as update
 
 
 class UpdateTests(unittest.TestCase):
+    def test_fractional_schedule_matches_systemd_and_retains_timezone(self):
+        timestamp = update.scheduled_at("2026-12-01T20:00:00.750+01:00")
+        self.assertEqual(timestamp.isoformat(), "2026-12-01T19:00:01+00:00")
+        self.assertEqual(timestamp.microsecond, 0)
+        with self.assertRaisesRegex(ValueError, "timezone"):
+            update.scheduled_at("2026-12-01T20:00:00")
+
     def fixture(self, root):
         instance = Mock(root=root)
         original = {"image": "old", "httpPort": 5056, "modules": []}
