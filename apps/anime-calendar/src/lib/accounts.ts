@@ -27,13 +27,15 @@ export type InviteState = "active" | "pending" | "used" | "expired" | "revoked";
 
 export type InviteView = {
   id: string;
-  /** Ссылка — только у действующего */
+  /** Полная ссылка возвращается при создании; списки содержат только доступность копирования. */
   link: string | null;
   note: string | null;
   /** Группа просмотра, куда позвать после одобрения */
   group: string | null;
   createdAt: number;
   expiresAt: number;
+  usedAt?: number | null;
+  canCopy?: boolean;
   state: InviteState;
   usedBy: Ref | null;
   inviter: Ref;
@@ -57,6 +59,9 @@ export type Account = {
   linked: boolean;
   lastLogin: number | null;
   invitedBy: Ref | null;
+  invitedAt?: number | null;
+  approvedBy?: Ref | null;
+  approvedAt?: number | null;
   createdAt: number;
   /** Доступ к библиотекам Jellyfin; null — учётки Jellyfin нет */
   libraries: boolean | null;
@@ -72,7 +77,7 @@ export type AccountsView = {
 export const INVITE_STATE_LABEL: Record<InviteState, string> = {
   active: "действует",
   pending: "ждёт одобрения",
-  used: "принято",
+  used: "использовано",
   expired: "истекло",
   revoked: "отозвано",
 };

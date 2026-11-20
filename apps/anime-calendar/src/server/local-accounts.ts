@@ -13,6 +13,7 @@ import type { User } from "./session";
 import type { AccountsView, InviteView } from "@/lib/accounts";
 import { requireGroupCapability } from "./group-policy";
 import { inviteToList } from "./together";
+import { sealInvitation, openInvitation } from "./invitation-secret";
 
 type Credential = {
   user_id: number;
@@ -26,6 +27,7 @@ type Credential = {
 type Token = {
   id: string;
   token_hash: string;
+  token_secret: string | null;
   purpose: "invite" | "reset" | "claim";
   user_id: number | null;
   issuer_id: number | null;
@@ -202,7 +204,7 @@ function useToken(t: Token, user: number) {
   if (
     !db
       .prepare(
-        "UPDATE account_tokens SET used_at=?,used_by=? WHERE id=? AND used_at IS NULL AND revoked=0 AND expires_at>?",
+        "UPDATE account_tokens SET used_at=?,used_by=?,token_secret=NULL WHERE id=? AND used_at IS NULL AND revoked=0 AND expires_at>?",
       )
       .run(now(), user, t.id, now()).changes
   )
@@ -391,7 +393,7 @@ export function issueToken(
         "UPDATE account_tokens SET revoked=1 WHERE user_id=? AND purpose=? AND used_at IS NULL",
       ).run(user, purpose);
     db.prepare(
-      "INSERT INTO account_tokens(id,token_hash,purpose,user_id,issuer_id,group_id,note,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO account_tokens(id,token_hash,purpose,user_id,issuer_id,group_id,note,created_at,expires_at,token_secret) VALUES(?,?,?,?,?,?,?,?,?,?)",
     ).run(
       id,
       tokenHash(raw),
@@ -402,6 +404,7 @@ export function issueToken(
       String(opts.note ?? "").slice(0, 120) || null,
       now(),
       now() + hours * 3600,
+      purpose === "invite" ? sealInvitation(raw, id) : null,
     );
     audit(user, actor.id, `${purpose}-issued`);
   })();
@@ -484,7 +487,7 @@ export function manage(actor: User, id: number, action: string) {
     }
     if (["block", "delete", "friend"].includes(action))
       db.prepare(
-        "UPDATE account_tokens SET revoked=1 WHERE (issuer_id=? OR user_id=?) AND used_at IS NULL",
+        "UPDATE account_tokens SET revoked=1,token_secret=NULL WHERE (issuer_id=? OR user_id=?) AND used_at IS NULL",
       ).run(id, id);
     db.prepare(
       "UPDATE local_accounts SET session_version=session_version+1 WHERE user_id=?",
@@ -494,6 +497,7 @@ export function manage(actor: User, id: number, action: string) {
   return { ok: true };
 }
 export function localInvites(user: number, all = false): InviteView[] {
+  db.prepare("UPDATE account_tokens SET token_secret=NULL WHERE purpose='invite' AND token_secret IS NOT NULL AND expires_at<=?").run(now());
   const rows = all
     ? db
         .prepare<
@@ -530,6 +534,8 @@ export function localInvites(user: number, all = false): InviteView[] {
       : null,
     createdAt: t.created_at,
     expiresAt: t.expires_at,
+    usedAt: t.used_at,
+    canCopy: !!t.token_secret && !t.revoked && t.used_at === null && t.expires_at > now(),
     state: t.revoked
       ? "revoked"
       : t.used_at !== null
@@ -541,10 +547,23 @@ export function localInvites(user: number, all = false): InviteView[] {
     inviter: ref(t.issuer_id) ?? { id: 0, name: "Администратор" },
   }));
 }
+export function copyInvitation(actor: User, id: string) {
+  requireAdmin(actor);
+  const t = db.prepare<[string, number], Token>("SELECT * FROM account_tokens WHERE id=? AND issuer_id=? AND purpose='invite'").get(id, actor.id);
+  if (!t) throw new ApiError(404, "Приглашение не найдено");
+  if (t.revoked || t.used_at !== null || t.expires_at <= now()) throw new ApiError(409, "Приглашение уже использовано, отозвано или истекло");
+  let raw: string;
+  try {
+    raw = openInvitation(t.token_secret || "", t.id);
+    if (tokenHash(raw) !== t.token_hash) throw new Error();
+  } catch { throw new ApiError(409, "Полная ссылка недоступна. Создайте новое приглашение."); }
+  audit(null, actor.id, "invite-copied");
+  return { link: `${env.publicUrl}/account/setup#token=${raw}` };
+}
 export function revokeInvitation(actor: User, id: string) {
   requireAdmin(actor);
   db.prepare(
-    "UPDATE account_tokens SET revoked=1 WHERE id=? AND purpose='invite'",
+    "UPDATE account_tokens SET revoked=1,token_secret=NULL WHERE id=? AND purpose='invite'",
   ).run(id);
   audit(null, actor.id, "invite-revoked");
 }
@@ -562,6 +581,9 @@ export function localAccountsView(): AccountsView & { local: true } {
       .filter((u) => credential(u.id)?.access !== "pending")
       .map((u) => {
         const c = credential(u.id);
+        const invitation = db.prepare<[number], {issuer_id:number|null;created_at:number}>("SELECT issuer_id,created_at FROM account_tokens WHERE purpose='invite' AND used_by=? AND used_at IS NOT NULL ORDER BY created_at,id LIMIT 1").get(u.id);
+        const approval = db.prepare<[number], {actor_id:number|null;created_at:number}>("SELECT actor_id,created_at FROM account_audit WHERE user_id=? AND action='approved' ORDER BY created_at,id LIMIT 1").get(u.id);
+        const person = (id:number|null|undefined) => id ? db.prepare<[number],{id:number;name:string}>("SELECT id,name FROM users WHERE id=?").get(id) ?? null : null;
         return {
           id: u.id,
           name: u.name,
@@ -570,7 +592,10 @@ export function localAccountsView(): AccountsView & { local: true } {
           blocked: !!u.blocked,
           linked: !!c,
           lastLogin: c?.last_login ?? null,
-          invitedBy: null,
+          invitedBy: person(invitation?.issuer_id ?? u.invited_by),
+          invitedAt: invitation?.created_at ?? null,
+          approvedBy: person(approval?.actor_id),
+          approvedAt: approval?.created_at ?? null,
           createdAt: u.created_at,
           libraries: null,
         };

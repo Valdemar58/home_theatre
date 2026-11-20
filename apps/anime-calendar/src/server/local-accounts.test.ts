@@ -19,6 +19,7 @@ process.env.DATABASE_DRIVER =
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "local-accounts-"));
 const { db } = await import("./db");
 const auth = await import("./local-accounts");
+const { env } = await import("./env");
 const { currentUser, authenticatedUser } = await import("./session");
 const { deviceByToken } = await import("./desktop");
 const { tokenHash } = await import("../../database/account-security.mjs");
@@ -27,6 +28,7 @@ const password = "a long synthetic password";
 const tokenOf = (link: string) =>
   new URL(link, "http://localhost").hash.split("=")[1];
 beforeEach(() => {
+  env.sessionSecret = "synthetic-test-invitation-secret-at-least-32-chars";
   vi.restoreAllMocks();
   session.userId = undefined;
   session.authVersion = undefined;
@@ -168,6 +170,49 @@ it("rejects expired/revoked invitations and invitations whose issuer lost admini
       }),
     ).rejects.toThrow();
   }
+});
+
+it("copies an active invite after reload without listing plaintext, rejects another issuer and binds encryption to the invitation", async () => {
+  const issued = auth.issueToken(owner, "invite", null, 24);
+  const other = await auth.register({login:"another-admin",name:"Other admin",password});
+  auth.decide(owner,other.id,true);auth.manage(owner,other.id,"admin");
+  const actor = db.prepare<[number],typeof owner>("SELECT * FROM users WHERE id=?").get(other.id)!;
+  expect(() => auth.copyInvitation(actor,issued.id)).toThrow("не найдено");
+  expect(auth.localInvites(owner.id)[0]).toMatchObject({link:null,canCopy:true,state:"active"});
+  expect(auth.copyInvitation(owner,issued.id).link).toBe(issued.link);
+  const stored = db.prepare<[string],{token_secret:string}>("SELECT token_secret FROM account_tokens WHERE id=?").get(issued.id)!;
+  expect(stored.token_secret).not.toContain(tokenOf(issued.link));
+  const second = auth.issueToken(owner,"invite",null,24);
+  db.prepare("UPDATE account_tokens SET token_secret=? WHERE id=?").run(stored.token_secret,second.id);
+  expect(() => auth.copyInvitation(owner,second.id)).toThrow("недоступна");
+  env.sessionSecret = "another-synthetic-test-key-at-least-32-characters";
+  expect(() => auth.copyInvitation(owner,issued.id)).toThrow("недоступна");
+});
+
+it("keeps used/expired/revoked statuses accurate and stops copying with recoverable secrets cleared", async () => {
+  for(const state of ["used","expired","revoked","legacy"]){
+    const issued=auth.issueToken(owner,"invite",null,24);
+    if(state==="used") await auth.register({login:"invite-used",name:"Invited",password,token:tokenOf(issued.link)});
+    if(state==="expired") db.prepare("UPDATE account_tokens SET expires_at=0 WHERE id=?").run(issued.id);
+    if(state==="revoked") auth.revokeInvitation(owner,issued.id);
+    if(state==="legacy") db.prepare("UPDATE account_tokens SET token_secret=NULL WHERE id=?").run(issued.id);
+    expect(auth.localInvites(owner.id).find(i=>i.id===issued.id)).toMatchObject({state:state==="legacy"?"active":state,canCopy:false,link:null});
+    expect(()=>auth.copyInvitation(owner,issued.id)).toThrow();
+    expect(db.prepare<[string],{token_secret:string|null}>("SELECT token_secret FROM account_tokens WHERE id=?").get(issued.id)?.token_secret).toBeNull();
+  }
+});
+
+it("shows who and when invited or approved an account without changing its provenance after blocking",async()=>{
+  const issued=auth.issueToken(owner,"invite",null,24);
+  db.prepare("UPDATE account_tokens SET created_at=123 WHERE id=?").run(issued.id);
+  const invited=await auth.register({login:"with-invitation",name:"Invited",password,token:tokenOf(issued.link)});
+  const pending=await auth.register({login:"manual-approval",name:"Approved",password});auth.decide(owner,pending.id,true);
+  const view=auth.localAccountsView();
+  expect(view.accounts.find(a=>a.id===invited.id)).toMatchObject({invitedBy:{id:owner.id,name:owner.name},invitedAt:123,approvedBy:null,approvedAt:null});
+  const approved=view.accounts.find(a=>a.id===pending.id)!;
+  expect(approved).toMatchObject({invitedBy:null,invitedAt:null,approvedBy:{id:owner.id,name:owner.name}});expect(approved.approvedAt).toBeGreaterThan(0);
+  auth.manage(owner,pending.id,"block");auth.manage(owner,pending.id,"unblock");
+  expect(auth.localAccountsView().accounts.find(a=>a.id===pending.id)?.approvedAt).toBe(approved.approvedAt);
 });
 it("does not consume an invite on invalid input or duplicate login", async () => {
   const link = auth.issueToken(owner, "invite", null, 1),
