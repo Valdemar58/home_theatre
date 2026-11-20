@@ -281,7 +281,8 @@ def install(args):
     if shutil.disk_usage(root).free < 4 * 1024**3:
         raise RuntimeError("At least 4 GiB free space required before installation")
     for name in required:
-        atomic(root / name, (bundle / name).read_text(), 0o700 if name == "home-theater" else 0o600)
+        mode = 0o700 if name == "home-theater" else (0o644 if name == "profiles.toml" else 0o600)
+        atomic(root / name, (bundle / name).read_text(), mode)
     (root / "data/stream").mkdir(mode=0o700, parents=True)
     os.chown(root / "data", 1000, 1000)
     os.chown(root / "data/stream", 1000, 1000)

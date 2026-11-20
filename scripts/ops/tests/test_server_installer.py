@@ -103,6 +103,25 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(result["project"], original["project"])
             up.assert_called_once()
 
+    @patch.object(installer.Installation, "up")
+    @patch.object(installer.os, "chown")
+    @patch.object(installer, "docker_install")
+    @patch.object(installer, "check_platform")
+    def test_fresh_install_has_private_secrets_and_readable_profiles(self, platform, docker, chown, up):
+        with tempfile.TemporaryDirectory() as folder, tempfile.TemporaryDirectory() as bundle:
+            for name in ("compose.yml", "Caddyfile", "modules.json", "home_theater.py", "home-theater", "profiles.toml"):
+                (Path(bundle) / name).write_text("fixture")
+            args = self.args(folder)
+            args.bundle, args.image = bundle, PIN
+            installer.install(args)
+            state = json.loads((Path(folder) / "installation.json").read_text())
+            self.assertEqual(state["image"], PIN)
+            self.assertEqual(state["modules"], [])
+            for name in ("server.env", "application.env", "installation.json"):
+                self.assertEqual((Path(folder) / name).stat().st_mode & 0o777, 0o600)
+            self.assertEqual((Path(folder) / "profiles.toml").stat().st_mode & 0o777, 0o644)
+            self.assertGreaterEqual(len(installer.read_env(Path(folder) / "application.env")["SESSION_SECRET"]), 32)
+
 
 if __name__ == "__main__":
     unittest.main()
