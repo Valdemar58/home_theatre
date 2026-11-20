@@ -28,6 +28,42 @@
 Проверка ключа хоста остаётся штатной SSH; неизвестный/изменившийся ключ не
 принимается автоматически. Имена, порты и роли — данные, не shell-команды.
 
+## Две учётные записи на одном сервере
+
+`ssh.accounts.root` и `ssh.accounts.admin` хранят имена пользователей, способы
+входа и ссылки на секреты. `ssh.activeAccount` выбирает повседневную учётную
+запись. Для совместимости плоские `ssh.user/authentication/identityFile/credentialFile`
+повторяют активную запись; при её переключении эти значения обновляются вместе.
+Адрес, порт и проверенный ключ хоста общие для обеих записей.
+
+Повседневный доступ — отдельный пользователь по ключу, административные действия
+через sudo с паролем. Root остаётся отдельной резервной учётной записью;
+сохранение её пароля не означает автоматического разрешения SSH-входа, если
+серверная политика его запрещает. `knownHostsFile` и `hostKeyFingerprint`
+фиксируют ключ, проверенный через независимую консоль провайдера.
+
+На Windows `credentialFile` может указывать на зашифрованный PSCredential CLIXML
+в `~/.config/home_theater/credentials`. В JSON секретов нет. DPAPI привязывает
+расшифровку к исходному Windows-пользователю и компьютеру: простого копирования
+этого файла на Arch или другой компьютер недостаточно. На Linux экспорт
+PSCredential в CLIXML не даёт шифрования — такой способ там не применяется.
+См. [документацию Microsoft](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/export-clixml#example-3-encrypt-an-exported-credential-object-on-windows).
+
+Получить PSCredential без печати пароля:
+
+```powershell
+.\scripts\ops\Get-InfrastructureCredential.ps1 -Server production -Account admin
+```
+
+Скопировать root-пароль для личного использования (без вывода в консоль):
+
+```powershell
+.\scripts\ops\Get-InfrastructureCredential.ps1 -Server production -Account root -CopyPassword
+```
+
+Параметр `-ConfigPath` позволяет явно выбрать иной файл. Скрипт ничего не меняет
+на сервере, не подключается к нему и не выводит расшифрованный пароль в логи.
+
 ## Роли и несколько серверов
 
 Один сервер может иметь несколько `roles` и несколько `services`. Например,
