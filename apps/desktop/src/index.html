@@ -17,25 +17,8 @@
           <h1>Локальная библиотека</h1>
           <p>Ваши серии и доступ к ним для комнат просмотра</p>
         </div>
-        <button id="web" class="quiet">Открыть home_theater</button>
+        <button id="web" class="quiet">Вернуться в приложение</button>
       </header>
-      <section id="connection">
-        <h2>Сервер home_theater</h2>
-        <form id="pair-form">
-          <label
-            >Адрес сервера<input
-              id="server"
-              type="url"
-              placeholder="https://cinema.example"
-              required /></label
-          ><button type="submit">Открыть home_theater</button>
-        </form>
-        <p>Войдите в аккаунт в окне приложения. Устройство можно подключить отдельно: Настройки → Мои устройства.</p>
-        <button id="link-device" class="quiet">Подключить устройство к аккаунту</button>
-        <p id="account" role="status"></p>
-        <p id="pair-code"></p>
-        <p id="storage-warning"></p>
-      </section>
       <p id="error" role="alert" hidden></p>
       <section>
         <div class="section-heading">
@@ -103,7 +86,7 @@
       </section>
       <footer>
         Разрешённые серии доступны участникам комнаты, пока приложение открыто.
-        Если прямое соединение недоступно, видео передаётся через сервер.
+        Для просмотра требуется прямое соединение с устройством.
       </footer>
     </main>
     <script src="renderer.js"></script>

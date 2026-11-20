@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ComputerDesktopIcon, ArrowDownTrayIcon } from "@heroicons/react/24/outline";
 import { api, useAnime } from "@/lib/client";
 import { StorageConnectDialog } from "./StorageConnectDialog";
+import { useCurrentDesktop } from "./CurrentDesktopDevice";
 import { useConfirm } from "./Dialogs";
 import { StorageMoveDialog } from "./StorageMoveDialog";
 import { Button, ErrorBox, cx } from "./ui";
@@ -44,13 +45,15 @@ export function DesktopDownloads({ title, titleName = "", episodeCount, watchEpi
   const devices = useQuery({ queryKey: ["desktop-devices"], queryFn: () => api<Device[]>("/api/desktop/devices"), refetchInterval: 5000 });
   const available = devices.data?.filter(d => !d.revoked) ?? [];
   const [chosen, choose] = useState("");
+  const currentDevice=useCurrentDesktop();
+  useEffect(()=>{if(currentDevice.data?.active&&currentDevice.data.id)choose(currentDevice.data.id);else if(currentDevice.data&&!new URLSearchParams(location.search).has('device'))choose('local-unlinked');},[currentDevice.data?.id,currentDevice.data?.active]);
   const [volume,setVolume]=useState("");
   const [selectedTitles,setSelectedTitles]=useState<Set<number>>(new Set());
   const [moveOpen,setMoveOpen]=useState(false);
   const [connectOpen,setConnectOpen]=useState(false);
   const confirm=useConfirm();
   useEffect(() => { const remembered = new URLSearchParams(window.location.search).get("device") || sessionStorage.getItem("home-theater-device"); if (remembered) choose(remembered); }, []);
-  const device = available.find(d => d.id === chosen) ?? available[0];
+  const device = available.find(d => d.id === chosen) ?? (currentDevice.desktop ? currentDevice.data?.active ? available.find(d=>d.id===currentDevice.data.id) : undefined : available[0]);
   const data = useQuery({ queryKey: ["desktop-downloads", device?.id], enabled: !!device, queryFn: () => api<Data>(`/api/desktop/downloads?device=${device!.id}`), refetchInterval: 2500 });
   const storage=data.data?.storage;
   const selectedVolume=storage?.volumes.find(v=>v.id===volume)??storage?.volumes.find(v=>v.default)??storage?.volumes[0];
@@ -97,10 +100,10 @@ export function DesktopDownloads({ title, titleName = "", episodeCount, watchEpi
 
   const pending = data.data?.commands.filter(c => c.state === "queued") ?? [];
   return <section className="space-y-5" aria-label="Загрузки на устройства">
-    <div className="flex flex-wrap items-start justify-between gap-4"><div hidden={compact}>{title&&<h2 className="text-xl font-semibold">{titleName}</h2>}</div>{device && <label className="flex min-w-0 max-w-full flex-col gap-1 text-sm"><span className="text-gray-400">Устройство</span><select className="max-w-full rounded-lg bg-gray-800 px-3 py-2 ring-1 ring-gray-600" value={device.id} onChange={e => { choose(e.target.value); setWatchRequested(false); sessionStorage.setItem("home-theater-device", e.target.value); }}>{available.map(d => <option key={d.id} value={d.id}>{d.label} · {d.online ? "подключён" : "не в сети"}</option>)}</select></label>}</div>
+    <div className="flex flex-wrap items-start justify-between gap-4"><div hidden={compact}>{title&&<h2 className="text-xl font-semibold">{titleName}</h2>}</div>{(device||currentDevice.desktop||available.length>0) && <label className="flex min-w-0 max-w-full flex-col gap-1 text-sm"><span className="text-gray-400">Устройство</span><select className="max-w-full rounded-lg bg-gray-800 px-3 py-2 ring-1 ring-gray-600" value={device?.id||"local-unlinked"} onChange={e => { choose(e.target.value); setWatchRequested(false); sessionStorage.setItem("home-theater-device", e.target.value); }}>{currentDevice.desktop&&!currentDevice.data?.active&&<option value="local-unlinked">Этот компьютер · не привязано</option>}{available.map(d => <option key={d.id} value={d.id}>{d.label}{d.id===currentDevice.data?.id?" · этот компьютер":""} · {d.online ? "подключён" : "не в сети"}</option>)}</select></label>}</div>
     {devices.isPending && <p role="status" className="text-sm text-gray-400">Загружаем устройства…</p>}
     {(devices.error || data.error || error) && <ErrorBox error={error || devices.error || data.error} />}
-    {!devices.isPending && !device && <div className="rounded-xl bg-gray-800/50 p-5"><h3 className="font-medium">Подключите домашний компьютер</h3><p className="mt-2 text-sm text-gray-400">Откройте desktop-приложение и привяжите его к своему аккаунту. После этого устройство появится здесь.</p><Link href="/devices" className="mt-3 inline-block text-sm text-indigo-300">Настройки аккаунта и устройств</Link></div>}
+    {!devices.isPending && !device && <div className="rounded-xl bg-gray-800/50 p-5"><h3 className="font-medium">Подключите домашний компьютер</h3><p className="mt-2 text-sm text-gray-400">{currentDevice.desktop?"Подключите этот компьютер к аккаунту кнопкой «Подключить» над страницей. Для другого компьютера выберите его в списке устройств.":"Откройте desktop-приложение и привяжите его к своему аккаунту. После этого устройство появится здесь."}</p><Link href="/devices" className="mt-3 inline-block text-sm text-indigo-300">Настройки аккаунта и устройств</Link></div>}
     {device && <>
       {!device.online && <p className="rounded-lg bg-gray-800/50 p-3 text-sm text-gray-300">Компьютер не в сети. Можно оставить задание; для загрузки приложение должно быть запущено.</p>}
       {!compact&&<StoragePanel activeTitle={activeTitle} titleOrder={downloadTitleIds(jobs,data.data?.library??[])} context={data.data?.context} storage={storage} online={device.online} selectedVolume={selectedVolume?.id} onVolumeChange={id=>{setVolume(id);setSelectedTitles(new Set());}} canAdd={hasVolumes&&device.online&&!busy} onAdd={()=>data.data?.capabilities.includes("storage-discovery-v1")?setConnectOpen(true):void call("storage-add")}/>}

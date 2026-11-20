@@ -113,23 +113,11 @@ async function refresh() {
     const s = await window.host.call("state");
     current = s;
     document.querySelector("#search-form button").disabled = !s.linked;
-    if (document.activeElement !== $("server") && !$("server").value)
-      $("server").value = s.server;
-    $("account").textContent = s.linked
-      ? "Устройство подключено к аккаунту"
-      : s.pair
-        ? "Подтвердите устройство в окне приложения"
-        : "Устройство не подключено. Вход в приложение доступен без привязки.";
-    $("pair-code").textContent = s.pair ? `Код устройства: ${s.pair.id}` : "";
-    $("storage-warning").textContent = s.persistent
-      ? ""
-      : "Системное хранилище ключей недоступно: после закрытия потребуется повторная привязка.";
     $("import-status").textContent =
       s.importProgress === null
         ? ""
         : `Проверка файла · ${Math.round(s.importProgress * 100)}%`;
     $("web").disabled = !s.server;
-    $("link-device").disabled = !s.server;
     if (s.networkError) {
       $("error").textContent = s.networkError;
       $("error").hidden = false;
@@ -147,11 +135,6 @@ async function refresh() {
     busy = false;
   }
 }
-$("pair-form").onsubmit = async (e) => {
-  e.preventDefault();
-  await call("connect", { server: $("server").value });
-};
-$("link-device").onclick = () => call("pair", { server: current.server });
 $("import-form").onsubmit = async (e) => {
   e.preventDefault();
   await call("import", {

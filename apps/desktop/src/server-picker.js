@@ -1,13 +1,15 @@
 export const escapeHtml=value=>String(value??"").replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 // Shared by the trusted title-bar popup and the first-run screen.
-export function serverPicker({profiles,active,onSelect,onAdd}){
+export function serverPicker({profiles,active,onSelect,onAdd,onDisconnect}){
   const panel=document.createElement("div");panel.className="r5-picker-panel";panel.setAttribute("role","menu");panel.setAttribute("aria-label","Серверы");
   const heading=document.createElement("p");heading.className="r5-picker-heading";heading.textContent="Ваши серверы";panel.append(heading);
   for(const p of profiles){const row=document.createElement("button");row.type="button";row.className="r5-server-row";row.setAttribute("role","menuitemradio");row.setAttribute("aria-checked",String(p.id===active));
     row.innerHTML=`<span class="r5-server-symbol" aria-hidden="true">${icon('server')}</span><span class="r5-server-copy"><strong>${escapeHtml(p.name)}</strong><small>${escapeHtml(new URL(p.origin).host)}</small></span>${p.id===active?icon('check'):''}`;row.onclick=()=>onSelect(p);panel.append(row);}
   const line=document.createElement("div");line.className="r5-picker-divider";panel.append(line);
-  const add=document.createElement("button");add.type="button";add.className="r5-server-row";add.setAttribute("role","menuitem");add.innerHTML=`${icon('plus')}<span class="r5-server-copy"><strong>Добавить сервер</strong><small>Подключиться по своему адресу</small></span>`;add.onclick=onAdd;panel.append(add);
-  panel.addEventListener("keydown",e=>{const buttons=[...panel.querySelectorAll("button")],i=buttons.indexOf(e.target.closest("button"));if(["ArrowDown","ArrowUp","Home","End"].includes(e.key)){e.preventDefault();buttons[e.key==='Home'?0:e.key==='End'?buttons.length-1:(i+(e.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length]?.focus();}});
+  const add=document.createElement("button");add.type="button";add.className="r5-server-row";add.setAttribute("role","menuitem");add.innerHTML=`<span class="r5-server-symbol">${icon('plus')}</span><span class="r5-server-copy"><strong>Добавить сервер</strong><small>Подключиться по своему адресу</small></span>`;add.onclick=onAdd;panel.append(add);
+  if(onDisconnect&&active){const disconnect=document.createElement('button');disconnect.type='button';disconnect.className='r5-disconnect';disconnect.setAttribute('role','menuitem');disconnect.textContent='Отключить сервер';disconnect.onclick=onDisconnect;panel.append(disconnect);}
+  panel.dataset.keyboard='false';panel.addEventListener('pointerdown',()=>{panel.dataset.keyboard='false';});
+  panel.addEventListener("keydown",e=>{panel.dataset.keyboard='true';const buttons=[...panel.querySelectorAll("button")],i=buttons.indexOf(e.target.closest("button"));if(["ArrowDown","ArrowUp","Home","End"].includes(e.key)){e.preventDefault();buttons[e.key==='Home'?0:e.key==='End'?buttons.length-1:(i+(e.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length]?.focus();}});
   return panel;
 }
 // Small, consistent local chrome icons; no network or third-party script loading.

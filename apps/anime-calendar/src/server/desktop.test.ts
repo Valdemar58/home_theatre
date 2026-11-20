@@ -93,6 +93,8 @@ it("rejects incompatible desktop protocols with an actionable update error", () 
 
 it("one installation retains identity across retries, revocation and account transfer",()=>{
  const key="c".repeat(64), a=h.installationBinding(1,key,"PC","win32","link");
+ expect(h.installationBinding(1,key,"PC","win32","status",a.token)).toMatchObject({id:a.id,status:"linked",tokenMatches:true});
+ expect(h.installationBinding(1,key,"PC","win32","status","f".repeat(64))).toMatchObject({id:a.id,status:"linked",tokenMatches:false});
  expect(a.token).toBeTruthy();
  expect(h.installationBinding(1,key,"PC","win32","link",a.token)).toMatchObject({id:a.id,status:"linked",alreadyLinked:true});
  expect(db.prepare("SELECT id FROM desktop_devices").all()).toHaveLength(1);

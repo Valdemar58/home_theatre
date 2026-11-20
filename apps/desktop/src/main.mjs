@@ -14,6 +14,7 @@ import { mkdir } from "node:fs/promises";
 import { join, basename, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { hostname } from "node:os";
+import { EmbeddedView } from "./embedded-view.mjs";
 import { installationKey } from "./device-identity.mjs";
 import { serverUrl } from "./server-url.mjs";
 import { allowAppFullscreen } from "./desktop-permissions.mjs";
@@ -26,8 +27,9 @@ import { StorageLocations } from "./storage-locations.mjs";
 import { detectVolumes } from "./volumes.mjs";
 import { Profiles, normalizeServerAddress } from "./profiles.mjs";
 import { product } from "./product.mjs";
-let profiles, pickerWindow, rtcWindow, switching=false, probeGeneration=0;
+let profiles, pickerWindow, rtcWindow, oauthView, switching=false, probeGeneration=0;
 let playbackActive=false;
+let lastHeartbeat=0;
 const profileSession = () => profiles?.partition() ? session.fromPartition(profiles.partition()) : session.defaultSession;
 let remoteDownloads, webWindow, quitting = false;
 let downloads;
@@ -112,8 +114,14 @@ async function accountBinding(action="status") {
     const dir=!app.isPackaged && process.env.HOME_THEATER_TEST_PROFILE ? app.getPath("userData") : join(app.getPath("appData"),"home_theater-device");
     const key=await installationKey(join(dir,"installation.key"));
     const r=await profileSession().fetch(config.server+"/api/desktop/binding",{method:"POST",headers:{"Content-Type":"application/json",Origin:config.server},body:JSON.stringify({action,key,label:hostname().slice(0,80),platform:process.platform,previousToken:token||undefined}),redirect:"error"});
-    const result=await r.json();
+    let result=await r.json();
     if(!r.ok)throw new Error(result.error||"Не удалось подключить устройство");
+    // Recover the credential for this installation; a hostname is never identity.
+    if(action==="status"&&result.status==="linked"&&result.tokenMatches===false&&config.approved&&secretAvailable()){
+      const recovery=await profileSession().fetch(config.server+"/api/desktop/binding",{method:"POST",headers:{"Content-Type":"application/json",Origin:config.server},body:JSON.stringify({action:"link",key,label:hostname().slice(0,80),platform:process.platform,previousToken:token||undefined}),redirect:"error"});
+      result=await recovery.json();if(!recovery.ok)throw Error(result.error||"Не удалось восстановить подключение");
+      if(result.token){token=result.token;config.approved=true;}
+    }
     if(action==="unlink") {
       // Stop the former account's host and pending local work before another account takes over.
       stopPreparation();
@@ -125,7 +133,9 @@ async function accountBinding(action="status") {
       if(result.token)token=result.token;
       pair=null;config.deviceId=result.id;config.approved=true;await save();await heartbeat();
     }
-    return {id:result.id,status:result.status,active:result.status==="linked" && !!token && !!config.approved,alreadyLinked:!!result.alreadyLinked};
+    if(result.status==="linked"&&result.id&&config.deviceId!==result.id){config.deviceId=result.id;await save();}
+    if(result.token&&action==="status"){await save();await heartbeat();}
+    return {id:result.id,label:hostname(),status:result.status,active:result.status==="linked" && !!token && !!config.approved,online:!!token&&Date.now()-lastHeartbeat<15000,error:networkError||null,alreadyLinked:!!result.alreadyLinked};
   } finally {bindingBusy=false;}
 }
 async function heartbeat() {
@@ -143,6 +153,7 @@ async function heartbeat() {
     rooms = r.rooms;
     grants = r.grants;
     networkError = "";
+    lastHeartbeat=Date.now();
   } catch (e) {
     networkError = e.message;
   } finally {
@@ -151,11 +162,9 @@ async function heartbeat() {
 }
 async function openApp(room, destination) {
   if (!config.server) throw new Error("Сначала укажите сервер");
-  if (webWindow && !webWindow.isDestroyed()) { webWindow.show(); webWindow.focus(); if (destination || room) await webWindow.loadURL(config.server + (destination || `/groups/${room}`)); window.hide(); return; }
-  webWindow = new BrowserWindow({ width: 1280, height: 860, minWidth: 360, minHeight: 500,
-    backgroundColor: "#111827", titleBarStyle: "hidden", titleBarOverlay: { color: "#111827", symbolColor: "#d1d5db", height: 40 },
-    autoHideMenuBar: true,
-    webPreferences: { session:profileSession(), sandbox: true, contextIsolation: true, nodeIntegration: false, preload: join(root,"chrome-preload.cjs") } });
+  if(window.webContents.getURL()==="hostapp://local/index.html")await window.loadURL("hostapp://local/loading.html");
+  if (webWindow && !webWindow.isDestroyed()) { webWindow.show(); webWindow.focus(); if (destination || room) await webWindow.loadURL(config.server + (destination || `/groups/${room}`)); return; }
+  webWindow = new EmbeddedView(window,{ session:profileSession(), sandbox:true, contextIsolation:true, nodeIntegration:false, preload:join(root,"chrome-preload.cjs") });
   webWindow.webContents.setWindowOpenHandler(({url}) => { if (new URL(url).protocol === "https:") void shell.openExternal(url); return { action: "deny" }; });
   const guard = (event, url) => { try { const u = new URL(url); if (u.protocol !== "https:" && u.origin !== config.server) event.preventDefault(); } catch { event.preventDefault(); } };
   webWindow.webContents.on("will-navigate", guard);
@@ -166,10 +175,10 @@ async function openApp(room, destination) {
   };
   const appMenu = Menu.buildFromTemplate([{ label: "home_theater", submenu: [
     { id: "desktop-back", label: "Назад", accelerator: "Alt+Left", enabled: false, click: goBack },
-    { label: "Локальные файлы и устройство", click: () => { window.show(); window.focus(); } },
-    { label: "Перезагрузить", role: "reload" }, { type: "separator" }, { label: "Завершить", click: () => window.close() },
+    { label: "Локальные файлы", click: () => { void setupAction("setup-local-library",{}); } },
+    { label: "Перезагрузить", accelerator:"CmdOrCtrl+R", click:()=>webWindow?.visible?webWindow.webContents.reload():window.webContents.reload() }, { type: "separator" }, { label: "Завершить", click: () => window.close() },
   ] }]);
-  webWindow.setMenu(appMenu);
+  window.setMenu(appMenu);
   webWindow.setMenuBarVisibility(false);
   const navigationState = () => {
     if (!webWindow || webWindow.isDestroyed()) return;
@@ -179,7 +188,8 @@ async function openApp(room, destination) {
   };
   for (const event of ["did-navigate", "did-navigate-in-page", "did-finish-load"])
     webWindow.webContents.on(event, navigationState);
-  webWindow.on("app-command", (_event, command) => { if (command === "browser-backward") goBack(); });
+  window.removeAllListeners("app-command");
+  window.on("app-command", (_event, command) => { if (command === "browser-backward") goBack(); });
   webWindow.webContents.on("before-input-event", (event, input) => {
     if (input.type === "keyDown" && input.key === "ArrowLeft" && input.alt && !input.control && !input.meta && !input.shift) {
       event.preventDefault();
@@ -200,8 +210,12 @@ async function openApp(room, destination) {
     if (webWindow && !webWindow.isDestroyed() && event.sender === webWindow.webContents && event.senderFrame === webWindow.webContents.mainFrame)
       void showPicker().catch(e=>{networkError=e.message;});
   });
+  ipcMain.removeAllListeners("desktop-dismiss-picker");
+  ipcMain.on("desktop-dismiss-picker",event=>{if(fromAppWindow(event)&&pickerWindow)void setupAction("setup-close-picker",{});});
   ipcMain.removeAllListeners("desktop-local-settings");
   ipcMain.on("desktop-local-settings",event=>{if(fromAppWindow(event))void setupAction("setup-device-settings",{});});
+  ipcMain.removeAllListeners("desktop-local-library");
+  ipcMain.on("desktop-local-library",event=>{if(fromAppWindow(event))void setupAction("setup-local-library",{});});
   for(const s of [profileSession()]){
     const allowed=(contents,permission,url,details)=>allowAppFullscreen({permission,ownWindow:contents===webWindow?.webContents,isMainFrame:details.isMainFrame,requestingUrl:url,server:config.server});
     s.setPermissionRequestHandler((contents,permission,callback,details)=>callback(allowed(contents,permission,details.requestingUrl,details)));
@@ -223,14 +237,13 @@ async function openApp(room, destination) {
     if(!isAppFrame(event))throw new Error("Недоступно");
     return accountBinding("unlink");
   });
-  webWindow.on("close", event => { if (!quitting) { event.preventDefault(); window.close(); } });
   try {
     await webWindow.loadURL(config.server + (destination || (room ? `/groups/${room}` : "/") + (config.deviceId ? `?desktopDevice=${encodeURIComponent(config.deviceId)}` : "")));
-    window.hide();
+    webWindow.show();webWindow.focus();
   } catch {
     webWindow.destroy(); webWindow = null;
     networkError = "Сервер недоступен. Локальная библиотека сохранена. Повторите открытие home_theater после восстановления связи.";
-    window.show();
+    await window.loadURL("hostapp://local/loading.html");window.show();
   }
 }
 function snapshot() {
@@ -256,9 +269,9 @@ async function addStorageLocation(volume) {
   if(!disk)throw new Error("Выберите доступный диск в разделе Загрузки");
   const registered=storageLocations.locations.find(l=>l.volumeId===disk.id);
   if(registered)return {id:registered.id,alreadyConnected:true};
-  const parent=webWindow&&!webWindow.isDestroyed()?webWindow:window;
-  parent?.show();
-  const result=await dialog.showOpenDialog(parent,{title:`Папка медиатеки на ${disk.label}`,defaultPath:disk.root,properties:["openDirectory","createDirectory"]});
+  const parent=window;
+  window.show();
+  const result=await dialog.showOpenDialog(window,{title:`Папка медиатеки на ${disk.label}`,defaultPath:disk.root,properties:["openDirectory","createDirectory"]});
   if(result.canceled)return {cancelled:true};
   const location=await storageLocations.add(result.filePaths[0],disk.id);
   if(remoteDownloads)remoteDownloads.storageAt=0;
@@ -398,7 +411,7 @@ async function loadLocalServices(){
 async function changeProfile(profile,confirm=false){
 
   if(switching)throw Error("Сервер уже переключается");
-  if(profile.id===profiles.active?.id)return {ok:true};
+  if((profile?.id??null)===(profiles.active?.id??null))return {ok:true};
   if(transport?.list().length)throw Error("Этот компьютер предоставляет видео комнате. Сначала завершите просмотр.");
   if(playbackActive)throw Error("Сначала приостановите просмотр, чтобы сменить сервер.");
   if(importing||metadataRequest||downloads?.preparing||library.files.some(f=>f.state==="preparing")||storageLocations?.progress||storageLocations?.recoveryError)throw Error("Дождитесь завершения подготовки, переноса или текущего задания");
@@ -415,9 +428,9 @@ async function changeProfile(profile,confirm=false){
     await save();await profileSession().cookies.flushStore();transport.stop();await downloads.close();await library.writes;
 
     if(webWindow&&!webWindow.isDestroyed()){webWindow.destroy();webWindow=null;}
-    profiles.data.activeId=profile.id;config={...profile.settings,server:profile.origin};
+    profiles.data.activeId=profile?.id??null;config=profile?{...profile.settings,server:profile.origin}:{};
 
-    token="";pair=null;rooms=[];grants=[];networkError="";
+    token="";pair=null;rooms=[];grants=[];networkError="";lastHeartbeat=0;
     if(config.approved&&config.secret&&secretAvailable()){try{token=safeStorage.decryptString(Buffer.from(config.secret,"base64"));}catch{networkError="Не удалось прочитать ключ устройства. Вход и файлы сохранены; подключите устройство в настройках.";}}
     await profiles.save();await loadLocalServices();if(rtcWindow&&!rtcWindow.isDestroyed())await rtcWindow.loadURL("hostapp://local/rtc.html");return {ok:true};
   }catch(error){
@@ -438,30 +451,29 @@ async function accountRequest(path,body){
 }
 async function showSetup(add=false){
   pickerWindow?.close();
-  if(add){profiles.data.draft={step:"server",adding:true};await profiles.save();}
-  await window.loadURL("hostapp://local/onboarding.html");window.show();window.focus();
+  if(add){profiles.data.draft={step:"server",adding:true,returnId:profiles.active?.id};await profiles.save();}
+  webWindow?.hide();await window.loadURL("hostapp://local/onboarding.html");window.show();window.focus();
 }
 function chromeState(state){
   // A child picker may close while its parent WebContents is already being destroyed.
   try{if(webWindow&&!webWindow.isDestroyed()){const contents=webWindow.webContents;if(!contents.isDestroyed())contents.send("desktop-picker-state",state);}}catch{/* The parent has finished closing; there is no UI to update. */}
 }
 async function showPicker(){
-  if(pickerWindow&&!pickerWindow.isDestroyed()){const previous=pickerWindow;pickerWindow=null;previous.close();return;}
-  const bounds=webWindow.getBounds();
-  pickerWindow=new BrowserWindow({show:false,width:355,height:300,x:bounds.x+10,y:bounds.y+40,frame:false,resizable:false,skipTaskbar:true,parent:webWindow,backgroundColor:"#111827",webPreferences:{preload:join(root,"preload.cjs"),sandbox:true,contextIsolation:true,nodeIntegration:false}});
-  pickerWindow.removeMenu();pickerWindow.webContents.setWindowOpenHandler(()=>({action:"deny"}));pickerWindow.webContents.on("will-navigate",e=>e.preventDefault());
-  const own=pickerWindow;let ready=false;
-  own.on("blur",()=>{if(ready)setTimeout(()=>{if(!own.isDestroyed()&&!own.isFocused())own.close();},100);});
-  own.on("closed",()=>{if(pickerWindow===own)pickerWindow=null;if(!pickerWindow)chromeState({open:false});});
-  await pickerWindow.loadURL("hostapp://local/onboarding.html?picker=1");
+  if(pickerWindow&&!pickerWindow.isDestroyed()){const previous=pickerWindow;pickerWindow=null;previous.close();chromeState({open:false});return;}
+  pickerWindow=new EmbeddedView(window,{preload:join(root,"preload.cjs"),sandbox:true,contextIsolation:true,nodeIntegration:false},(w,h)=>({x:10,y:40,width:Math.min(355,w-20),height:Math.min(profiles.list().length*66+180,h-50)}));
+  const own=pickerWindow;
+  own.webContents.once("destroyed",()=>{if(pickerWindow===own)pickerWindow=null;chromeState({open:false});});
+  own.webContents.setWindowOpenHandler(()=>({action:"deny"}));own.webContents.on("will-navigate",e=>e.preventDefault());
+  await own.loadURL("hostapp://local/onboarding.html?picker=1");
   if(own.isDestroyed()||pickerWindow!==own)return;
-  ready=true;own.show();own.focus();
+  own.show();own.focus();
   chromeState({open:true});
 }
 let checkedServer=null;
 async function setupAction(kind,data){
   if(kind==="setup-close-picker"){const previous=pickerWindow;pickerWindow=null;previous?.close();if(webWindow&&!webWindow.isDestroyed())webWindow.focus();chromeState({open:false,focus:true});return;}
-  if(kind==="setup-state")return {product,profiles:profiles.list(),active:profiles.active?.id,step:profiles.data.draft?.adding?"server":profiles.active?.wizard?.step||profiles.data.draft?.step||"welcome",adding:!!profiles.data.draft?.adding,linked:!!token,server:config.server,secureStorage:secretAvailable()};
+  if(kind==="setup-dialog-size"){pickerWindow?.setSize(data.compact?355:420,data.compact?profiles.list().length*66+180:420);return;}
+  if(kind==="setup-state")return {product,profiles:profiles.list(),active:profiles.active?.id,step:profiles.data.draft?.adding?profiles.data.draft.step:profiles.active?.wizard?.step||profiles.data.draft?.step||"welcome",adding:!!profiles.data.draft?.adding,linked:!!token,server:config.server,secureStorage:secretAvailable()};
   if(kind==="setup-step"){
     if(!["welcome","mode","server","auth","access","links","sync"].includes(data.step))throw Error("Неизвестный шаг");
     const target=profiles.data.draft?.adding?profiles.data.draft:profiles.active?(profiles.active.wizard??={}):profiles.data.draft;
@@ -482,16 +494,28 @@ async function setupAction(kind,data){
     const origin=normalizeServerAddress(data.address,{development:!app.isPackaged});
     if(!checkedServer||checkedServer.origin!==origin||Date.now()-checkedServer.at>300000)throw Error("Сначала проверьте этот сервер");
     const p=profiles.ensure(origin,String(data.name||checkedServer.name));const changed=await changeProfile(p,!!data.confirm);if(changed.needsPause)return changed;
-    profiles.data.draft={step:"welcome"};await profiles.save();
+    if(!profiles.data.draft?.adding)profiles.data.draft={step:"welcome"};await profiles.save();
     const user=await accountRequest("/api/auth/status");return {step:user?(user.access==="approved"?"links":"access"):"auth"};
   }
   if(kind==="profile-add"){await showSetup(true);return;}
+  if(kind==="setup-return"){
+    const target=profiles.data.profiles.find(p=>p.id===profiles.data.draft?.returnId);
+    if(target){const result=await changeProfile(target,!!data.confirm);if(result.needsPause)return result;}
+    profiles.data.draft={step:"welcome"};await profiles.save();return openApp();
+  }
+  if(kind==="profile-disconnect"){
+    const p=profiles.active,previousSession=profileSession();
+    const result=await changeProfile(null,!!data.confirm);if(result.needsPause)return result;
+    await previousSession.clearStorageData({storages:["cookies"]});
+    if(p)p.wizard={step:"welcome"};profiles.data.draft={step:"welcome"};await profiles.save();
+    await showSetup();return {ok:true};
+  }
   if(kind==="profile-select"){
 
     const p=profiles.data.profiles.find(p=>p.id===data.id);if(!p)throw Error("Сервер не найден");
     const previousId=profiles.active?.id;
     const result=await changeProfile(p,!!data.confirm);if(result.needsPause){pickerWindow?.setSize(Math.max(320,Math.min(420,webWindow.getContentBounds().width-20)),420);return result;}
-    pickerWindow?.close();if(p.wizard?.step==="done"){if(previousId!==p.id)await window.loadURL("hostapp://local/index.html");await openApp();}else await showSetup();return result;
+    pickerWindow?.close();if(p.wizard?.step==="done"){if(previousId!==p.id)await window.loadURL("hostapp://local/loading.html");await openApp();}else await showSetup();return result;
   }
   if(kind==="setup-auth"){
     await accountRequest(data.register?"/api/auth/register":"/api/auth/login",{login:data.login,name:data.login,password:data.password,...(data.invite?{token:invitationCode(data.invite)}:{})});
@@ -507,9 +531,11 @@ async function setupAction(kind,data){
   if(kind==="setup-shikimori")return linkShikimori();
   if(kind==="setup-finish"){
     const user=await accountRequest("/api/auth/status");if(user?.access!=="approved")throw Error("Доступ ещё не подтверждён");
-    profiles.active.wizard={step:"done"};await profiles.save();await window.loadURL("hostapp://local/index.html");await openApp();return;
+    profiles.active.wizard={step:"done"};profiles.data.draft={step:"welcome"};await profiles.save();await window.loadURL("hostapp://local/loading.html");await openApp();return;
   }
-  if(kind==="setup-device-settings"){pickerWindow?.close();await window.loadURL("hostapp://local/index.html");window.show();window.focus();return;}
+  if(kind==="setup-device-settings"){pickerWindow?.close();pickerWindow=null;await openApp(undefined,"/devices");return;}
+  if(kind==="setup-local-library"){pickerWindow?.close();pickerWindow=null;webWindow?.hide();await window.loadURL("hostapp://local/index.html");window.show();window.focus();return;}
+  if(kind==="setup-close-oauth"){oauthView?.close();return;}
   throw Error("Неизвестное действие настройки");
 }
 function invitationCode(value){try{const u=new URL(value);return new URLSearchParams(u.hash.slice(1)).get("token")||u.searchParams.get("token")||value;}catch{return String(value).trim();}}
@@ -517,11 +543,13 @@ async function linkShikimori(){
   const result=await accountRequest("/api/shikimori/authorize");
   if(result.oob)throw Error("Этот сервер использует ручное подключение Shikimori. Подключите его в настройках приложения.");
   const url=new URL(result.url);if(url.protocol!=="https:")throw Error("Небезопасный адрес авторизации");
-  const popup=new BrowserWindow({parent:window,width:820,height:780,modal:true,autoHideMenuBar:true,webPreferences:{session:profileSession(),sandbox:true,contextIsolation:true,nodeIntegration:false}});
+  const popup=new EmbeddedView(window,{session:profileSession(),sandbox:true,contextIsolation:true,nodeIntegration:false},(width,height)=>({x:0,y:48,width,height:height-48}));oauthView=popup;
   popup.webContents.setWindowOpenHandler(()=>({action:"deny"}));
   popup.webContents.on("did-navigate",(_e,address)=>{if(new URL(address).origin===config.server&&!new URL(address).pathname.startsWith("/api/shikimori/"))popup.close();});
-  const closed=new Promise(resolve=>popup.once("closed",resolve));
-  try{await popup.loadURL(url.toString());await closed;return await accountRequest("/api/me");}finally{if(!popup.isDestroyed())popup.close();}
+  const closed=new Promise(resolve=>popup.webContents.once("destroyed",resolve));
+  window.webContents.send("desktop-oauth",true);
+  popup.webContents.on("before-input-event",(_e,input)=>{if(input.type==="keyDown"&&input.key==="Escape")popup.close();});
+  try{await popup.loadURL(url.toString());popup.show();popup.focus();await closed;return await accountRequest("/api/me");}finally{if(!popup.isDestroyed())popup.close();oauthView=null;window.webContents.send("desktop-oauth",false);}
 }
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
@@ -548,7 +576,7 @@ else {
       await loadLocalServices();
       protocol.handle("hostapp", (req) => {
         const name = new URL(req.url).pathname.slice(1) || "index.html";
-        if (!["index.html", "renderer.js", "style.css", "stream-provider.js", "rtc.html", "onboarding.html", "onboarding.css", "onboarding.js", "server-picker.js", "product.mjs", "icon.png"].includes(name))
+        if (!["index.html", "renderer.js", "style.css", "stream-provider.js", "rtc.html", "onboarding.html", "onboarding.css", "onboarding.js", "server-picker.js", "product.mjs", "icon.png", "loading.html", "loading.css", "loading.js"].includes(name))
           return new Response("Not found", { status: 404 });
         return net.fetch(pathToFileURL(join(root, name)).toString());
       });
@@ -567,7 +595,7 @@ else {
         if (
           ![window?.webContents,pickerWindow?.webContents,rtcWindow?.webContents].includes(event.sender) ||
           event.senderFrame !== event.sender.mainFrame ||
-          !["hostapp://local/index.html","hostapp://local/onboarding.html","hostapp://local/rtc.html"].includes(event.senderFrame.url.split("?")[0]) ||
+          !["hostapp://local/index.html","hostapp://local/onboarding.html","hostapp://local/rtc.html","hostapp://local/loading.html"].includes(event.senderFrame.url.split("?")[0]) ||
           (event.sender===pickerWindow?.webContents&&!kind.startsWith("setup-")&&!kind.startsWith("profile-")) ||
           (event.sender===rtcWindow?.webContents&&!["streams","stream-read","stream-answer"].includes(kind))
         )
@@ -575,7 +603,8 @@ else {
         return action(kind, data);
       });
       window = new BrowserWindow({
-        width: 1140,
+        show:false,
+        width: 1280,
         height: 800,
         minWidth: 360,
         minHeight: 500,
@@ -591,14 +620,15 @@ else {
       window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
       window.webContents.on("will-navigate", (event) => event.preventDefault());
       window.on("closed", () => app.quit());
+      window.on("blur",()=>{if(pickerWindow)void setupAction("setup-close-picker",{});});
       window.removeMenu();
-      await window.loadURL("hostapp://local/index.html");
-      rtcWindow=new BrowserWindow({show:false,webPreferences:{preload:join(root,"preload.cjs"),sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}});
+      await window.loadURL("hostapp://local/loading.html");window.show();
+      rtcWindow=new EmbeddedView(window,{preload:join(root,"preload.cjs"),sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false});
       rtcWindow.webContents.setWindowOpenHandler(()=>({action:"deny"}));rtcWindow.webContents.on("will-navigate",event=>event.preventDefault());
       await rtcWindow.loadURL("hostapp://local/rtc.html");
       window.on("close", (event) => {
         if (importing || downloads.active.size || library.files.some((f) => f.state === "preparing")) {
-          const answer = dialog.showMessageBoxSync(webWindow && !webWindow.isDestroyed() ? webWindow : window, {
+          const answer = dialog.showMessageBoxSync(window, {
             type: "question",
             buttons: ["Остаться", "Завершить приложение"],
             defaultId: 0,
@@ -627,7 +657,8 @@ else {
           }
         } else if(!switching) { await heartbeat(); if (token && !bindingBusy) void remoteDownloads.tick().catch(e => { networkError = e.message; }); }
       }, 5000).unref();
-      await heartbeat();
+      // Associate a legacy token with the installation before displaying a device ID.
+      if(config.server&&token)void accountBinding("status").catch(()=>{}).then(heartbeat);
       if (config.server && profiles.active?.wizard?.step==="done") await openApp();
       else await showSetup();
     })
