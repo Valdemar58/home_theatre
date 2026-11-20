@@ -11,6 +11,7 @@ recyclarr/*
 apps/mapvec/wheels/*.whl
 
 # Local tooling, build caches and private visual verification material.
+/.local/
 .pnpm-store/
 .codex/
 .impeccable/hook.cache.json
