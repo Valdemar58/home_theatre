@@ -10,7 +10,7 @@ import {
   safeStorage,
   Menu,
 } from "electron";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { join, basename, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { hostname } from "node:os";
@@ -24,12 +24,18 @@ import { Downloads } from "./downloads.mjs";
 import { RemoteDownloads } from "./remote-downloads.mjs";
 import { StorageLocations } from "./storage-locations.mjs";
 import { detectVolumes } from "./volumes.mjs";
+import { Profiles, normalizeServerAddress } from "./profiles.mjs";
+import { product } from "./product.mjs";
+let profiles, pickerWindow, rtcWindow, switching=false, probeGeneration=0;
+let playbackActive=false;
+const profileSession = () => profiles?.partition() ? session.fromPartition(profiles.partition()) : session.defaultSession;
 let remoteDownloads, webWindow, quitting = false;
 let downloads;
 let storageLocations;
 let metadataRequest;
 let transport;
 const root = dirname(fileURLToPath(import.meta.url));
+const defaultMedia = () => config.downloadFolder || (!app.isPackaged&&process.env.HOME_THEATER_TEST_PROFILE?join(app.getPath("userData"),"media"):join(app.getPath("videos"),"home_theater"));
 // Isolated developer fixtures must not overwrite a user's real account/library.
 if (!app.isPackaged && process.env.HOME_THEATER_TEST_PROFILE) app.setPath("userData", process.env.HOME_THEATER_TEST_PROFILE);
 protocol.registerSchemesAsPrivileged([
@@ -54,22 +60,20 @@ const secretAvailable = () =>
   safeStorage.isEncryptionAvailable() &&
   (process.platform !== "linux" ||
     safeStorage.getSelectedStorageBackend() !== "basic_text");
-const configPath = () => join(app.getPath("userData"), "host.json");
 async function save() {
-  await writeFile(
-    configPath(),
-    JSON.stringify({
+  if (!profiles?.active) return;
+  profiles.active.settings={
       ...config,
       secret:
         token && secretAvailable()
           ? safeStorage.encryptString(token).toString("base64")
-          : undefined,
-    }),
-    { mode: 0o600 },
-  );
+          : config.approved ? config.secret : undefined,
+    };
+  await profiles.save();
 }
 async function request(path, body, auth = true, origin = config.server, signal) {
   const requestToken = token;
+  const requestProfile = profiles?.active?.id;
   // Use the same system proxy/PAC handling as the application window.
   const response = await net.fetch(origin + path, {
     credentials: "omit",
@@ -84,6 +88,7 @@ async function request(path, body, auth = true, origin = config.server, signal) 
     redirect: "error",
   });
   const result = await response.json().catch(() => ({}));
+  if(requestProfile!==profiles?.active?.id)throw Error("Профиль сервера изменился");
   if (!response.ok) {
     if (response.status === 401 && auth && token === requestToken) {
       networkError = "Устройство отключено. Привяжите аккаунт заново.";
@@ -100,14 +105,13 @@ async function request(path, body, auth = true, origin = config.server, signal) 
 }
 let bindingBusy=false;
 async function accountBinding(action="status") {
-  if(!webWindow || webWindow.isDestroyed())throw new Error("Откройте приложение и войдите в аккаунт");
   if(bindingBusy)throw new Error("Подключение уже выполняется");
   if(action==="unlink" && (remoteDownloads?.busy || sending))throw new Error("Дождитесь завершения текущего задания и повторите отвязку");
   bindingBusy=true;
   try {
     const dir=!app.isPackaged && process.env.HOME_THEATER_TEST_PROFILE ? app.getPath("userData") : join(app.getPath("appData"),"home_theater-device");
     const key=await installationKey(join(dir,"installation.key"));
-    const r=await webWindow.webContents.session.fetch(config.server+"/api/desktop/binding",{method:"POST",headers:{"Content-Type":"application/json",Origin:config.server},body:JSON.stringify({action,key,label:hostname().slice(0,80),platform:process.platform,previousToken:token||undefined}),redirect:"error"});
+    const r=await profileSession().fetch(config.server+"/api/desktop/binding",{method:"POST",headers:{"Content-Type":"application/json",Origin:config.server},body:JSON.stringify({action,key,label:hostname().slice(0,80),platform:process.platform,previousToken:token||undefined}),redirect:"error"});
     const result=await r.json();
     if(!r.ok)throw new Error(result.error||"Не удалось подключить устройство");
     if(action==="unlink") {
@@ -151,7 +155,7 @@ async function openApp(room, destination) {
   webWindow = new BrowserWindow({ width: 1280, height: 860, minWidth: 360, minHeight: 500,
     backgroundColor: "#111827", titleBarStyle: "hidden", titleBarOverlay: { color: "#111827", symbolColor: "#d1d5db", height: 40 },
     autoHideMenuBar: true,
-    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, preload: join(root,"chrome-preload.cjs") } });
+    webPreferences: { session:profileSession(), sandbox: true, contextIsolation: true, nodeIntegration: false, preload: join(root,"chrome-preload.cjs") } });
   webWindow.webContents.setWindowOpenHandler(({url}) => { if (new URL(url).protocol === "https:") void shell.openExternal(url); return { action: "deny" }; });
   const guard = (event, url) => { try { const u = new URL(url); if (u.protocol !== "https:" && u.origin !== config.server) event.preventDefault(); } catch { event.preventDefault(); } };
   webWindow.webContents.on("will-navigate", guard);
@@ -171,7 +175,7 @@ async function openApp(room, destination) {
     if (!webWindow || webWindow.isDestroyed()) return;
     const canGoBack = webWindow.webContents.navigationHistory.canGoBack();
     appMenu.getMenuItemById("desktop-back").enabled = canGoBack;
-    webWindow.webContents.send("desktop-navigation-state", { canGoBack });
+    webWindow.webContents.send("desktop-navigation-state", { canGoBack, server:new URL(config.server).host });
   };
   for (const event of ["did-navigate", "did-navigate-in-page", "did-finish-load"])
     webWindow.webContents.on(event, navigationState);
@@ -184,6 +188,9 @@ async function openApp(room, destination) {
   });
   const fromAppWindow = event => webWindow && !webWindow.isDestroyed() &&
     event.sender === webWindow.webContents && event.senderFrame === webWindow.webContents.mainFrame;
+  ipcMain.removeAllListeners("desktop-playback-state");
+  ipcMain.on("desktop-playback-state",(event,active)=>{if(fromAppWindow(event))playbackActive=active===true;});
+  webWindow.webContents.on("did-navigate",()=>{playbackActive=false;});
   ipcMain.removeAllListeners("desktop-go-back");
   ipcMain.on("desktop-go-back", event => { if (fromAppWindow(event)) goBack(); });
   ipcMain.removeAllListeners("desktop-navigation-ready");
@@ -191,8 +198,15 @@ async function openApp(room, destination) {
   ipcMain.removeAllListeners("desktop-menu");
   ipcMain.on("desktop-menu", event => {
     if (webWindow && !webWindow.isDestroyed() && event.sender === webWindow.webContents && event.senderFrame === webWindow.webContents.mainFrame)
-      appMenu.items[0].submenu.popup({window:webWindow,x:12,y:40});
+      void showPicker().catch(e=>{networkError=e.message;});
   });
+  ipcMain.removeAllListeners("desktop-local-settings");
+  ipcMain.on("desktop-local-settings",event=>{if(fromAppWindow(event))void setupAction("setup-device-settings",{});});
+  for(const s of [profileSession()]){
+    const allowed=(contents,permission,url,details)=>allowAppFullscreen({permission,ownWindow:contents===webWindow?.webContents,isMainFrame:details.isMainFrame,requestingUrl:url,server:config.server});
+    s.setPermissionRequestHandler((contents,permission,callback,details)=>callback(allowed(contents,permission,details.requestingUrl,details)));
+    s.setPermissionCheckHandler((contents,permission,origin,details)=>allowed(contents,permission,details.requestingUrl||origin,details));
+  }
   ipcMain.removeHandler("desktop-link-device");
   ipcMain.removeHandler("desktop-device-info");
   ipcMain.removeHandler("desktop-unlink-device");
@@ -251,18 +265,16 @@ async function addStorageLocation(volume) {
   return {id:location.id,label:location.label};
 }
 async function action(kind, data = {}) {
-  if (kind === "streams") return transport?.list() || [];
+  if(kind==="streams")return switching?[]:transport?.list()||[];
+  if (kind.startsWith("setup-") || kind.startsWith("profile-")) return setupAction(kind,data);
+  if(switching && kind!=="state")throw Error("Переключаем сервер. Повторите действие после подключения.");
   if (kind === "stream-read") return transport.read(String(data.lease), data.offset, data.length);
   if (kind === "stream-answer") return transport.answer(String(data.lease), data.answer, data.generation, data.negotiation);
   if (kind === "state") return snapshot();
   if (kind === "connect") {
-    const nextServer = serverUrl(data.server, { development: !app.isPackaged });
-    if (config.server && nextServer !== config.server && (token || pair)) throw new Error("Сначала отзовите доступ этого устройства на прежнем сервере.");
-    if (nextServer !== config.server && webWindow && !webWindow.isDestroyed()) { webWindow.destroy(); webWindow = null; }
-    config.server = nextServer;
-    await save();
-    await openApp();
-    return;
+    const origin=normalizeServerAddress(data.server,{development:!app.isPackaged});
+    if(origin===config.server)return openApp();
+    await showSetup(true);return;
   }
   if (["releases", "download-inspect"].includes(kind) && (!token || pair)) throw new Error("Сначала привяжите аккаунт");
   if (kind === "releases") return request("/api/desktop/releases", { query: String(data.query) });
@@ -369,6 +381,148 @@ async function action(kind, data = {}) {
   }
   throw new Error("Неизвестное действие");
 }
+async function loadLocalServices(){
+  const id=profiles.active?.id, directory=profiles.directoryFor();
+  library=new Library(join(directory,"library"));await library.load();
+  downloads=new Downloads(join(directory,"downloads"),library,async(...args)=>{await prepare(...args);await heartbeat();},{isInUse:file=>!!file&&!!transport?.list().some(s=>s.file===file),validateFolder:(folder,storage)=>storageLocations?.validateFolder(folder,storage)});
+  await downloads.load();
+  storageLocations=new StorageLocations(app.getPath("userData"),downloads,{detect:detectVolumes});
+  await storageLocations.load(defaultMedia());
+  remoteDownloads=new RemoteDownloads(downloads,body=>{
+    if(switching||profiles.active?.id!==id)throw Error("Профиль сервера не активен");
+    return request("/api/desktop/commands",body);
+  },join(directory,"remote-receipts.json"),()=>storageLocations.defaultId?storageLocations.root():null,{locations:storageLocations,addLocation:addStorageLocation});
+  await remoteDownloads.load();
+  transport=new HostTransport(library,()=>!switching&&profiles.active?.id===id?{server:config.server,token:pair?"":token}:{server:"",token:""},(url,options)=>net.fetch(url,options));transport.start();
+}
+async function changeProfile(profile,confirm=false){
+
+  if(switching)throw Error("Сервер уже переключается");
+  if(profile.id===profiles.active?.id)return {ok:true};
+  if(transport?.list().length)throw Error("Этот компьютер предоставляет видео комнате. Сначала завершите просмотр.");
+  if(playbackActive)throw Error("Сначала приостановите просмотр, чтобы сменить сервер.");
+  if(importing||metadataRequest||downloads?.preparing||library.files.some(f=>f.state==="preparing")||storageLocations?.progress||storageLocations?.recoveryError)throw Error("Дождитесь завершения подготовки, переноса или текущего задания");
+  if(switching)throw Error("Сервер уже переключается");
+  switching=true;let altered=false;const previous={id:profiles.data.activeId,config,token,hadWindow:!!webWindow&&!webWindow.isDestroyed()};
+  try{
+    const deadline=Date.now()+15000;
+    while(bindingBusy||sending||remoteDownloads?.busy||downloads?.busy){if(Date.now()>deadline)throw Error("Текущее задание ещё выполняется. Дождитесь его окончания и повторите переключение.");await new Promise(resolve=>setTimeout(resolve,50));}
+    if(downloads.preparing||library.files.some(f=>f.state==="preparing")||storageLocations.progress)throw Error("Дождитесь завершения подготовки или переноса");
+    if(downloads.active.size&&!confirm)return {needsPause:true};
+    altered=true;
+
+    for(const j of [...downloads.active.keys()])await downloads.pause(j);
+    await save();await profileSession().cookies.flushStore();transport.stop();await downloads.close();await library.writes;
+
+    if(webWindow&&!webWindow.isDestroyed()){webWindow.destroy();webWindow=null;}
+    profiles.data.activeId=profile.id;config={...profile.settings,server:profile.origin};
+
+    token="";pair=null;rooms=[];grants=[];networkError="";
+    if(config.approved&&config.secret&&secretAvailable()){try{token=safeStorage.decryptString(Buffer.from(config.secret,"base64"));}catch{networkError="Не удалось прочитать ключ устройства. Вход и файлы сохранены; подключите устройство в настройках.";}}
+    await profiles.save();await loadLocalServices();if(rtcWindow&&!rtcWindow.isDestroyed())await rtcWindow.loadURL("hostapp://local/rtc.html");return {ok:true};
+  }catch(error){
+    if(!altered)throw error;
+    transport?.stop();await downloads?.close().catch(()=>{});
+    profiles.data.activeId=previous.id;config=previous.config;token=previous.token;await profiles.save();await loadLocalServices();
+    if(previous.hadWindow)await openApp();throw error;
+  }finally{switching=false;}
+}
+async function accountRequest(path,body){
+  if(!config.server)throw Error("Сначала выберите сервер");
+  const origin=config.server,id=profiles.active.id;
+  const r=await profileSession().fetch(origin+path,{method:body?"POST":"GET",credentials:"include",headers:{Origin:origin,...(body?{"Content-Type":"application/json"}:{})},body:body?JSON.stringify(body):undefined,redirect:"error",signal:AbortSignal.timeout(path==="/api/shikimori/sync"?180000:20000)});
+  const result=await r.json().catch(()=>null);
+  if(id!==profiles.active.id)throw Error("Профиль изменился");
+  if(!r.ok)throw Error(result?.error||`Сервер вернул ошибку ${r.status}`);
+  return result;
+}
+async function showSetup(add=false){
+  pickerWindow?.close();
+  if(add){profiles.data.draft={step:"server",adding:true};await profiles.save();}
+  await window.loadURL("hostapp://local/onboarding.html");window.show();window.focus();
+}
+function chromeState(state){
+  // A child picker may close while its parent WebContents is already being destroyed.
+  try{if(webWindow&&!webWindow.isDestroyed()){const contents=webWindow.webContents;if(!contents.isDestroyed())contents.send("desktop-picker-state",state);}}catch{/* The parent has finished closing; there is no UI to update. */}
+}
+async function showPicker(){
+  if(pickerWindow&&!pickerWindow.isDestroyed()){const previous=pickerWindow;pickerWindow=null;previous.close();return;}
+  const bounds=webWindow.getBounds();
+  pickerWindow=new BrowserWindow({show:false,width:355,height:300,x:bounds.x+10,y:bounds.y+40,frame:false,resizable:false,skipTaskbar:true,parent:webWindow,backgroundColor:"#111827",webPreferences:{preload:join(root,"preload.cjs"),sandbox:true,contextIsolation:true,nodeIntegration:false}});
+  pickerWindow.removeMenu();pickerWindow.webContents.setWindowOpenHandler(()=>({action:"deny"}));pickerWindow.webContents.on("will-navigate",e=>e.preventDefault());
+  const own=pickerWindow;let ready=false;
+  own.on("blur",()=>{if(ready)setTimeout(()=>{if(!own.isDestroyed()&&!own.isFocused())own.close();},100);});
+  own.on("closed",()=>{if(pickerWindow===own)pickerWindow=null;if(!pickerWindow)chromeState({open:false});});
+  await pickerWindow.loadURL("hostapp://local/onboarding.html?picker=1");
+  if(own.isDestroyed()||pickerWindow!==own)return;
+  ready=true;own.show();own.focus();
+  chromeState({open:true});
+}
+let checkedServer=null;
+async function setupAction(kind,data){
+  if(kind==="setup-close-picker"){const previous=pickerWindow;pickerWindow=null;previous?.close();if(webWindow&&!webWindow.isDestroyed())webWindow.focus();chromeState({open:false,focus:true});return;}
+  if(kind==="setup-state")return {product,profiles:profiles.list(),active:profiles.active?.id,step:profiles.data.draft?.adding?"server":profiles.active?.wizard?.step||profiles.data.draft?.step||"welcome",adding:!!profiles.data.draft?.adding,linked:!!token,server:config.server,secureStorage:secretAvailable()};
+  if(kind==="setup-step"){
+    if(!["welcome","mode","server","auth","access","links","sync"].includes(data.step))throw Error("Неизвестный шаг");
+    const target=profiles.data.draft?.adding?profiles.data.draft:profiles.active?(profiles.active.wizard??={}):profiles.data.draft;
+    target.step=data.step;await profiles.save();return;
+  }
+  if(kind==="setup-probe"){
+    const own=++probeGeneration,origin=normalizeServerAddress(data.address,{development:!app.isPackaged});checkedServer=null;
+    let r;try{r=await net.fetch(origin+"/api/desktop/info",{credentials:"omit",redirect:"error",signal:AbortSignal.timeout(15000)});}catch{throw Error("Не удалось безопасно подключиться к серверу. Проверьте адрес, сертификат и соединение.");}
+    const info=await r.json().catch(()=>null);
+    if(own!==probeGeneration)throw Error("Адрес изменён; повторите проверку");
+    if(r.status>=500)throw Error(info?.maintenance?info.error:"Сервер временно недоступен. Повторите проверку позже.");
+    if(!r.ok||info?.service!=="home_theater")throw Error("Это другой сервис или сервер ещё не поддерживает подключение desktop");
+    if(info.desktopProtocol!==product.protocol)throw Error("Версия сервера не поддерживается. Требуется обновление сервера или приложения.");
+    checkedServer={origin,at:Date.now(),name:String(info.name||new URL(origin).host).slice(0,80)};return checkedServer;
+  }
+  if(kind==="setup-cancel-probe"){probeGeneration++;checkedServer=null;return;}
+  if(kind==="setup-connect"){
+    const origin=normalizeServerAddress(data.address,{development:!app.isPackaged});
+    if(!checkedServer||checkedServer.origin!==origin||Date.now()-checkedServer.at>300000)throw Error("Сначала проверьте этот сервер");
+    const p=profiles.ensure(origin,String(data.name||checkedServer.name));const changed=await changeProfile(p,!!data.confirm);if(changed.needsPause)return changed;
+    profiles.data.draft={step:"welcome"};await profiles.save();
+    const user=await accountRequest("/api/auth/status");return {step:user?(user.access==="approved"?"links":"access"):"auth"};
+  }
+  if(kind==="profile-add"){await showSetup(true);return;}
+  if(kind==="profile-select"){
+
+    const p=profiles.data.profiles.find(p=>p.id===data.id);if(!p)throw Error("Сервер не найден");
+    const previousId=profiles.active?.id;
+    const result=await changeProfile(p,!!data.confirm);if(result.needsPause){pickerWindow?.setSize(Math.max(320,Math.min(420,webWindow.getContentBounds().width-20)),420);return result;}
+    pickerWindow?.close();if(p.wizard?.step==="done"){if(previousId!==p.id)await window.loadURL("hostapp://local/index.html");await openApp();}else await showSetup();return result;
+  }
+  if(kind==="setup-auth"){
+    await accountRequest(data.register?"/api/auth/register":"/api/auth/login",{login:data.login,name:data.login,password:data.password,...(data.invite?{token:invitationCode(data.invite)}:{})});
+    await profileSession().cookies.flushStore();
+    return accountRequest("/api/auth/status");
+  }
+  if(kind==="setup-status")return accountRequest("/api/auth/status");
+  if(kind==="setup-invite")return accountRequest("/api/auth/invitation",{token:invitationCode(data.token)});
+  if(kind==="setup-binding")return accountBinding(data.link?"link":"status");
+  if(kind==="setup-me")return accountRequest("/api/me");
+  if(kind==="setup-lists")return accountRequest("/api/lists");
+  if(kind==="setup-import")return accountRequest("/api/shikimori/sync",{});
+  if(kind==="setup-shikimori")return linkShikimori();
+  if(kind==="setup-finish"){
+    const user=await accountRequest("/api/auth/status");if(user?.access!=="approved")throw Error("Доступ ещё не подтверждён");
+    profiles.active.wizard={step:"done"};await profiles.save();await window.loadURL("hostapp://local/index.html");await openApp();return;
+  }
+  if(kind==="setup-device-settings"){pickerWindow?.close();await window.loadURL("hostapp://local/index.html");window.show();window.focus();return;}
+  throw Error("Неизвестное действие настройки");
+}
+function invitationCode(value){try{const u=new URL(value);return new URLSearchParams(u.hash.slice(1)).get("token")||u.searchParams.get("token")||value;}catch{return String(value).trim();}}
+async function linkShikimori(){
+  const result=await accountRequest("/api/shikimori/authorize");
+  if(result.oob)throw Error("Этот сервер использует ручное подключение Shikimori. Подключите его в настройках приложения.");
+  const url=new URL(result.url);if(url.protocol!=="https:")throw Error("Небезопасный адрес авторизации");
+  const popup=new BrowserWindow({parent:window,width:820,height:780,modal:true,autoHideMenuBar:true,webPreferences:{session:profileSession(),sandbox:true,contextIsolation:true,nodeIntegration:false}});
+  popup.webContents.setWindowOpenHandler(()=>({action:"deny"}));
+  popup.webContents.on("did-navigate",(_e,address)=>{if(new URL(address).origin===config.server&&!new URL(address).pathname.startsWith("/api/shikimori/"))popup.close();});
+  const closed=new Promise(resolve=>popup.once("closed",resolve));
+  try{await popup.loadURL(url.toString());await closed;return await accountRequest("/api/me");}finally{if(!popup.isDestroyed())popup.close();}
+}
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on("second-instance", () => {
@@ -379,8 +533,9 @@ else {
     .whenReady()
     .then(async () => {
       await mkdir(app.getPath("userData"), { recursive: true });
+      profiles=new Profiles(app.getPath("userData"));await profiles.load();
       try {
-        config = JSON.parse(await readFile(configPath(), "utf8"));
+        config={...(profiles.active?.settings||profiles.data.legacySettings||{})};
         if (config.approved && config.secret && secretAvailable())
           token = safeStorage.decryptString(
             Buffer.from(config.secret, "base64"),
@@ -390,19 +545,10 @@ else {
           networkError =
             "Не удалось восстановить привязку. Подключите аккаунт заново.";
       }
-      library = new Library(join(app.getPath("userData"), "library"));
-      await library.load();
-      downloads = new Downloads(join(app.getPath("userData"), "downloads"), library, async (...args) => { await prepare(...args); await heartbeat(); }, {isInUse:id=>!!id && !!transport?.list().some(s=>s.file===id),validateFolder:(folder,id)=>storageLocations?.validateFolder(folder,id)});
-      await downloads.load();
-      storageLocations=new StorageLocations(app.getPath("userData"),downloads,{detect:detectVolumes});
-      await storageLocations.load(config.downloadFolder || join(app.getPath("videos"),"home_theater"));
-      remoteDownloads = new RemoteDownloads(downloads, body => request("/api/desktop/commands", body), join(app.getPath("userData"), "remote-receipts.json"), () => storageLocations.defaultId?storageLocations.root():null,{locations:storageLocations,addLocation:addStorageLocation});
-      await remoteDownloads.load();
-      transport = new HostTransport(library, () => ({ server: config.server, token: pair ? "" : token }), (url, options) => net.fetch(url, options));
-      transport.start();
+      await loadLocalServices();
       protocol.handle("hostapp", (req) => {
         const name = new URL(req.url).pathname.slice(1) || "index.html";
-        if (!["index.html", "renderer.js", "style.css", "stream-provider.js"].includes(name))
+        if (!["index.html", "renderer.js", "style.css", "stream-provider.js", "rtc.html", "onboarding.html", "onboarding.css", "onboarding.js", "server-picker.js", "product.mjs", "icon.png"].includes(name))
           return new Response("Not found", { status: 404 });
         return net.fetch(pathToFileURL(join(root, name)).toString());
       });
@@ -419,9 +565,11 @@ else {
         fullscreenAllowed(contents, permission, details.requestingUrl || origin, details));
       ipcMain.handle("host", async (event, kind, data) => {
         if (
-          event.sender !== window.webContents ||
-          event.senderFrame !== window.webContents.mainFrame ||
-          event.senderFrame.url !== "hostapp://local/index.html"
+          ![window?.webContents,pickerWindow?.webContents,rtcWindow?.webContents].includes(event.sender) ||
+          event.senderFrame !== event.sender.mainFrame ||
+          !["hostapp://local/index.html","hostapp://local/onboarding.html","hostapp://local/rtc.html"].includes(event.senderFrame.url.split("?")[0]) ||
+          (event.sender===pickerWindow?.webContents&&!kind.startsWith("setup-")&&!kind.startsWith("profile-")) ||
+          (event.sender===rtcWindow?.webContents&&!["streams","stream-read","stream-answer"].includes(kind))
         )
           throw new Error("Недоступно");
         return action(kind, data);
@@ -431,6 +579,7 @@ else {
         height: 800,
         minWidth: 360,
         minHeight: 500,
+        backgroundColor:"#111827",titleBarStyle:"hidden",titleBarOverlay:{color:"#111827",symbolColor:"#d1d5db",height:40},
         webPreferences: {
           preload: join(root, "preload.cjs"),
           sandbox: true,
@@ -444,6 +593,9 @@ else {
       window.on("closed", () => app.quit());
       window.removeMenu();
       await window.loadURL("hostapp://local/index.html");
+      rtcWindow=new BrowserWindow({show:false,webPreferences:{preload:join(root,"preload.cjs"),sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}});
+      rtcWindow.webContents.setWindowOpenHandler(()=>({action:"deny"}));rtcWindow.webContents.on("will-navigate",event=>event.preventDefault());
+      await rtcWindow.loadURL("hostapp://local/rtc.html");
       window.on("close", (event) => {
         if (importing || downloads.active.size || library.files.some((f) => f.state === "preparing")) {
           const answer = dialog.showMessageBoxSync(webWindow && !webWindow.isDestroyed() ? webWindow : window, {
@@ -473,10 +625,11 @@ else {
           } catch (e) {
             networkError = e.message;
           }
-        } else { await heartbeat(); if (token && !bindingBusy) void remoteDownloads.tick().catch(e => { networkError = e.message; }); }
+        } else if(!switching) { await heartbeat(); if (token && !bindingBusy) void remoteDownloads.tick().catch(e => { networkError = e.message; }); }
       }, 5000).unref();
       await heartbeat();
-      if (config.server) await openApp();
+      if (config.server && profiles.active?.wizard?.step==="done") await openApp();
+      else await showSetup();
     })
     .catch((e) => {
       dialog.showErrorBox("Не удалось запустить приложение", e.message);

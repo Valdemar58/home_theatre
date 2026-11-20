@@ -266,6 +266,20 @@ export async function register(input: Record<string, unknown>) {
     return identity(id);
   })();
 }
+/** A registered pending account can accept an invite without creating another identity. */
+export function acceptAccountInvitation(userId: number, token: unknown) {
+  return db.transaction(() => {
+    const c=credential(userId);
+    if(!c || c.access!=="pending")throw new ApiError(409,"Приглашение можно применить только к аккаунту, ожидающему доступ");
+    const invitation=tokenRow(token,"invite");
+    useToken(invitation,userId);
+    db.prepare("UPDATE local_accounts SET access='approved' WHERE user_id=?").run(userId);
+    db.prepare("UPDATE users SET blocked=0,invited_by=? WHERE id=?").run(invitation.issuer_id,userId);
+    if(invitation.issuer_id)db.prepare("INSERT INTO friendships(from_id,to_id,status,created_at) VALUES(?,?,'accepted',?) ON CONFLICT(from_id,to_id) DO UPDATE SET status='accepted'").run(invitation.issuer_id,userId,now());
+    if(invitation.group_id&&invitation.issuer_id){const issuer=db.prepare<[number],User>("SELECT * FROM users WHERE id=?").get(invitation.issuer_id);if(issuer)inviteToList(issuer,invitation.group_id,userId);}
+    audit(userId,userId,"pending-invited");return {ok:true,access:"approved"};
+  })();
+}
 export async function authenticate(login: unknown, password: unknown) {
   const key =
     typeof login === "string" ? login.toLowerCase().slice(0, 100) : "";
