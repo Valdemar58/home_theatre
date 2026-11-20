@@ -7,6 +7,7 @@ import { randomBytes } from "node:crypto";
 
 const DOMAIN = process.env.DUCKDNS_DOMAIN ?? "";
 const TOKEN = process.env.DUCKDNS_TOKEN ?? "";
+const ENABLED = process.env.DDNS_ENABLED !== "0";
 const EVERY = 5 * 60_000;
 const FORCE = 24 * 3600_000;
 // Российский STUN первым — иностранные могут резать
@@ -67,7 +68,10 @@ async function tick() {
   lastAt = Date.now();
 }
 
-if (!DOMAIN || !TOKEN) {
+if (!ENABLED) {
+  log("Обновление DuckDNS отключено (DDNS_ENABLED=0)");
+  setInterval(() => {}, 1 << 30);
+} else if (!DOMAIN || !TOKEN) {
   log("Нет DUCKDNS_DOMAIN или DUCKDNS_TOKEN в .env — нечего обновлять");
   setInterval(() => {}, 1 << 30);
 } else {
