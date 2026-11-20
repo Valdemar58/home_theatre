@@ -48,8 +48,8 @@ async function connect(confirm=false){state.busy=true;render();const result=awai
 async function switchProfile(p,confirm=false){const result=await call('profile-select',{id:p.id,confirm});if(result?.needsPause){pending=()=>switchProfile(p,true);renderDialog();}}
 async function checkAccess(){if(polling||state.step!=='access')return;polling=true;try{const user=await call('setup-status');if(!user)await go('auth');else if(user.access==='approved')await go('links');else{const changed=state.access!==user.access;state.access=user.access;if(changed)render();}}finally{polling=false;}}
 async function synchronize(skipImport=false){await go('sync');state.busy=true;state.syncRows=[];state.syncDone=false;state.optionalFailure=false;render();
- const operations=[['Аккаунт','setup-me'],['Списки и прогресс просмотра','setup-lists'],...(state.linked?[['Устройство','setup-binding']]:[]),...(!skipImport&&state.me?.shikimori?.linked?[['Импорт Shikimori','setup-import']]:[])];
- for(const[name,action]of operations){const row={name};state.syncRows.push(row);render();try{const result=await call(action);row.done=true;if(action==='setup-me')state.me=result;}catch(e){row.failed=true;state.error=e.message.replace(/^Error invoking remote method 'host': Error: /,'');state.optionalFailure=action==='setup-import';state.busy=false;render();return;}}
+ const operations=[['Аккаунт','setup-me'],['Списки и прогресс просмотра','setup-lists'],...(state.linked?[['Устройство','setup-binding']]:[])];
+ for(const[name,action]of operations){const row={name};state.syncRows.push(row);render();try{const result=await call(action);row.done=true;if(action==='setup-me'){state.me=result;if(!skipImport&&result?.shikimori?.linked)operations.push(['Импорт Shikimori','setup-import']);}}catch(e){row.failed=true;state.error=e.message.replace(/^Error invoking remote method 'host': Error: /,'');state.optionalFailure=action==='setup-import';state.busy=false;render();return;}}
  state.busy=false;state.syncDone=true;render();
 }
 root.addEventListener('click',e=>{const b=e.target.closest('[data-action]');if(!b||b.disabled)return;void run(async()=>{switch(b.dataset.action){

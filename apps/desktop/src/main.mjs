@@ -27,6 +27,7 @@ import { StorageLocations } from "./storage-locations.mjs";
 import { detectVolumes } from "./volumes.mjs";
 import { Profiles, normalizeServerAddress } from "./profiles.mjs";
 import { product } from "./product.mjs";
+import { onboardingEndpoints } from "./onboarding-endpoints.mjs";
 let profiles, pickerWindow, rtcWindow, oauthView, switching=false, probeGeneration=0;
 let playbackActive=false;
 let lastHeartbeat=0;
@@ -533,12 +534,9 @@ async function setupAction(kind,data){
     await profileSession().cookies.flushStore();
     return accountRequest("/api/auth/status");
   }
-  if(kind==="setup-status")return accountRequest("/api/auth/status");
+  if(Object.hasOwn(onboardingEndpoints,kind)){const endpoint=onboardingEndpoints[kind];return accountRequest(endpoint.path,endpoint.method==="POST"?{}:undefined);}
   if(kind==="setup-invite")return accountRequest("/api/auth/invitation",{token:invitationCode(data.token)});
   if(kind==="setup-binding")return accountBinding(data.link?"link":"status");
-  if(kind==="setup-me")return accountRequest("/api/me");
-  if(kind==="setup-lists")return accountRequest("/api/lists");
-  if(kind==="setup-import")return accountRequest("/api/shikimori/sync",{});
   if(kind==="setup-shikimori")return linkShikimori();
   if(kind==="setup-finish"){
     const user=await accountRequest("/api/auth/status");if(user?.access!=="approved")throw Error("Доступ ещё не подтверждён");
