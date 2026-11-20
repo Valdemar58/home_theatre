@@ -288,7 +288,7 @@ def install(args):
         raise ValueError("Supported optional modules: search,llm")
     if origin.startswith("https:"):
         modules.append("https")
-    required = ("compose.yml", "Caddyfile", "modules.json", "home_theater.py", "home-theater", "server_backup.py", "profiles.toml")
+    required = ("compose.yml", "Caddyfile", "modules.json", "home_theater.py", "home-theater", "server_backup.py", "server_update.py", "profiles.toml")
     for name in required:
         if not (bundle / name).is_file():
             raise ValueError(f"Incomplete installer bundle: {name}")
@@ -333,6 +333,13 @@ def main():
     commands.add_parser("up")
     commands.add_parser("doctor")
     commands.add_parser("owner-link")
+    commands.add_parser("cancel-update")
+    scheduled = commands.add_parser("schedule-update")
+    scheduled.add_argument("--bundle", required=True)
+    scheduled.add_argument("--at", required=True)
+    scheduled.add_argument("--window-minutes", type=int, default=10)
+    execute = commands.add_parser("update-run")
+    execute.add_argument("id")
     backup = commands.add_parser("backup")
     backup.add_argument("--reason", choices=["manual", "pre-update", "daily"], default="manual")
     commands.add_parser("daily-backup-install")
@@ -362,6 +369,15 @@ def main():
         installation = Installation(args.root)
         if args.command == "up":
             installation.up()
+        elif args.command == "schedule-update":
+            from server_update import schedule
+            schedule(installation, args.bundle, args.at, args.window_minutes)
+        elif args.command == "cancel-update":
+            from server_update import cancel
+            cancel(installation)
+        elif args.command == "update-run":
+            from server_update import execute
+            execute(installation, args.id)
         elif args.command == "doctor":
             installation.doctor()
         elif args.command == "module":

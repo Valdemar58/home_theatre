@@ -1,4 +1,5 @@
 import "server-only";
+import { maintenanceActive } from "./maintenance";
 import type { TaskInfo } from "@/lib/types";
 import { getDetails } from "./anilist";
 import { getCached, setCached } from "./cache";
@@ -134,6 +135,7 @@ function recover() {
  * Запустить задачу или присоединиться к идущей. auto/schedule со свежим результатом — ничего не делает (null).
  */
 export async function startTask(kind: string, key: string, opts: { userId?: number; origin: TaskOrigin; notify?: boolean }): Promise<TaskInfo | null> {
+  if (maintenanceActive()) throw new Error("Задачи временно недоступны: обслуживание сервера");
   recover();
   const h = HANDLERS[kind];
   if (!h) throw new Error(`неизвестная задача: ${kind}`);
@@ -221,6 +223,7 @@ async function drain(kind: string) {
   const queue = queueOf(kind);
   try {
     while (queue.length) {
+      if (maintenanceActive()) break;
       const id = queue.shift()!;
       const row = getRow(id);
       if (!row || row.status !== "queued") continue;
@@ -230,6 +233,9 @@ async function drain(kind: string) {
     running.delete(kind);
   }
 }
+
+export const runningMaintenanceTasks = () => controllers.size;
+export function resumeTaskQueues() { for (const kind of queues.keys()) void drain(kind); }
 
 async function runOne(row: Row) {
   const h = HANDLERS[row.kind];

@@ -1,4 +1,5 @@
 import "server-only";
+import { maintenanceActive, beginMaintenanceWork } from "../maintenance";
 import { gql } from "../anilist";
 import { db, now, stmt } from "../db";
 import { embed, embedAvailable, EMBED_MODEL, LLM_MODEL, taskAvailable, taskRoute } from "../llm";
@@ -400,8 +401,10 @@ export function enqueueProfiles(ids: number[], priority = false) {
 async function drain() {
   if (running) return;
   running = true;
+  const finish = beginMaintenanceWork("profiles");
   try {
     while (queue.length) {
+      if (maintenanceActive()) break;
       if (!(await taskAvailable("analysis"))) break; // ИИ ещё не готов — продолжим позже
       const id = queue.shift()!;
       queued.delete(id);
@@ -409,6 +412,7 @@ async function drain() {
     }
   } finally {
     running = false;
+    finish();
   }
 }
 

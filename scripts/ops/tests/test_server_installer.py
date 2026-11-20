@@ -129,7 +129,7 @@ class InstallerTests(unittest.TestCase):
     @patch.object(installer, "check_platform")
     def test_fresh_install_has_private_secrets_and_readable_profiles(self, platform, docker, chown, schedule, up):
         with tempfile.TemporaryDirectory() as folder, tempfile.TemporaryDirectory() as bundle:
-            for name in ("compose.yml", "Caddyfile", "modules.json", "home_theater.py", "home-theater", "server_backup.py", "profiles.toml"):
+            for name in ("compose.yml", "Caddyfile", "modules.json", "home_theater.py", "home-theater", "server_backup.py", "server_update.py", "profiles.toml"):
                 (Path(bundle) / name).write_text("fixture")
             args = self.args(folder)
             args.bundle, args.image = bundle, PIN
