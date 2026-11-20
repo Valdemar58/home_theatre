@@ -27,11 +27,14 @@ import { StorageLocations } from "./storage-locations.mjs";
 import { detectVolumes } from "./volumes.mjs";
 import { Profiles, normalizeServerAddress } from "./profiles.mjs";
 import { product } from "./product.mjs";
+import {StartupUpdates,releasePage} from "./updates.mjs";
+import {ElectronUpdates} from "./electron-updates.mjs";
 import { onboardingEndpoints } from "./onboarding-endpoints.mjs";
 let profiles, pickerWindow, rtcWindow, oauthView, switching=false, probeGeneration=0;
 let playbackActive=false;
 let lastHeartbeat=0;
-let chromeDrag={left:0,visible:false};
+let chromeDrag={left:16,visible:true};
+let startupUpdates,startupReady=false;
 function syncChromeDrag(){
   if(window&&!window.isDestroyed()&&window.webContents.getURL()==="hostapp://local/loading.html")window.webContents.send("desktop-chrome-drag",chromeDrag);
 }
@@ -166,6 +169,7 @@ async function heartbeat() {
   }
 }
 async function openApp(room, destination) {
+  startupUpdates?.publish({panel:false});
   if (!config.server) throw new Error("Сначала укажите сервер");
   if(window.webContents.getURL()==="hostapp://local/index.html")await window.loadURL("hostapp://local/loading.html");
   if (webWindow && !webWindow.isDestroyed()) { webWindow.show(); webWindow.focus(); if (destination || room) await webWindow.loadURL(config.server + (destination || `/groups/${room}`)); return; }
@@ -180,6 +184,7 @@ async function openApp(room, destination) {
   };
   const appMenu = Menu.buildFromTemplate([{ label: "home_theater", submenu: [
     { id: "desktop-back", label: "Назад", accelerator: "Alt+Left", enabled: false, click: goBack },
+    { label:"Обновления приложения",click:()=>{void setupAction("setup-updates-panel",{});} },
     { label: "Локальные файлы", click: () => { void setupAction("setup-local-library",{}); } },
     { label: "Перезагрузить", accelerator:"CmdOrCtrl+R", click:()=>webWindow?.visible?webWindow.webContents.reload():window.webContents.reload() }, { type: "separator" }, { label: "Завершить", click: () => window.close() },
   ] }]);
@@ -289,6 +294,7 @@ async function addStorageLocation(volume) {
   return {id:location.id,label:location.label};
 }
 async function action(kind, data = {}) {
+  if(!startupReady&&!['setup-update-state','setup-update-retry','setup-update-channel','setup-open-releases','setup-update-exit','setup-loading-ready'].includes(kind))throw Error("Сначала завершите обновление приложения");
   if(kind==="streams")return switching?[]:transport?.list()||[];
   if (kind.startsWith("setup-") || kind.startsWith("profile-")) return setupAction(kind,data);
   if(switching && kind!=="state")throw Error("Переключаем сервер. Повторите действие после подключения.");
@@ -471,7 +477,7 @@ function chromeState(state){
 }
 async function showPicker(){
   if(pickerWindow&&!pickerWindow.isDestroyed()){const previous=pickerWindow;pickerWindow=null;previous.close();chromeState({open:false});return;}
-  pickerWindow=new EmbeddedView(window,{preload:join(root,"preload.cjs"),sandbox:true,contextIsolation:true,nodeIntegration:false},(w,h)=>({x:10,y:40,width:Math.min(355,w-20),height:Math.min(profiles.list().length*66+180,h-50)}));
+  pickerWindow=new EmbeddedView(window,{preload:join(root,"preload.cjs"),sandbox:true,contextIsolation:true,nodeIntegration:false},(w,h)=>({x:10,y:40,width:Math.min(355,w-20),height:Math.min(profiles.list().length*66+216,h-50)}));
   const own=pickerWindow;
   own.webContents.once("destroyed",()=>{if(pickerWindow===own)pickerWindow=null;chromeState({open:false});});
   own.webContents.setWindowOpenHandler(()=>({action:"deny"}));own.webContents.on("will-navigate",e=>e.preventDefault());
@@ -482,9 +488,22 @@ async function showPicker(){
 }
 let checkedServer=null;
 async function setupAction(kind,data){
+  if(kind==="setup-update-state")return {...startupUpdates.snapshot(),networkError};
+  if(kind==="setup-update-retry"){if(startupUpdates.state.status!=="error")throw Error("Проверка уже выполняется");void startupUpdates.run({retry:true});return;}
+  if(kind==="setup-update-channel")return startupUpdates.channel(data.channel);
+  if(kind==="setup-open-releases")return shell.openExternal(releasePage);
+  if(kind==="setup-update-exit"){startupUpdates.cancel();app.quit();return;}
+  if(kind==="setup-updates-panel"){pickerWindow?.close();webWindow?.hide();startupUpdates.publish({panel:true});await window.loadURL("hostapp://local/loading.html");window.show();window.focus();return;}
+  if(kind==="setup-update-return")return profiles.active?.wizard?.step==="done"?openApp():showSetup();
+  if(kind==="setup-update-restart"){
+    if(transport?.list().length||playbackActive||importing||library?.files.some(f=>f.state==="preparing")||storageLocations?.progress)throw Error("Завершите просмотр, подготовку или перенос перед перезапуском");
+    if(bindingBusy||sending||remoteDownloads?.busy)throw Error("Текущее действие ещё выполняется. Повторите через несколько секунд.");
+    for(const id of [...downloads.active.keys()])await downloads.pause(id);
+    await save();await profileSession().cookies.flushStore();app.relaunch();app.quit();return;
+  }
   if(kind==="setup-close-picker"){const previous=pickerWindow;pickerWindow=null;previous?.close();if(webWindow&&!webWindow.isDestroyed())webWindow.focus();chromeState({open:false,focus:true});return;}
   if(kind==="setup-loading-ready"){syncChromeDrag();return;}
-  if(kind==="setup-dialog-size"){pickerWindow?.setSize(data.compact?355:420,data.compact?profiles.list().length*66+180:420);return;}
+  if(kind==="setup-dialog-size"){pickerWindow?.setSize(data.compact?355:420,data.compact?profiles.list().length*66+216:420);return;}
   if(kind==="setup-state")return {product,profiles:profiles.list(),active:profiles.active?.id,step:profiles.data.draft?.adding?profiles.data.draft.step:profiles.active?.wizard?.step||profiles.data.draft?.step||"welcome",adding:!!profiles.data.draft?.adding,linked:!!token,server:config.server,secureStorage:secretAvailable()};
   if(kind==="setup-step"){
     if(!["welcome","mode","server","auth","access","links","sync"].includes(data.step))throw Error("Неизвестный шаг");
@@ -571,19 +590,6 @@ else {
     .whenReady()
     .then(async () => {
       await mkdir(app.getPath("userData"), { recursive: true });
-      profiles=new Profiles(app.getPath("userData"));await profiles.load();
-      try {
-        config={...(profiles.active?.settings||profiles.data.legacySettings||{})};
-        if (config.approved && config.secret && secretAvailable())
-          token = safeStorage.decryptString(
-            Buffer.from(config.secret, "base64"),
-          );
-      } catch (e) {
-        if (e.code !== "ENOENT")
-          networkError =
-            "Не удалось восстановить привязку. Подключите аккаунт заново.";
-      }
-      await loadLocalServices();
       protocol.handle("hostapp", (req) => {
         const name = new URL(req.url).pathname.slice(1) || "index.html";
         if (!["index.html", "renderer.js", "style.css", "stream-provider.js", "rtc.html", "onboarding.html", "onboarding.css", "onboarding.js", "server-picker.js", "product.mjs", "icon.png", "loading.html", "loading.css", "loading.js"].includes(name))
@@ -633,7 +639,24 @@ else {
       window.on("closed", () => app.quit());
       window.on("blur",()=>{if(pickerWindow)void setupAction("setup-close-picker",{});});
       window.removeMenu();
+      startupUpdates=new StartupUpdates({directory:app.getPath("userData"),version:app.getVersion(),packaged:app.isPackaged,adapter:app.isPackaged?new ElectronUpdates():null});
+      startupUpdates.on("state",state=>{if(!quitting&&!window.isDestroyed()&&!window.webContents.isDestroyed()&&window.webContents.getURL()==="hostapp://local/loading.html")window.webContents.send("desktop-update-state",{...state,networkError});});
       await window.loadURL("hostapp://local/loading.html");window.show();
+      void startupUpdates.run();await startupUpdates.ready;
+      profiles=new Profiles(app.getPath("userData"));await profiles.load();
+      try {
+        config={...(profiles.active?.settings||profiles.data.legacySettings||{})};
+        if (config.approved && config.secret && secretAvailable())
+          token = safeStorage.decryptString(
+            Buffer.from(config.secret, "base64"),
+          );
+      } catch (e) {
+        if (e.code !== "ENOENT")
+          networkError =
+            "Не удалось восстановить привязку. Подключите аккаунт заново.";
+      }
+      await loadLocalServices();
+      startupReady=true;startupUpdates.markRuntimeReady();
       rtcWindow=new EmbeddedView(window,{preload:join(root,"preload.cjs"),sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false});
       rtcWindow.webContents.setWindowOpenHandler(()=>({action:"deny"}));rtcWindow.webContents.on("will-navigate",event=>event.preventDefault());
       await rtcWindow.loadURL("hostapp://local/rtc.html");
@@ -679,7 +702,7 @@ else {
     });
   let closing = false;
   app.on("before-quit", (event) => {
-    quitting = true;
+    quitting = true;startupUpdates?.cancel();
     if (closing || !downloads) return;
     closing = true; event.preventDefault(); metadataRequest?.abort(); transport?.stop(); stopPreparation();
     void downloads?.close().finally(() => app.quit());
