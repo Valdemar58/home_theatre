@@ -40,7 +40,7 @@ export class Downloads {
   }
   connect() {
     if (this.client) return;
-    const { isInUse, ...torrentOptions } = this.options;
+    const { isInUse, validateFolder, ...torrentOptions } = this.options;
     this.client = new WebTorrent({ utp: false, natUpnp: false, natPmp: false, lsd: false, webSeeds: false, maxConns: 30, ...torrentOptions });
     this.client.on("error", () => { for (const j of this.jobs) if (this.active.has(j.id)) { j.state = "error"; j.error = "Ошибка торрент-соединения. Приостановите загрузку и повторите."; } });
   }
@@ -87,7 +87,7 @@ export class Downloads {
   cancelMetadata() { this.metadataAbort?.abort(); }
   view(j) {
     const t = this.active.get(j.id);
-    return { id: j.id, title: j.title, titleName: j.titleName, releaseName: j.releaseName, state: j.state, error: j.error, folder: j.folder, autoPrepare: j.autoPrepare,
+    return { id: j.id, title: j.title, titleName: j.titleName, releaseName: j.releaseName, state: j.state, error: j.error, folder: j.folder, storageId:j.storageId, autoPrepare: j.autoPrepare,
       speed: t?.downloadSpeed || 0, peers: t?.numPeers || 0, files: j.files.map(f => {
         const selection = j.selected.find(s => s.index === f.index), lib = this.library.files.find(l => l.id === selection?.libraryId);
         return { ...f, selected: !!selection, episode: selection?.episode ?? f.episode, downloaded: t?.files[f.index]?.downloaded ?? selection?.downloaded ?? 0, libraryId: lib?.id, preparedBytes:lib?.preparedBytes||0, inUse:!!this.options.isInUse?.(lib?.id), prepareState: lib?.state, prepareProgress: lib?.progress || 0, error: selection?.error || lib?.error };
@@ -115,6 +115,7 @@ export class Downloads {
   async resume(id) { return this._resume(id); }
   async _resume(id) {
     const j = this.get(id);
+    if(j.folder)await this.options.validateFolder?.(j.folder,j.storageId);
     if(j.removing) throw new Error("Завершите удаление серии перед продолжением загрузки");
     if (this.active.has(id)) return;
     if (!["paused", "error"].includes(j.state) || !j.folder) throw new Error("Эту загрузку нельзя продолжить");
@@ -165,6 +166,7 @@ export class Downloads {
   async _removeEpisode(id,index) {
     const j=this.get(id), selection=j.selected.find(s=>s.index===index);
     if(!selection)return; // A repeated delivery after a lost acknowledgement is harmless.
+    await this.options.validateFolder?.(j.folder,j.storageId);
     if(j.removing && j.removing.index!==index)throw new Error("Сначала повторите незавершённое удаление");
     const f=j.files[index];if(!f || !j.folder)throw new Error("Файл серии не найден");
     await inspectTorrent(Buffer.from(j.torrent,"base64"));
@@ -199,7 +201,7 @@ export class Downloads {
           for (const s of j.selected) {
             const f = t.files[s.index]; s.downloaded = f.downloaded;
             if (f.progress === 1 && !s.libraryId && !s.error) {
-              try { const l = await this.library.add(path.join(j.folder, j.files[s.index].path), j.title, s.episode); l.titleName = j.titleName; s.libraryId = l.id; await this.library.save(); }
+              try { const l = await this.library.add(path.join(j.folder, j.files[s.index].path), j.title, s.episode); l.titleName = j.titleName; l.preparedDirectory=path.join(j.folder,".prepared"); s.libraryId = l.id; await this.library.save(); }
               catch (e) { s.error = e.message; }
             }
           }

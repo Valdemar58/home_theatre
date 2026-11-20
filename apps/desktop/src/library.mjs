@@ -127,7 +127,8 @@ export class Library {
     const f = this.files.find((x) => x.id === id);
     if (!f) return;
     if (f.state === "preparing") throw new Error("Дождитесь подготовки");
-    if (f.output === join(this.directory, "prepared", `${f.id}.mp4`))
+    if(f.state==="moving")throw new Error("Дождитесь переноса серии");
+    if (f.output === join(f.preparedDirectory || join(this.directory, "prepared"), `${f.id}.mp4`))
       await unlink(f.output).catch((e) => { if(e.code!=="ENOENT")throw e; });
     this.files = this.files.filter((x) => x.id !== id);
     await this.save();

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PlayIcon, ArrowRightIcon, ComputerDesktopIcon, CalendarDaysIcon } from "@heroicons/react/24/outline";
-import { api, useMe } from "@/lib/client";
+import { api } from "@/lib/client";
 import { displayTitle } from "@/lib/schedule";
 import { episodeLabel, sessionTimeline } from "@/lib/session-plan";
 import type { homeData } from "@/server/home";
@@ -53,7 +53,6 @@ export function HomeView() {
           {jobs.slice(0,3).map(job=>{const files=(job.files??[]).filter(f=>f.selected);const total=files.reduce((s,f)=>s+f.bytes,0);const downloaded=total ? Math.min(1,files.reduce((s,f)=>s+f.downloaded,0)/total) : 0;const prepared=files.length ? files.reduce((s,f)=>s+(f.prepareState==="ready"?1:Math.max(0,Math.min(1,f.prepareProgress??0))),0)/files.length : 0;return <Link key={job.id} href={`/downloads?device=${device.id}`} className="mt-4 block rounded-lg p-2 -mx-2 hover:bg-gray-800 focus-visible:outline-2 focus-visible:outline-accent-300"><div className="flex items-baseline justify-between gap-3 text-sm"><span className="min-w-0 truncate">{job.titleName}</span><span className="shrink-0 text-gray-400">{states[job.state] ?? job.state}</span></div><div role="progressbar" aria-label={`${job.titleName}: загрузка и подготовка`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(downloaded*80+prepared*20)} className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-gray-800"><div className="w-4/5"><div className="h-full bg-accent-400" style={{width:`${downloaded*100}%`}}/></div><div className="w-1/5"><div className="h-full bg-emerald-400" style={{width:`${prepared*100}%`}}/></div></div></Link>})}
           {jobs.length>3 && <Link className="mt-3 inline-block py-2 text-sm text-accent-300" href={`/downloads?device=${device.id}`}>Ещё {jobs.length-3} загрузок</Link>}
         </div>})}</div> : <div className="border-t border-gray-800 py-5"><p className="text-gray-300">Домашний компьютер ещё не подключён</p><p className="mt-2 text-sm text-gray-400">Привяжите desktop-приложение к аккаунту, чтобы отправлять загрузки из браузера.</p><Link href="/devices" className={`${quiet} mt-4`}>Подключить устройство</Link></div>}
-        <ServerDownloads />
       </section>
     </>}
   </div>;
@@ -63,19 +62,4 @@ function ContinueLink({item,devices,compact=false}:{item:Home["continuing"][numb
   useEffect(()=>{const remembered=sessionStorage.getItem("home-theater-device");setDevice(devices.some(d=>d.id===remembered) ? remembered! : "");},[devices]);
   return item.available ? <Link href={`/anime/${item.media.id}/watch/${item.ep}${device ? `?device=${encodeURIComponent(device)}` : ""}`} className={compact ? quiet : primary}><PlayIcon className="h-4 w-4"/>{compact ? "Смотреть" : "Продолжить"}</Link> : <Link href={`/anime/${item.media.id}`} className={quiet}>Ожидается</Link>;
 }
-
-function ServerDownloads() {
-  const {data:me}=useMe();
-  const q=useQuery({queryKey:["home-server-downloads"],enabled:Boolean(me?.isAdmin),queryFn:()=>api<{queue:import("@/server/downloads").QueueItem[];queueError:string|null}>("/api/downloads"),refetchInterval:60000});
-  if(!me?.isAdmin)return null;
-  return <div className="mt-5 border-t border-gray-800 pt-4"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-medium">Медиасервер</h3><Link href="/downloads" className="py-2 text-sm text-accent-300 hover:underline">Управлять</Link></div>
-    {q.isPending ? <p className="text-sm text-gray-400">Проверяем загрузки сервера…</p> : q.isError || q.data?.queueError ? <p className="text-sm text-gray-400">Не удалось получить очередь медиасервера.</p> : !q.data?.queue.length ? <p className="text-sm text-gray-400">Нет активных загрузок</p> : q.data.queue.slice(0,3).map(job=><Link key={job.id} href="/downloads" className="mt-3 block rounded-lg py-2 text-sm hover:text-accent-300"><span className="block truncate">{job.series || job.title}{job.episode ? ` · ${job.episode}` : ""}</span><span className="text-xs text-gray-400">{job.state}{job.problem ? " · требуется внимание" : ""}</span><progress aria-label={job.title} className="mt-2 block h-1.5 w-full accent-accent-400" max={1} value={job.size ? job.done/job.size : 0}/></Link>)}
-  </div>;
-}
-
-
-
-
-
-
 

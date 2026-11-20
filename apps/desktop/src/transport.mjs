@@ -14,11 +14,11 @@ export async function readMedia(library, stream, offset, length) {
   } finally { await fd.close(); }
 }
 export class HostTransport {
-  constructor(library, credentials) { this.library = library; this.credentials = credentials; this.streams = []; this.seen = 0; this.busy = false; this.stopped = false; }
+  constructor(library, credentials, fetcher=(url,options)=>fetch(url,options)) { this.library = library; this.credentials = credentials; this.fetcher=fetcher; this.streams = []; this.seen = 0; this.busy = false; this.stopped = false; }
   async request(path, options = {}) {
     const { server, token } = this.credentials();
     if (!server || !token) throw new Error("Устройство не привязано");
-    const r = await fetch(server + "/api/desktop/transport" + path, { ...options, headers: { ...options.headers, "X-Desktop-Protocol": "2", Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10000), redirect: "error" });
+    const r = await this.fetcher(server + "/api/desktop/transport" + path, { ...options, credentials:"omit", headers: { ...options.headers, "X-Desktop-Protocol": "2", Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10000), redirect: "error" });
     if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(b.error || `Транспорт: ${r.status}`); }
     if (this.credentials().token !== token) throw new Error("Привязка изменена");
     return r.json();
