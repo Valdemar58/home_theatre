@@ -4,7 +4,11 @@ The Downloads page and home summary show user devices only. Server disk capacity
 
 ## Storage
 
-A disk is connected by choosing a local directory in the desktop's native picker. The same action can be requested from the web; the picker opens on the selected computer. One registered directory per filesystem avoids counting the same capacity twice. Paths stay on the desktop; the server receives opaque storage IDs, drive labels, capacity and media usage. The selected disk filters managed downloads. A default disk controls future downloads, with explicit per-download target support.
+Connect a disk by first selecting a detected mounted filesystem volume, with its free/total capacity and existing-library status. Windows uses volume GUIDs; Linux uses filesystem UUIDs. Partitions on one physical drive count as separate volumes. The same action can be requested from the web; the folder picker opens on the selected computer, starting on the chosen volume. The native picker can navigate elsewhere, but a folder on another volume is rejected before registration. Discovery never mounts or unlocks disks.
+
+Only one library is registered per volume. Selecting an already registered volume opens that library, without another picker or another capacity bar. Its folder stays fixed while nonempty. An empty library can be disconnected and connected again with a different folder; disconnect does not delete files. The disconnected state survives restart. A registered volume disappearing or being replaced at its old path prevents writes; relocation to a new mount point is not automated in this version.
+
+Paths stay on the desktop; the server receives opaque storage IDs, folder basenames, drive labels, capacity and media usage. The selected disk filters managed downloads. A user-selected default disk controls future downloads, with explicit per-download target support. Failure to discover volumes is reported and can be retried; it does not silently bind another volume.
 
 Prepared copies of new managed downloads live beside their originals, not in the Electron profile. Existing prepared copies are included when moving the season. Imported originals remain outside managed moves.
 
@@ -18,7 +22,7 @@ Commands and receipts persist across reconnects. Already completed moves and pre
 
 ## Verification
 
-- Native tests: real torrent/magnet transfers, real FFmpeg, storage identity, move/recovery, collision protection, playback protection, receipt replay and reporting while busy.
+- Native tests: real torrent/magnet transfers, real FFmpeg, stable volume identity, duplicate/folder-change protection, empty disconnect/reconnect, move/recovery, collision protection, playback protection, receipt replay and reporting while busy.
 - Move tests also run between actual Windows C: and D: drives using disposable data.
 - Linux native tests and Windows/Linux packaging; actual Arch GUI remains preview.
 - Live verification uses a real movie downloaded to desktop storage. No media download is initiated on the server by this verification.

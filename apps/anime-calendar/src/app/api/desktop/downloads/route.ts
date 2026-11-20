@@ -10,12 +10,17 @@ export const POST = authed(async (req, user) => {
   if (text.length > 50000) throw new ApiError(413, "Слишком большой запрос");
   const b = JSON.parse(text), device = String(b.device);
   ownedDevice(user.id, device);
-  if(["storage-add","storage-recover","storage-default","move-titles"].includes(b.action)) {
+  if(["storage-add","storage-scan","storage-disconnect","storage-recover","storage-default","move-titles"].includes(b.action)) {
     const snapshot=deviceDownloads(user.id,device);
     if(!snapshot.capabilities?.includes("storage-volumes-v1"))throw new ApiError(409,"Обновите desktop для управления дисками");
-    if(["storage-add","storage-recover"].includes(b.action))return json(enqueue(user.id,device,b.action,{}));
+    if(b.action==="storage-add") {
+      if(snapshot.capabilities.includes("storage-discovery-v1")&&(typeof b.volume!=="string"||!snapshot.storage?.available?.some((v:{id:string})=>v.id===b.volume)))throw new ApiError(400,"Выберите обнаруженный том");
+      return json(enqueue(user.id,device,b.action,{volume:b.volume}));
+    }
+    if(["storage-scan","storage-recover"].includes(b.action))return json(enqueue(user.id,device,b.action,{}));
     if(typeof b.target!=="string"||!snapshot.storage?.volumes?.some((v:{targetId?:string})=>v.targetId===b.target))throw new ApiError(400,"Выберите подключённый диск");
     if(b.action==="storage-default")return json(enqueue(user.id,device,b.action,{target:b.target}));
+    if(b.action==="storage-disconnect")return json(enqueue(user.id,device,b.action,{target:b.target}));
     if(!Array.isArray(b.titles)||!b.titles.length||b.titles.length>100||b.titles.some((id:number)=>!Number.isSafeInteger(id)||id<1)||new Set(b.titles).size!==b.titles.length)throw new ApiError(400,"Выберите сезоны для переноса");
     const titles=b.titles.map((id:number)=>({title:id,episodes:getMedia(id)?.episodes??0}));
     if(titles.some((t:{episodes:number})=>!t.episodes))throw new ApiError(409,"Количество серий сезона пока неизвестно");

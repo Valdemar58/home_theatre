@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { mkdir, readFile, writeFile, rename, realpath, stat, statfs, lstat, readdir, copyFile, unlink, rmdir } from "node:fs/promises";
 import path from "node:path";
 import { identifyFile } from "./file-identity.mjs";
+import { volumeFor } from "./volumes.mjs";
 
 const inside=(root,file)=>path.resolve(file).startsWith(path.resolve(root)+path.sep);
 async function noLinks(file) {
@@ -31,16 +32,23 @@ async function tree(root) {
 
 /** Registered roots stay on the device. The web only receives opaque IDs and drive labels. */
 export class StorageLocations {
-  constructor(directory,downloads) {
+  constructor(directory,downloads,{detect=async()=>[]}={}) {
     this.directory=directory;this.downloads=downloads;this.locations=[];this.defaultId="";this.progress=null;
     this.file=path.join(directory,"storage-locations.json");this.journal=path.join(directory,"storage-move.json");
+    this.detect=detect;this.detected=[];this.detectedAt=0;
   }
   async load(defaultFolder) {
     await mkdir(this.directory,{recursive:true});
-    try {const value=JSON.parse(await readFile(this.file,"utf8"));this.locations=value.locations;this.defaultId=value.defaultId;}
+    let initialized=false;
+    try {const value=JSON.parse(await readFile(this.file,"utf8"));this.locations=value.locations;this.defaultId=value.defaultId;initialized=true;}
     catch(e){if(e.code!=="ENOENT")throw e;}
-    if(!this.locations.length)await this.add(defaultFolder);
-    for(const job of this.downloads.jobs)if(job.folder&&path.basename(job.folder)===job.id&&await exists(job.folder))await this.add(path.dirname(job.folder));
+    await this.scan(true);
+    for(const location of this.locations){const disk=volumeFor(location.folder,this.detected);if(disk&&!location.volumeId){location.volumeId=disk.id;location.volumeRoot=disk.root;}}
+    if(this.locations.length)await this.save();
+    if(!initialized&&!this.locations.length)await this.add(defaultFolder);
+    for(const job of this.downloads.jobs)if(job.folder&&path.basename(job.folder)===job.id&&!this.locations.some(l=>inside(l.folder,job.folder))&&await exists(job.folder))await this.add(path.dirname(job.folder));
+    for(const job of this.downloads.jobs)if(job.folder&&!job.storageId)job.storageId=this.locationFor(job.folder)?.id;
+    await this.downloads.save();
     try{await this.recover();}catch{this.recoveryError="Подключите диски незавершённого переноса и повторите действие";}
   }
   save(){return atomic(this.file,{locations:this.locations,defaultId:this.defaultId});}
@@ -49,23 +57,69 @@ export class StorageLocations {
     if(!location)throw new Error("Диск не подключён. Выберите подключённое хранилище");
     return location.folder;
   }
-  async add(folder) {
-    await noLinks(folder);await mkdir(folder,{recursive:true});
+  async scan(force=false) {
+    if(!force&&this.detectedAt&&Date.now()-this.detectedAt<30000)return this.detected;
+    try{this.detected=await this.detect();this.scanError=null;}catch{this.detected=[];this.scanError="Не удалось определить подключённые тома. Повторите обновление списка.";}
+    this.detectedAt=Date.now();return this.detected;
+  }
+  locationFor(folder) {
+    const disk=volumeFor(folder,this.detected);
+    return this.locations.find(l=>inside(l.folder,folder)&&(!l.volumeId||l.volumeId===disk?.id));
+  }
+  async checkedRoot(id=this.defaultId) {
+    const folder=this.root(id);await this.validateFolder(folder,id);return folder;
+  }
+  async validateFolder(folder,id) {
+    await this.scan();
+    const location=id?this.locations.find(l=>l.id===id):this.locationFor(folder);
+    if(!location||!(path.resolve(location.folder)===path.resolve(folder)||inside(location.folder,folder)))throw new Error("Папка не относится к подключённой медиатеке");
+    if(location.volumeId&&volumeFor(folder,this.detected)?.id!==location.volumeId)throw new Error("Прежний том недоступен или по его пути подключён другой диск");
+    await noLinks(folder);await stat(location.folder);
+  }
+  async available() {
+    await this.scan();
+    return this.detected.map(({root,dev,...v})=>({...v,registered:this.locations.find(l=>l.volumeId===v.id)?.id}));
+  }
+  async disconnect(id) {
+    return this.downloads.serial(async()=>{
+      const folder=await this.checkedRoot(id);
+      if(await exists(this.journal)||(await readdir(folder)).length||this.downloads.library.files.some(f=>inside(folder,f.path)||f.output&&inside(folder,f.output)))throw new Error("Сначала перенесите или удалите все файлы медиатеки. Папка закреплена, пока она непустая");
+      this.locations=this.locations.filter(l=>l.id!==id);
+      if(this.defaultId===id)this.defaultId=this.locations[0]?.id||"";
+      await this.save();return {disconnected:true};
+    });
+  }
+  async canDisconnect(id) {
+    try {
+      const folder=await this.checkedRoot(id);
+      return !await exists(this.journal)&&!(await readdir(folder)).length&&!this.downloads.library.files.some(f=>inside(folder,f.path)||f.output&&inside(folder,f.output));
+    }catch{return false;}
+  }
+  async add(folder,expectedVolume) {
+    await noLinks(folder);await this.scan();
+    const chosen=volumeFor(path.resolve(folder),this.detected);
+    if(expectedVolume&&chosen?.id!==expectedVolume)throw new Error("Выберите папку только на выбранном томе");
+    const registered=chosen&&this.locations.find(l=>l.volumeId===chosen.id);
+    if(registered)return registered;
+    await mkdir(folder,{recursive:true});
     const canonical=await realpath(folder),s=await stat(canonical),fs=await statfs(canonical);
+    await this.scan();const disk=volumeFor(canonical,this.detected);
+    if(expectedVolume&&disk?.id!==expectedVolume)throw new Error("Выберите папку только на выбранном томе");
     if(!s.isDirectory()||fs.bavail*fs.bsize<1)throw new Error("Хранилище недоступно для записи");
     // One registered storage root per filesystem prevents double-counting its capacity.
     for(const old of this.locations) {
+      if(old.volumeId&&disk){if(old.volumeId===disk.id)return old;continue;}
       try {if(String((await stat(old.folder)).dev)===String(s.dev))return old;}
       catch(e){if(e.code!=="ENOENT")throw e;}
     }
     const probe=path.join(canonical,`.home-theater-${randomUUID()}`);
     await writeFile(probe,"",{flag:"wx",mode:0o600});await unlink(probe);
     const label=process.platform==="win32"?path.parse(canonical).root.replace(/[\\/]+$/,""):path.basename(canonical)||"/";
-    const location={id:randomUUID(),folder:canonical,label};this.locations.push(location);
+    const location={id:randomUUID(),folder:canonical,label,volumeId:disk?.id,volumeRoot:disk?.root};this.locations.push(location);
     if(!this.defaultId)this.defaultId=location.id;
     await this.save();return location;
   }
-  async setDefault(id) {this.root(id);this.defaultId=id;await this.save();}
+  async setDefault(id) {await this.checkedRoot(id);this.defaultId=id;await this.save();}
   async publicLocations() {
     return Promise.all(this.locations.map(async l=>{
       try {await noLinks(l.folder);const [s,fs]=await Promise.all([stat(l.folder),statfs(l.folder)]);return {id:l.id,label:l.label,volumeId:String(s.dev),total:fs.blocks*fs.bsize,free:fs.bavail*fs.bsize,default:l.id===this.defaultId,online:true};}
@@ -82,7 +136,7 @@ export class StorageLocations {
     const d=this.downloads;
     return d.serial(async()=>{
       if(await exists(this.journal))await this.recover();
-      const target=this.root(targetId);await noLinks(target);
+      const target=await this.checkedRoot(targetId);await noLinks(target);
       if(!Array.isArray(requests)||!requests.length||requests.length>100)throw new Error("Выберите сезоны для переноса");
       const plans=[],jobs=[],files=[],sources=new Set(),titles=new Set();
       for(const request of requests) {
@@ -97,6 +151,7 @@ export class StorageLocations {
           if(j.removing||["selecting","downloading","verifying","preparing"].includes(j.state)||d.active.has(j.id))throw new Error("Дождитесь скачивания и подготовки сезона");
           if(!j.folder||path.basename(j.folder)!==j.id||!this.locations.some(l=>inside(l.folder,j.folder)))throw new Error("Исходная папка не относится к подключённым хранилищам");
           await noLinks(j.folder);
+          if(j.storageId)await this.validateFolder(j.folder,j.storageId);
           const dest=path.join(target,j.id);
           if(inside(j.folder,dest)||inside(dest,j.folder)||await exists(dest))throw new Error("Папка назначения уже существует или пересекается с исходной");
           const selected=j.selected.map(s=>({s,meta:j.files[s.index],lib:d.library.files.find(f=>f.id===s.libraryId)}));
@@ -116,7 +171,7 @@ export class StorageLocations {
             }
             files.push({id:lib.id,state:lib.state,path:path.join(dest,path.relative(j.folder,lib.path)),output,preparedDirectory:path.join(dest,".prepared")});
           }
-          jobs.push({id:j.id,folder:dest,state:j.state});sources.add(j.folder);
+          jobs.push({id:j.id,folder:dest,state:j.state,storageId:targetId});sources.add(j.folder);
         }
       }
       if(!jobs.length)return {moved:true};
@@ -156,11 +211,12 @@ export class StorageLocations {
   }
   async finish(journal) {
     const d=this.downloads;
+    await this.validateJournalVolumes(journal);
     for(const p of journal.plans) {
       await noLinks(p.dest);
       if(!inside(journal.target,p.dest)||!await exists(p.dest)||(!p.empty&&(await identifyFile(p.dest)).version!==p.version))throw new Error("Копия недоступна или изменилась. Исходники сохранены");
     }
-    for(const job of journal.jobs){const j=d.jobs.find(j=>j.id===job.id);if(!j)throw new Error("Загрузка переноса не найдена");j.folder=job.folder;j.state=job.state;}
+    for(const job of journal.jobs){const j=d.jobs.find(j=>j.id===job.id);if(!j)throw new Error("Загрузка переноса не найдена");j.folder=job.folder;j.state=job.state;j.storageId=job.storageId;}
     for(const file of journal.files) {
       const f=d.library.files.find(f=>f.id===file.id);if(!f)throw new Error("Серия переноса не найдена");
       f.path=file.path;f.preparedDirectory=file.preparedDirectory;f.state=file.state;delete f.error;
@@ -189,6 +245,7 @@ export class StorageLocations {
     await unlink(this.journal);
   }
   async rollback(journal) {
+    await this.validateJournalVolumes(journal);
     const owned=[];
     for(const job of journal.jobs)try{if(await readFile(path.join(job.folder,".home-theater-move"),"utf8")===journal.id)owned.push(job.folder);}catch(e){if(e.code!=="ENOENT")throw e;}
     for(const p of journal.plans)if(inside(journal.target,p.dest)&&owned.some(root=>inside(root,p.dest))){await noLinks(p.dest);await unlink(p.dest).catch(e=>{if(e.code!=="ENOENT")throw e;});}
@@ -206,5 +263,12 @@ export class StorageLocations {
     if(!this.locations.some(l=>l.folder===journal.target))throw new Error("Хранилище незавершённого переноса не подключено");
     if(journal.phase==="committing")await this.finish(journal);else await this.rollback(journal);
     this.recoveryError=null;
+  }
+  async validateJournalVolumes(journal) {
+    for(const folder of [journal.target,...journal.sources]) {
+      const location=this.locations.find(l=>path.resolve(l.folder)===path.resolve(folder)||inside(l.folder,folder));
+      if(!location)throw new Error("Хранилище переноса не подключено");
+      await this.validateFolder(folder,location.id);
+    }
   }
 }

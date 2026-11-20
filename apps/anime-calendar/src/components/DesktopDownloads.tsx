@@ -4,6 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { ComputerDesktopIcon, ArrowDownTrayIcon } from "@heroicons/react/24/outline";
 import { api, useAnime } from "@/lib/client";
+import { StorageConnectDialog } from "./StorageConnectDialog";
+import { useConfirm } from "./Dialogs";
 import { StorageMoveDialog } from "./StorageMoveDialog";
 import { Button, ErrorBox, cx } from "./ui";
 import { DownloadInventory, StoragePanel, downloadTitleIds, type DownloadJob, type DownloadFile, type LibraryFile, type Storage, type DownloadContext } from "./DownloadInventory";
@@ -45,13 +47,15 @@ export function DesktopDownloads({ title, titleName = "", episodeCount, watchEpi
   const [volume,setVolume]=useState("");
   const [selectedTitles,setSelectedTitles]=useState<Set<number>>(new Set());
   const [moveOpen,setMoveOpen]=useState(false);
+  const [connectOpen,setConnectOpen]=useState(false);
+  const confirm=useConfirm();
   useEffect(() => { const remembered = new URLSearchParams(window.location.search).get("device") || sessionStorage.getItem("home-theater-device"); if (remembered) choose(remembered); }, []);
   const device = available.find(d => d.id === chosen) ?? available[0];
   const data = useQuery({ queryKey: ["desktop-downloads", device?.id], enabled: !!device, queryFn: () => api<Data>(`/api/desktop/downloads?device=${device!.id}`), refetchInterval: 2500 });
   const storage=data.data?.storage;
   const selectedVolume=storage?.volumes.find(v=>v.id===volume)??storage?.volumes.find(v=>v.default)??storage?.volumes[0];
   const hasVolumes=data.data?.capabilities?.includes("storage-volumes-v1")??false;
-  useEffect(()=>{setSelectedTitles(new Set());setVolume("");setMoveOpen(false);},[device?.id]);
+  useEffect(()=>{setSelectedTitles(new Set());setVolume("");setMoveOpen(false);setConnectOpen(false);},[device?.id]);
   const watchFile=data.data?.jobs.filter(j=>j.title===title).flatMap(j=>j.files).find(f=>f.selected&&f.episode===watchEpisode);
   const phase=watchFile?watchFile.prepareState==="ready"?"watch":watchFile.downloaded>=watchFile.bytes?"prepare":"download":"source";
   const stageProgress=watchFile?phase==="download"?watchFile.downloaded/Math.max(1,watchFile.bytes):watchFile.prepareProgress:undefined;
@@ -99,7 +103,8 @@ export function DesktopDownloads({ title, titleName = "", episodeCount, watchEpi
     {!devices.isPending && !device && <div className="rounded-xl bg-gray-800/50 p-5"><h3 className="font-medium">Подключите домашний компьютер</h3><p className="mt-2 text-sm text-gray-400">Откройте desktop-приложение и привяжите его к своему аккаунту. После этого устройство появится здесь.</p><Link href="/devices" className="mt-3 inline-block text-sm text-indigo-300">Настройки аккаунта и устройств</Link></div>}
     {device && <>
       {!device.online && <p className="rounded-lg bg-gray-800/50 p-3 text-sm text-gray-300">Компьютер не в сети. Можно оставить задание; для загрузки приложение должно быть запущено.</p>}
-      {!compact&&<StoragePanel activeTitle={activeTitle} titleOrder={downloadTitleIds(jobs,data.data?.library??[])} context={data.data?.context} storage={storage} online={device.online} selectedVolume={selectedVolume?.id} onVolumeChange={id=>{setVolume(id);setSelectedTitles(new Set());}} canAdd={hasVolumes&&device.online&&!busy} onAdd={()=>void call("storage-add")}/>}
+      {!compact&&<StoragePanel activeTitle={activeTitle} titleOrder={downloadTitleIds(jobs,data.data?.library??[])} context={data.data?.context} storage={storage} online={device.online} selectedVolume={selectedVolume?.id} onVolumeChange={id=>{setVolume(id);setSelectedTitles(new Set());}} canAdd={hasVolumes&&device.online&&!busy} onAdd={()=>data.data?.capabilities.includes("storage-discovery-v1")?setConnectOpen(true):void call("storage-add")}/>}
+      {!compact&&selectedVolume?.folderName&&<div className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-400"><span>Папка медиатеки: {selectedVolume.folderName}</span><button disabled={busy||!device.online||!selectedVolume.canDisconnect} title={selectedVolume.canDisconnect?"Файлы не удаляются; пустую медиатеку можно подключить заново с другой папкой":"Папка закреплена, пока медиатека непустая"} onClick={async()=>{if(await confirm({title:"Отключить пустую медиатеку?",text:"Файлы не удаляются. После отключения можно выбрать другую папку на этом томе.",confirm:"Отключить"}))await call("storage-disconnect",{target:selectedVolume.targetId});}} className="min-h-9 rounded px-2 hover:bg-gray-800 hover:text-gray-100 disabled:opacity-35">Отключить</button></div>}
       {!compact&&hasVolumes&&selectedVolume?.targetId&&!selectedVolume.default&&<button disabled={busy||!device.online||selectedVolume.online===false} onClick={()=>void call("storage-default",{target:selectedVolume.targetId})} className="min-h-9 rounded text-xs text-gray-400 hover:text-gray-100 disabled:opacity-35">Сохранять новые загрузки на этот диск</button>}
       {!compact&&!!data.data&&!hasVolumes&&<p className="text-xs text-gray-400">Для подключения дисков и переноса сезонов обновите desktop до 0.5.0-rc.8.</p>}
       {storage?.recoveryError&&<div role="alert" className="space-y-2 text-sm text-amber-300"><p>{storage.recoveryError}</p><Button size="sm" disabled={busy||!device.online} onClick={()=>void call("storage-recover")}>Повторить восстановление</Button></div>}
@@ -123,6 +128,7 @@ export function DesktopDownloads({ title, titleName = "", episodeCount, watchEpi
         renderAccess={id=>!!data.data?.rooms?.length&&<details><summary className="cursor-pointer py-2 text-sm text-gray-300">Доступ для совместного просмотра</summary><div className="mt-2 space-y-2">{data.data.rooms.map(room=><label key={room.id} className="flex items-center gap-2 text-sm"><input type="checkbox" disabled={busy} checked={data.data!.grants.some(g=>g.list_id===room.id&&g.anilist_id===id)} onChange={e=>void call("grant",{title:id,room:room.id,enabled:e.target.checked})}/>{room.name}<Link href={`/groups/${room.id}`} className="ml-auto text-accent-300">В комнату</Link></label>)}</div></details>}/>
       </div>
       {!!selectedIds.length&&!compact&&<div className="sticky bottom-20 z-20 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-gray-800 p-3 shadow-lg sm:bottom-4"><span className="text-sm">Выбрано сезонов: {selectedIds.length}</span><div className="flex gap-2"><Button size="sm" variant="ghost" onClick={()=>setSelectedTitles(new Set())}>Сбросить</Button><Button size="sm" disabled={busy||!device.online||!!moving||pending.some(c=>c.kind==="move-titles")} onClick={()=>setMoveOpen(true)}>Переместить</Button></div></div>}
+      {connectOpen&&<StorageConnectDialog volumes={storage?.available??[]} error={storage?.scanError} busy={busy} onClose={()=>setConnectOpen(false)} onRefresh={()=>void call("storage-scan")} onChoose={v=>{if(v.registered){const known=storage?.volumes.find(d=>d.targetId===v.registered);if(known)setVolume(known.id);setConnectOpen(false);}else{setConnectOpen(false);void call("storage-add",{volume:v.id});}}}/>}
       {moveOpen&&<StorageMoveDialog volumes={(storage?.volumes??[]).filter(v=>v.targetId&&v.targetId!==selectedVolume?.targetId)} titles={selectedIds.map(id=>data.data?.context[id]?.name||`Тайтл ${id}`)} needed={moveBytes} busy={busy} onClose={()=>setMoveOpen(false)} onMove={async target=>{if(await call("move-titles",{target,titles:selectedIds})){setMoveOpen(false);setSelectedTitles(new Set());}}}/>}
     </>}
   </section>;

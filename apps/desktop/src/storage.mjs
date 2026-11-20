@@ -2,7 +2,7 @@ import { stat, statfs } from "node:fs/promises";
 import path from "node:path";
 
 /** Report known media on each actual filesystem; never send local paths to the server. */
-export async function storageSnapshot(downloads, folder, registered=[]) {
+export async function storageSnapshot(downloads, folder, registered) {
   const locations = new Map(), volumes = new Map();
   const add = (file,title,name) => { if(file) locations.set(path.resolve(file),{title,name}); };
   for(const job of downloads.jobs) if(job.folder) for(const f of job.files) add(path.join(job.folder,f.path),job.title,job.titleName);
@@ -15,11 +15,11 @@ export async function storageSnapshot(downloads, folder, registered=[]) {
       return volumes.get(id);
     } catch(e) { const parent=path.dirname(p); if(e.code!=="ENOENT" || parent===p) throw e; p=parent; } }
   };
-  let target;try{target=await volume(folder);}catch{ /* A disconnected download disk must not hide the other disks. */ }
-  await volume(downloads.library.directory);
+  let target;try{if(folder&&!registered?.some(l=>l.default&&l.online===false))target=await volume(folder);}catch{ /* A disconnected download disk must not hide the other disks. */ }
+  if(registered===undefined)await volume(downloads.library.directory);
   const offline=[];
-  for(const location of registered) {
-    try {await stat(location.folder);const v=await volume(location.folder);v.label=location.label;v.targetId=location.id;v.default=!!location.default;v.online=true;}
+  for(const location of registered??[]) {
+    try {if(location.online===false)throw new Error("offline");await stat(location.folder);const v=await volume(location.folder);v.label=location.label;v.targetId=location.id;v.default=!!location.default;v.online=true;v.folderName=path.basename(location.folder);}
     catch {offline.push({id:`offline:${location.id}`,targetId:location.id,label:location.label,total:0,free:0,mediaBytes:0,titles:[],online:false,default:!!location.default});}
   }
   for(const [file,info] of locations) {
