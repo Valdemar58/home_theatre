@@ -159,10 +159,22 @@ jobs:
       - run: node ../../scripts/ci/desktop-native.cjs
       - run: pnpm test
 
+  server-ops:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Installer contract tests
+        run: python3 -m unittest discover -s scripts/ops/tests -v
+      - name: Shell syntax
+        run: bash -n scripts/install.sh deploy/server/home-theater
+
   gate:
     name: CI gate
     if: always()
-    needs: [changes, secrets, server, postgres, desktop]
+    needs: [changes, secrets, server, postgres, desktop, server-ops]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -175,6 +187,7 @@ jobs:
           n = json.loads(os.environ['NEEDS'])
           assert n['changes']['result'] == 'success', 'Change detection failed'
           assert n['secrets']['result'] == 'success', 'Secret scanning failed'
+          assert n['server-ops']['result'] == 'success', 'Server installer checks failed'
           for job in ('server', 'postgres', 'desktop'):
               key = 'database' if job == 'postgres' else job
               selected = n['changes']['outputs'][key] == 'true'

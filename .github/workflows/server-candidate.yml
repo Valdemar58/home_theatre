@@ -1,0 +1,58 @@
+name: Server candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-candidate
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/ci.yml
+  publish:
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@bf8388060db527dff14f48b6a5fdbe70763c1213
+      - uses: docker/login-action@d0b8297dd55199249f38268efae35fcb03f75aab
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: image
+        uses: docker/build-push-action@562e51947939164e4fe808a6eab5101977e509e0
+        with:
+          context: apps/anime-calendar
+          push: true
+          platforms: linux/amd64
+          tags: ghcr.io/valdemar58/home_theatre/server:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/Valdemar58/home_theatre
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Package installer and immutable image reference
+        env:
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          python3 scripts/package-server.py --image "ghcr.io/valdemar58/home_theatre/server@$DIGEST" --output server-candidate.tar.gz
+          printf '### Server candidate\nCommit: `%s`\n\nImage: `ghcr.io/valdemar58/home_theatre/server@%s`\n' "$GITHUB_SHA" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: server-candidate
+          path: |
+            server-candidate.tar.gz
+            server-candidate.tar.gz.sha256
+          retention-days: 7

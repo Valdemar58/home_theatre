@@ -1,0 +1,94 @@
+"""Контракт установщика: повторный запуск сохраняет идентичность и не меняет образ."""
+import importlib.util
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
+
+ROOT = Path(__file__).resolve().parents[3]
+SPEC = importlib.util.spec_from_file_location("installer", ROOT / "deploy/server/home_theater.py")
+installer = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(installer)
+PIN = "ghcr.io/example/product/server@sha256:" + "a" * 64
+
+
+class InstallerTests(unittest.TestCase):
+    def test_only_safe_origins(self):
+        for value in ("https://test.example.org", "http://127.0.0.1:5056", "http://localhost:5057/"):
+            self.assertEqual(installer.validate_origin(value), value.rstrip("/"))
+        for value in ("http://example.org", "https://user:pass@example.org", "https://example.org/x",
+                      "https://example.org?token=x", "https://example.org#x", "file:///etc/passwd",
+                      "https://example.org:foo", "https://example.org:444", "https://exa{mple.org"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                installer.validate_origin(value)
+
+    def test_environment_cannot_inject_compose_or_shell(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "env"
+            for value in ("x\nOTHER=secret", "${PASSWORD}", "$(id)", "'bad'", '"bad"', "x\\y", "x#y"):
+                with self.subTest(value=value), self.assertRaises(ValueError):
+                    installer.write_env(target, {"VALUE": value})
+            installer.write_env(target, {"VALUE": "https://example.org", "EMPTY": ""})
+            self.assertEqual(installer.read_env(target)["VALUE"], "https://example.org")
+            self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+
+    def args(self, folder, **kwargs):
+        return SimpleNamespace(root=folder, image=None, origin=None, http_port=5056,
+                               project="home-theater", modules="", bundle=str(ROOT / "deploy/server"), **kwargs)
+
+    @patch.object(installer.Installation, "up")
+    @patch.object(installer, "docker_install")
+    @patch.object(installer, "check_platform")
+    def test_reinstall_preserves_files_and_identity(self, platform, docker, up):
+        with tempfile.TemporaryDirectory() as folder:
+            state = {"schemaVersion": 1, "image": PIN, "origin": "http://127.0.0.1:5056",
+                     "httpPort": 5056, "project": "home-theater", "modules": []}
+            installer.write_json(Path(folder) / "installation.json", state)
+            for name in ("server.env", "application.env", "user-data"):
+                (Path(folder) / name).write_text("preserve-this-value")
+            before = {file.name: file.read_bytes() for file in Path(folder).iterdir()}
+            installer.install(self.args(folder))
+            self.assertEqual({file.name: file.read_bytes() for file in Path(folder).iterdir()}, before)
+            up.assert_called_once()
+
+    @patch.object(installer, "check_platform")
+    def test_reinstall_cannot_silently_change_image_or_origin(self, platform):
+        with tempfile.TemporaryDirectory() as folder:
+            installer.write_json(Path(folder) / "installation.json", {"image": PIN, "origin": "https://test.example.org"})
+            for image, origin in ((PIN[:-1] + "b", None), (None, "https://different.example.org")):
+                args = self.args(folder)
+                args.image, args.origin = image, origin
+                with self.assertRaises(ValueError):
+                    installer.install(args)
+
+    @patch.object(installer, "check_platform")
+    def test_unknown_existing_directory_is_not_overwritten(self, platform):
+        with tempfile.TemporaryDirectory() as folder:
+            existing = Path(folder) / "server.env"
+            existing.write_text("keep")
+            with self.assertRaises(ValueError):
+                installer.install(self.args(folder))
+            self.assertEqual(existing.read_text(), "keep")
+
+    def test_degradation_clears_only_managed_endpoints(self):
+        with tempfile.TemporaryDirectory() as folder:
+            instance = installer.Installation(folder)
+            installer.write_env(Path(folder) / "server.env", {"POSTGRES_PASSWORD": "do-not-rotate"})
+            installer.write_env(Path(folder) / "application.env", {
+                "SESSION_SECRET": "keep", "PROWLARR_URL": "http://prowlarr:9696",
+                "PROWLARR_API_KEY": "key", "SHIKIMORI_CLIENT_ID": "keep-client"})
+            state = {"image": PIN, "origin": "https://test.example.org", "httpPort": 5056,
+                     "project": "home-theater", "modules": []}
+            instance.render(state)
+            application = installer.read_env(Path(folder) / "application.env")
+            self.assertEqual(application["PROWLARR_URL"], "")
+            self.assertEqual(application["PROWLARR_API_KEY"], "")
+            self.assertEqual(application["SESSION_SECRET"], "keep")
+            self.assertEqual(application["SHIKIMORI_CLIENT_ID"], "keep-client")
+            self.assertEqual(installer.read_env(Path(folder) / "server.env")["POSTGRES_PASSWORD"], "do-not-rotate")
+
+
+if __name__ == "__main__":
+    unittest.main()
