@@ -31,7 +31,18 @@ export function finishCommand(device: string, id: string, result: unknown, error
 }
 export function reportDownloads(device: string, snapshot: unknown, extra?: {storage?:unknown;library?:unknown;capabilities?:unknown}) {
   if (!Array.isArray(snapshot) || snapshot.length > 100 || JSON.stringify(snapshot).length > 2000000) throw new ApiError(413, "Слишком большая очередь");
-  const value=extra ? {jobs:snapshot,storage:extra.storage,library:Array.isArray(extra.library)?extra.library:[],capabilities:Array.isArray(extra.capabilities)?extra.capabilities:[]} : snapshot;
+  // Дата команды создания сохраняется в сводке: очистка очереди команд её не потеряет.
+  // Для старых загрузок без истории не подставляем дату очередного heartbeat.
+  const previous=db.prepare<[string],{snapshot:string}>("SELECT snapshot FROM desktop_download_state WHERE device_id=?").get(device);
+  const old=JSON.parse(previous?.snapshot||"[]");
+  const dates=new Map<string,number>();
+  for(const job of Array.isArray(old)?old:old.jobs??[])if(job?.id&&Number.isFinite(job.createdAt))dates.set(job.id,job.createdAt);
+  for(const command of db.prepare<[string],Command>("SELECT result,created_at FROM desktop_commands WHERE device_id=? AND kind='inspect' AND state='done' ORDER BY created_at").all(device)) {
+    const result=JSON.parse(command.result);
+    if(typeof result.job==="string"&&!dates.has(result.job))dates.set(result.job,Math.floor(command.created_at/1000));
+  }
+  const jobs=snapshot.map(job=>job&&typeof job==="object"&&typeof job.id==="string"&&dates.has(job.id)?{...job,createdAt:dates.get(job.id)}:job);
+  const value=extra ? {jobs,storage:extra.storage,library:Array.isArray(extra.library)?extra.library:[],capabilities:Array.isArray(extra.capabilities)?extra.capabilities:[]} : jobs;
   if(JSON.stringify(value).length>2400000)throw new ApiError(413,"Слишком большая сводка устройства");
   db.prepare("INSERT INTO desktop_download_state(device_id,snapshot,updated_at) VALUES(?,?,?) ON CONFLICT(device_id) DO UPDATE SET snapshot=excluded.snapshot,updated_at=excluded.updated_at").run(device, JSON.stringify(value), now());
 }

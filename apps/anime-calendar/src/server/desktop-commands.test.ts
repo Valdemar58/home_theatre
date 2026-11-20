@@ -43,3 +43,15 @@ it("accepts storage and library from a new host while keeping old snapshots read
   q.reportDownloads(device,[]);
   expect(q.deviceDownloads(1,device)).toMatchObject({jobs:[],storage:null,library:[],capabilities:[]});
 });
+
+it("retains the actual addition date after command history is cleaned without dating old jobs today",()=>{
+  const c=q.enqueue(1,device,"inspect",{});
+  q.finishCommand(device,c.id,{job:"dated"});
+  q.reportDownloads(device,[{id:"dated"},{id:"unknown"}]);
+  const added=q.deviceDownloads(1,device).jobs[0].createdAt;
+  expect(added).toBeGreaterThan(0);
+  expect(q.deviceDownloads(1,device).jobs[1].createdAt).toBeUndefined();
+  db.prepare("DELETE FROM desktop_commands WHERE device_id=?").run(device);
+  q.reportDownloads(device,[{id:"dated",state:"ready"}]);
+  expect(q.deviceDownloads(1,device).jobs[0].createdAt).toBe(added);
+});
