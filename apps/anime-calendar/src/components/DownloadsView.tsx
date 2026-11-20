@@ -49,6 +49,7 @@ function Episodes({ s, data, stored, onChange }: { s: StreamItem; data: Download
   const prepared=(index:number)=>stored?.files.find(f=>f.key===`${s.hash}:${index}`);
   const progress=(index:number)=>data.prebuffer.find(p=>p.hash===s.hash&&p.index===index);
   const total=s.files.reduce((n,f)=>n+(f.bytes||prepared(f.index)?.bytes||progress(f.index)?.size||0),0);
+  const seasonSize=s.files.every(f=>f.bytes||prepared(f.index)?.bytes||progress(f.index)?.size)?total:Math.max(total,s.size);
   const downloaded=s.files.reduce((n,f)=>n+(prepared(f.index)?.ready?(f.bytes||prepared(f.index)!.bytes):Math.min(progress(f.index)?.read||0,f.bytes||prepared(f.index)?.bytes||progress(f.index)?.size||0)),0);
   const ready=s.files.reduce((n,f)=>n+(prepared(f.index)?.ready?(f.bytes||prepared(f.index)!.bytes):0),0);
   const act=async(index:number,remove=false)=>{
@@ -58,8 +59,8 @@ function Episodes({ s, data, stored, onChange }: { s: StreamItem; data: Download
     try{await api(remove?"/api/downloads/storage":"/api/downloads/prebuffer",{method:remove?"DELETE":progress(index)||data.prebufferQueued.includes(`${s.hash}:${index}`)?"DELETE":"POST",json:remove?{key:`${s.hash}:${index}`}:{hash:s.hash,index}});onChange();}catch(e){alert({title:"Не получилось",text:e instanceof Error?e.message:String(e)});}finally{setBusy(false);}
   };
   if(!s.files.length)return null;
-  return <div className="space-y-2 pt-1"><DownloadProgress download={total?downloaded/total:0} prepare={total?ready/total:0} label={`Весь сезон: ${s.title}`}/><button type="button" aria-expanded={open} onClick={()=>setOpen(!open)} className="inline-flex min-h-9 items-center gap-1 rounded text-xs text-gray-400 hover:text-gray-100 focus-visible:outline-2 focus-visible:outline-accent-300">Серии · {s.files.length}<ChevronDownIcon className={cx("h-3 w-3 transition-transform motion-reduce:transition-none",open&&"rotate-180")}/></button>
-  {open&&<div className="divide-y divide-gray-700/50">{s.files.map(f=>{const p=progress(f.index),file=prepared(f.index),queued=data.prebufferQueued.includes(`${s.hash}:${f.index}`),length=f.bytes||file?.bytes||p?.size;return <div key={f.index} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 py-2 sm:grid-cols-[7rem_minmax(4rem,1fr)_6rem_auto]"><span className="text-sm text-gray-200">{f.code.replace(/^S0*1E0*/,"Серия ")}</span><div className="col-start-1 row-start-2 min-w-0 sm:col-start-2 sm:row-start-1"><DownloadProgress download={file?.ready?1:p?.size?p.read/p.size:0} prepare={file?.ready?1:0} label={f.code}/></div><span className="col-start-2 row-start-2 text-right text-xs tabular-nums text-gray-400 sm:col-start-3 sm:row-start-1">{length?size(length):"Размер неизвестен"}</span><div className="col-start-2 row-start-1 flex min-h-11 items-center justify-end sm:col-start-4">{file?.ready?<button aria-label={`Удалить ${f.code}`} title={file.inUse?"Серия используется":"Удалить серию"} disabled={busy||file.inUse} onClick={()=>void act(f.index,true)} className="grid h-11 w-11 place-items-center rounded-lg text-gray-400 hover:bg-gray-700 hover:text-rose-300 disabled:opacity-35"><TrashIcon className="h-4 w-4"/></button>:<button disabled={busy} onClick={()=>void act(f.index)} className="min-h-11 rounded px-2 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-100 disabled:opacity-35">{p&&!p.done||queued?"Отменить":"Подготовить"}</button>}</div></div>;})}</div>}</div>;
+  return <div className="space-y-2 pt-1"><DownloadProgress download={seasonSize?downloaded/seasonSize:0} prepare={seasonSize?ready/seasonSize:0} label={`Весь сезон: ${s.title}`}/><button type="button" aria-expanded={open} onClick={()=>setOpen(!open)} className="inline-flex min-h-9 items-center gap-1 rounded text-xs text-gray-400 hover:text-gray-100 focus-visible:outline-2 focus-visible:outline-accent-300">Серии · {s.files.length}<ChevronDownIcon className={cx("h-3 w-3 transition-transform motion-reduce:transition-none",open&&"rotate-180")}/></button>
+  {open&&<div className="divide-y divide-gray-700/50">{s.files.map(f=>{const p=progress(f.index),file=prepared(f.index),queued=data.prebufferQueued.includes(`${s.hash}:${f.index}`),length=f.bytes||file?.bytes||p?.size;return <div key={f.index} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 py-2 sm:grid-cols-[7rem_minmax(4rem,1fr)_6rem_auto]"><span className="text-sm text-gray-200">{f.code.replace(/^S\d+E0*/,"Серия ")}</span><div className="col-start-1 row-start-2 min-w-0 sm:col-start-2 sm:row-start-1"><DownloadProgress download={file?.ready?1:p?.size?p.read/p.size:0} prepare={file?.ready?1:0} label={f.code}/></div><span className="col-start-2 row-start-2 text-right text-xs tabular-nums text-gray-400 sm:col-start-3 sm:row-start-1">{length?size(length):<span title="Размер неизвестен">—</span>}</span><div className="col-start-2 row-start-1 flex min-h-11 items-center justify-end sm:col-start-4">{file?.ready?<button aria-label={`Удалить ${f.code}`} title={file.inUse?"Серия используется":"Удалить серию"} disabled={busy||file.inUse} onClick={()=>void act(f.index,true)} className="grid h-11 w-11 place-items-center rounded-lg text-gray-400 hover:bg-gray-700 hover:text-rose-300 disabled:opacity-35"><TrashIcon className="h-4 w-4"/></button>:<button disabled={busy} onClick={()=>void act(f.index)} className="min-h-11 rounded px-2 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-100 disabled:opacity-35">{p&&!p.done||queued?"Отменить":"Подготовить"}</button>}</div></div>;})}</div>}</div>;
 }
 
 function Bar({ value, tone = "indigo" }: { value: number; tone?: "indigo" | "amber" | "green" }) {
@@ -141,7 +142,7 @@ export function DownloadsView() {
   return (
     <div className="max-w-5xl space-y-8">
       {storage.error&&<ErrorBox error={storage.error}/>}
-      <StoragePanel storage={storage.data?.storage} online activeTitle={activeTitle} context={storage.data?.context} titleOrder={data?.streams.map(s=>s.anilistId??0)}/>
+      {storage.isPending?<p className="text-sm text-gray-400">Проверяем диск медиасервера…</p>:storage.data&&<StoragePanel storage={storage.data.storage} online activeTitle={activeTitle} context={storage.data.context} titleOrder={data?.streams.map(s=>s.anilistId??0)}/>}
 
       <section className="space-y-3">
         {!data ? <RowSkeleton /> : data.streamsError && <ErrorBox error={`TorrServer недоступен: ${data.streamsError}`} />}
@@ -174,7 +175,7 @@ export function DownloadsView() {
       </section>
 
       <ServerDownloadStorage hideStorage excludeHashes={data?.streams.map(s=>s.hash)??[]} />
-      <section className="space-y-3">
+      {(!data||data.queue.length>0||data.queueError)&&<section className="space-y-3">
         <div className="flex flex-wrap items-end gap-3">
           <div className="mr-auto">
             <h2 className="text-xl font-bold">Скачивание <Count n={data?.queue.length} /></h2>
@@ -218,7 +219,7 @@ export function DownloadsView() {
             </div>
           );
         })}
-      </section>
+      </section>}
     </div>
   );
 }
