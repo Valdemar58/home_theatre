@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp,mkdir,writeFile,readFile,rm,access } from "node:fs/promises";
+import { mkdtemp,mkdir,writeFile,readFile,rm,access,realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { windowsVolumes,linuxVolumes,volumeFor } from "../src/volumes.mjs";
@@ -20,7 +20,9 @@ test("volume identities survive drive-letter and mount-point changes; readonly a
 });
 
 test("one folder per stable volume, frozen until empty; disconnect survives restart and never deletes files",async()=>{
-  const dir=await mkdtemp(path.join(tmpdir(),"storage-volume-"));
+  // Windows runners may expose TEMP through an 8.3 alias; use the same canonical
+  // path representation as registered library roots.
+  const dir=await realpath(await mkdtemp(path.join(tmpdir(),"storage-volume-")));
   try {
     const disk=path.join(dir,"disk"),first=path.join(disk,"library"),second=path.join(disk,"another");await mkdir(disk);
     const downloads={jobs:[],library:{files:[]},save:async()=>{},serial:fn=>fn()};
@@ -46,5 +48,5 @@ test("one folder per stable volume, frozen until empty; disconnect survives rest
     const restored=new StorageLocations(path.join(dir,"state"),downloads,{detect});await restored.load(first);
     assert.equal(restored.locations.length,0);assert.equal(restored.defaultId,"");
     const connected=await restored.add(second,"physical-a");assert.equal(connected.folder,second);assert.notEqual(connected.id,original.id);
-  } finally {assert.ok(path.resolve(dir).startsWith(path.resolve(tmpdir())+path.sep));await rm(dir,{recursive:true,force:true});}
+  } finally {assert.ok(path.resolve(dir).startsWith(await realpath(tmpdir())+path.sep));await rm(dir,{recursive:true,force:true});}
 });
