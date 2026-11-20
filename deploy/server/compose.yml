@@ -34,7 +34,7 @@ services:
       DATABASE_DRIVER: postgres
       PGHOST: database
       PGPORT: "5432"
-      PGDATABASE: calendar
+      PGDATABASE: ${DATABASE_NAME:-calendar}
       PGUSER: calendar
       PGPASSWORD: ${POSTGRES_PASSWORD}
       DATA_DIR: /data

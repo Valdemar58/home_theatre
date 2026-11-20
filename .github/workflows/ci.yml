@@ -125,6 +125,23 @@ jobs:
       - run: node database/migrate.mjs
       - run: node database/check-queries.mjs
       - run: node database/import-check.mjs
+      - name: PostgreSQL 17 backup tools
+        working-directory: .
+        run: |
+          python3 - <<'PY'
+          import os, pathlib
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'pg-tools'
+          root.mkdir()
+          for tool in ('pg_dump', 'pg_restore'):
+              file = root / tool
+              file.write_text('#!/bin/sh\nexec docker run --rm --network host --user "$(id -u):$(id -g)" '
+                              '-e PGHOST -e PGPORT -e PGDATABASE -e PGUSER -e PGPASSWORD '
+                              '-v /tmp:/tmp postgres:17-alpine ' + tool + ' "$@"\n')
+              file.chmod(0o700)
+          with open(os.environ['GITHUB_PATH'], 'a') as output:
+              output.write(str(root) + '\n')
+          PY
+      - run: node database/backup-check.mjs
       - run: npm test -- --reporter=default --reporter=junit --outputFile=postgres-results.xml
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
