@@ -6,6 +6,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Library } from "../src/library.mjs";
 import { StorageLocations } from "../src/storage-locations.mjs";
+import { readMedia } from "../src/transport.mjs";
 
 async function fixture() {
   const dir=await mkdtemp(path.join(tmpdir(),"storage-move-")),source=path.join(dir,"disk-a");
@@ -24,7 +25,7 @@ async function fixture() {
     selected.push({index:i,episode:i+1,downloaded:(await stat(file)).size,libraryId:lib.id});
     files.push({index:i,path:name,video:true,bytes:(await stat(file)).size});
   }
-  await library.save();
+  await library.refresh();await library.save();
   const downloads={jobs:[{id,title:42,folder,state:"ready",files,selected}],library,active:new Map(),serial:fn=>fn(),save:async()=>{},checkRemoval(f){if(f.state==="preparing"||f.inUse)throw new Error("Серия используется");}};
   const manager=new StorageLocations(dir,downloads);
   // Two directories stand in for physical filesystems in engine tests. Registration is tested separately.
@@ -42,6 +43,8 @@ test("moves complete seasons and prepared copies, preserves IDs/content and safe
       assert.equal(await readFile(lib.path,"utf8"),`original episode ${i+1}`);
       assert.equal(await readFile(lib.output,"utf8"),`prepared episode ${i+1}`);
       assert.equal(lib.state,"ready");assert.ok(lib.output.startsWith(f.target+path.sep));
+      const stream={file:lib.id,version:lib.preparedVersion,bytes:lib.preparedBytes};
+      assert.equal((await readMedia(f.library,stream,0,lib.preparedBytes)).toString(),`prepared episode ${i+1}`);
       await assert.rejects(access(oldOutputs[i]),{code:"ENOENT"});
     }
     await assert.rejects(access(f.folder),{code:"ENOENT"});
@@ -94,5 +97,29 @@ test("registration deduplicates a filesystem, persists defaults and does not pub
     const a=manager.locations[0],another=await manager.add(sameDisk);assert.equal(another.id,a.id);
     const publicData=await manager.publicLocations();assert.equal(publicData.length,1);assert.ok(!JSON.stringify(publicData).includes(f.dir));
     await manager.setDefault(a.id);assert.equal(manager.root(),a.folder);
+  }finally{await f.cleanup();}
+});
+
+test("restart rolls back an interrupted copy while keeping every original and identity",async()=>{
+  const f=await fixture();try {
+    const job=f.downloads.jobs[0],dest=path.join(f.target,job.id);await mkdir(dest);
+    await writeFile(path.join(dest,".home-theater-move"),"interrupted");
+    const source=f.library.files[0].path,copy=path.join(dest,path.basename(source));await writeFile(copy,await readFile(source));
+    const files=f.library.files.map(l=>({id:l.id,state:l.state}));f.library.files.forEach(l=>l.state="moving");
+    await writeFile(f.manager.journal,JSON.stringify({id:"interrupted",phase:"copying",target:f.target,plans:[{source,dest:copy}],jobs:[{id:job.id,folder:dest}],files,sources:[f.folder]}));
+    await f.manager.recover();
+    assert.equal(await readFile(source,"utf8"),"original episode 1");assert.equal(job.folder,f.folder);
+    assert.ok(f.library.files.every(l=>l.state==="ready"));await assert.rejects(access(copy),{code:"ENOENT"});
+  }finally{await f.cleanup();}
+});
+
+test("changed originals and directory links are rejected without deleting user data",async()=>{
+  const f=await fixture();try {
+    await writeFile(f.library.files[0].path,"changed original");
+    await assert.rejects(f.manager.moveTitles([{title:42,episodes:2}],"b"),/изменился/);
+    assert.equal(await readFile(f.library.files[0].path,"utf8"),"changed original");
+    const linked=path.join(f.folder,"linked");await symlink(f.library.directory,linked,"junction");
+    await assert.rejects(f.manager.moveTitles([{title:42,episodes:2}],"b"),/ссылки/);
+    assert.equal(await readFile(f.library.files[1].path,"utf8"),"original episode 2");
   }finally{await f.cleanup();}
 });
