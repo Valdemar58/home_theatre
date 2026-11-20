@@ -297,6 +297,7 @@ services:
     profiles: ["public"]
     command: ["node", "/app/ddns.mjs"]
     environment:
+      DDNS_ENABLED: ${DDNS_ENABLED:-1}
       DUCKDNS_DOMAIN: ${DUCKDNS_DOMAIN:-}
       DUCKDNS_TOKEN: ${DUCKDNS_TOKEN:-}
     volumes:
