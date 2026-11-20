@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -29,6 +30,15 @@ def unit_name(installation):
     return "home-theater-update-" + hashlib.sha256(str(installation.root).encode()).hexdigest()[:12]
 
 
+def scheduled_at(value):
+    timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if timestamp.tzinfo is None:
+        raise ValueError("Specify time with a timezone, e.g. 2026-11-20T20:00:00+01:00")
+    # systemd OnCalendar is written at whole-second precision. Never allow its
+    # timer to run before a fractional start recorded in the coordination file.
+    return datetime.fromtimestamp(math.ceil(timestamp.timestamp()), timezone.utc)
+
+
 def control(installation, plan):
     from home_theater import write_json
     target = installation.root / "data/maintenance.json"
@@ -43,9 +53,7 @@ def schedule(installation, bundle, at, minutes):
     from home_theater import IMAGE, atomic, write_json
     if not 1 <= minutes <= 120:
         raise ValueError("Maintenance window must be 1–120 minutes")
-    timestamp = datetime.fromisoformat(at.replace("Z", "+00:00"))
-    if timestamp.tzinfo is None:
-        raise ValueError("Specify time with a timezone, e.g. 2026-11-20T20:00:00+01:00")
+    timestamp = scheduled_at(at)
     start = int(timestamp.timestamp() * 1000)
     if start <= time.time() * 1000 + 5000:
         raise ValueError("Choose a future maintenance window")
