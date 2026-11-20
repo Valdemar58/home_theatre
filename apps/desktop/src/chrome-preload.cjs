@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld("homeTheaterDesktop", Object.freeze({
   linkDevice: () => ipcRenderer.invoke("desktop-link-device"),
   unlinkDevice: () => ipcRenderer.invoke("desktop-unlink-device"),
   deviceInfo: () => ipcRenderer.invoke("desktop-device-info"),
+  addStorage: () => ipcRenderer.invoke("desktop-storage-add"),
 }));
 window.addEventListener("DOMContentLoaded", () => {
   if (window.top !== window) return;

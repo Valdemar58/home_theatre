@@ -17,6 +17,6 @@ export function downloadContext(user:number, titles:number[]) {
       const cycle=!hidden ? latestCycle(p.id,id) : null;
       people.set(p.id,{...p,hidden,watched:cycle&&!cycle.ended_at?cycleEpisodes(cycle):[],baseline:hidden?0:cycle&&!cycle.ended_at?cycle.baseline:e?.episodes??0,completed:!hidden && e?.status==="completed"});
     }
-    return [id,{name:media?displayTitle(media.title):`Тайтл ${id}`,cover:media?.coverImage.large??null,status:entry?.status??null,groups,people:[...people.values()]}];
+    return [id,{name:media?displayTitle(media.title):`Тайтл ${id}`,episodes:media?.episodes??null,cover:media?.coverImage.large??null,status:entry?.status??null,groups,people:[...people.values()]}];
   }));
 }

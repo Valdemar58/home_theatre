@@ -199,7 +199,7 @@ export class Downloads {
           for (const s of j.selected) {
             const f = t.files[s.index]; s.downloaded = f.downloaded;
             if (f.progress === 1 && !s.libraryId && !s.error) {
-              try { const l = await this.library.add(path.join(j.folder, j.files[s.index].path), j.title, s.episode); l.titleName = j.titleName; s.libraryId = l.id; await this.library.save(); }
+              try { const l = await this.library.add(path.join(j.folder, j.files[s.index].path), j.title, s.episode); l.titleName = j.titleName; l.preparedDirectory=path.join(j.folder,".prepared"); s.libraryId = l.id; await this.library.save(); }
               catch (e) { s.error = e.message; }
             }
           }

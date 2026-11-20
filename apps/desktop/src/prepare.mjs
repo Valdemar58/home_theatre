@@ -43,6 +43,10 @@ export async function prepare(library, id) {
   preparing = true;
   try {
     return await prepareOne(library, id);
+  } catch(e) {
+    const file=library.files.find(f=>f.id===id);
+    if(file&&file.state!=="moving"){file.state="error";file.error=e.message;await library.save();}
+    throw e;
   } finally {
     preparing = false;
   }
@@ -50,12 +54,15 @@ export async function prepare(library, id) {
 async function prepareOne(library, id) {
   const f = library.files.find((x) => x.id === id);
   if (!f) throw new Error("Серия не найдена");
+  if(f.state==="moving")throw new Error("Дождитесь переноса серии на другой диск");
   if (library.files.some((x) => x.state === "preparing"))
     throw new Error("Уже готовится другая серия");
   // A failed transcode is retryable; refresh still rejects a missing or changed source.
   if (f.state === "error") { f.state = "imported"; delete f.error; }
   await library.refresh();
   if (f.state === "error") throw new Error(f.error);
+  if(f.state==="moving")throw new Error("Дождитесь переноса серии");
+  f.state="preparing";f.progress=0;delete f.error;await library.save();
   const ffmpeg = unpack(require("ffmpeg-static")),
     ffprobe = unpack(require("ffprobe-static").path);
   let duration = 0;
@@ -76,7 +83,7 @@ async function prepareOne(library, id) {
   );
   if (!Number.isFinite(duration) || duration <= 0)
     throw new Error("Не удалось определить длительность");
-  const dir = join(library.directory, "prepared");
+  const dir = f.preparedDirectory || join(library.directory, "prepared");
   await mkdir(dir, { recursive: true });
   const output = join(dir, `${f.id}.mp4`),
     temporary = join(dir, `${f.id}.partial.mp4`);

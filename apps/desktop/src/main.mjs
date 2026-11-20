@@ -22,8 +22,10 @@ import { prepare, stopPreparation } from "./prepare.mjs";
 import { HostTransport } from "./transport.mjs";
 import { Downloads } from "./downloads.mjs";
 import { RemoteDownloads } from "./remote-downloads.mjs";
+import { StorageLocations } from "./storage-locations.mjs";
 let remoteDownloads, webWindow, quitting = false;
 let downloads;
+let storageLocations;
 let metadataRequest;
 let transport;
 const root = dirname(fileURLToPath(import.meta.url));
@@ -191,7 +193,9 @@ async function openApp(room, destination) {
   ipcMain.removeHandler("desktop-link-device");
   ipcMain.removeHandler("desktop-device-info");
   ipcMain.removeHandler("desktop-unlink-device");
+  ipcMain.removeHandler("desktop-storage-add");
   const isAppFrame = event => webWindow && event.sender === webWindow.webContents && event.senderFrame === webWindow.webContents.mainFrame && new URL(event.senderFrame.url).origin === config.server;
+  ipcMain.handle("desktop-storage-add",async event=>{if(!isAppFrame(event))throw new Error("Недоступно");return addStorageLocation();});
   ipcMain.handle("desktop-device-info", async event => {
     if(!isAppFrame(event))throw new Error("Недоступно");
     return accountBinding("status");
@@ -229,8 +233,17 @@ function snapshot() {
       name: basename(path),
     })),
     downloads: downloads?.snapshot() || [],
-    downloadFolder: config.downloadFolder || join(app.getPath("videos"), "home_theater"),
+    downloadFolder: storageLocations?.root() || config.downloadFolder || join(app.getPath("videos"), "home_theater"),
   };
+}
+async function addStorageLocation() {
+  const parent=webWindow&&!webWindow.isDestroyed()?webWindow:window;
+  parent?.show();
+  const result=await dialog.showOpenDialog(parent,{title:"Подключить диск для аниме",properties:["openDirectory","createDirectory"]});
+  if(result.canceled)return {cancelled:true};
+  const location=await storageLocations.add(result.filePaths[0]);
+  if(remoteDownloads)remoteDownloads.storageAt=0;
+  return {id:location.id,label:location.label};
 }
 async function action(kind, data = {}) {
   if (kind === "streams") return transport?.list() || [];
@@ -262,11 +275,11 @@ async function action(kind, data = {}) {
   }
   if (kind === "download-metadata-cancel") { metadataRequest?.abort(); return downloads.cancelMetadata(); }
   if (kind === "download-folder") {
-    const r = await dialog.showOpenDialog(window, { properties: ["openDirectory", "createDirectory"] });
-    if (!r.canceled) { config.downloadFolder = r.filePaths[0]; await save(); }
+    const result=await addStorageLocation();
+    if(result.id){await storageLocations.setDefault(result.id);config.downloadFolder=storageLocations.root();await save();}
     return;
   }
-  if (kind === "download-start") return downloads.start(String(data.id), data.selections, config.downloadFolder || join(app.getPath("videos"), "home_theater"), data.autoPrepare);
+  if (kind === "download-start") return downloads.start(String(data.id), data.selections, storageLocations.root(data.target||undefined), data.autoPrepare);
   if (kind === "download-pause") return downloads.pause(String(data.id));
   if (kind === "download-resume") return downloads.resume(String(data.id));
   if (kind === "download-cancel") return downloads.cancel(String(data.id));
@@ -377,7 +390,9 @@ else {
       await library.load();
       downloads = new Downloads(join(app.getPath("userData"), "downloads"), library, async (...args) => { await prepare(...args); await heartbeat(); }, {isInUse:id=>!!id && !!transport?.list().some(s=>s.file===id)});
       await downloads.load();
-      remoteDownloads = new RemoteDownloads(downloads, body => request("/api/desktop/commands", body), join(app.getPath("userData"), "remote-receipts.json"), () => config.downloadFolder || join(app.getPath("videos"), "home_theater"));
+      storageLocations=new StorageLocations(app.getPath("userData"),downloads);
+      await storageLocations.load(config.downloadFolder || join(app.getPath("videos"),"home_theater"));
+      remoteDownloads = new RemoteDownloads(downloads, body => request("/api/desktop/commands", body), join(app.getPath("userData"), "remote-receipts.json"), () => storageLocations.root(),{locations:storageLocations,addLocation:addStorageLocation});
       await remoteDownloads.load();
       transport = new HostTransport(library, () => ({ server: config.server, token: pair ? "" : token }));
       transport.start();
