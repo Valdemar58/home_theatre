@@ -151,6 +151,8 @@ function migrate(db: Db) {
         .all()
         .map((c) => c.name),
     );
+  if (!columns("account_tokens").has("token_secret"))
+    db.exec("ALTER TABLE account_tokens ADD COLUMN token_secret TEXT");
   // Оценка MAL (из Shikimori) рядом с русским названием
   if (!columns("titles_ru").has("score"))
     db.exec("ALTER TABLE titles_ru ADD COLUMN score REAL");

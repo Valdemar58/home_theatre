@@ -7,6 +7,8 @@ import { Button, Badge, ErrorBox, Skel } from "./ui";
 import { Avatar } from "./Avatar";
 import { InvitePanel } from "./InvitePanel";
 import { useConfirm } from "./Dialogs";
+import { PrivateLink } from "./PrivateLink";
+import { formatDateTime } from "@/lib/time";
 export function AccountsView() {
   const qc = useQueryClient(),
     confirm = useConfirm();
@@ -98,13 +100,7 @@ export function AccountsView() {
             страницы ссылка не будет показана повторно. Новая ссылка отменит
             предыдущую.
           </p>
-          <input
-            aria-label="Ссылка настройки аккаунта"
-            readOnly
-            value={link.url}
-            onFocus={(e) => e.target.select()}
-            className="min-h-11 w-full min-w-0 rounded-lg border border-gray-600 bg-gray-900 px-3 text-sm"
-          />
+          <PrivateLink url={link.url} label="Ссылка настройки аккаунта" />
         </section>
       )}
       {data.requests.length > 0 && (
@@ -169,6 +165,8 @@ export function AccountsView() {
                     ? "Локальный аккаунт"
                     : "Нужно задать логин и пароль"}
                 </p>
+                {(a.invitedBy || a.invitedAt) && <p className="mt-1 break-words text-xs text-gray-400">Пригласил {a.invitedBy?.name || "удалённый аккаунт"}{a.invitedAt ? ` · ${formatDateTime(a.invitedAt)}` : " · дата неизвестна"}</p>}
+                {a.approvedAt && <p className="mt-1 break-words text-xs text-gray-400">Доступ одобрил {a.approvedBy?.name || "удалённый аккаунт"} · {formatDateTime(a.approvedAt)}</p>}
                 <div className="mt-3 flex flex-wrap gap-x-2 gap-y-2">
                   {!a.linked ? (
                     <Button
