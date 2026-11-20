@@ -357,7 +357,7 @@ export async function listStreams(): Promise<StreamItem[]> {
       episodes: l?.files.length ?? 0,
       ...(await linksFor(l ? Number(/\[tvdbid-(\d+)\]/.exec(l.folder)?.[1]) || null : null, l?.season ?? 1, jf, "stream")),
       rate: active ? playbackRate((g as TsTorrent).file_stats, await streamMinutes(t.hash)) : null,
-      files: strmEpisodes(t.hash),
+      files: strmEpisodes(t.hash).map(f=>({...f,bytes:g.file_stats?.find(stat=>stat.id===f.index)?.length})),
     } satisfies StreamItem;
   }));
   return items.sort((a, b) => (b.addedAt ?? 0) - (a.addedAt ?? 0));
@@ -519,7 +519,7 @@ export async function linksFor(tvdb: number | null, season: number, jf: JfSeries
 
 // ---------------------------------------------------------------- подготовка серии (prebuffer.ts)
 
-export type StrmEpisode = { index: number; code: string; file: string };
+export type StrmEpisode = { index: number; code: string; file: string; bytes?: number };
 
 /** Серии раздачи в библиотеке «Стрим»: индекс файла в TorrServer и код S01E05. */
 export function strmEpisodes(hash: string): StrmEpisode[] {
