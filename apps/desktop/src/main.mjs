@@ -113,12 +113,12 @@ async function accountBinding(action="status") {
   try {
     const dir=!app.isPackaged && process.env.HOME_THEATER_TEST_PROFILE ? app.getPath("userData") : join(app.getPath("appData"),"home_theater-device");
     const key=await installationKey(join(dir,"installation.key"));
-    const r=await profileSession().fetch(config.server+"/api/desktop/binding",{method:"POST",headers:{"Content-Type":"application/json",Origin:config.server},body:JSON.stringify({action,key,label:hostname().slice(0,80),platform:process.platform,previousToken:token||undefined}),redirect:"error"});
+    const r=await profileSession().fetch(config.server+"/api/desktop/binding",{method:"POST",headers:{"Content-Type":"application/json",Origin:config.server},body:JSON.stringify({action,key,label:hostname().slice(0,80),platform:process.platform,previousToken:token||undefined}),redirect:"error",signal:AbortSignal.timeout(15000)});
     let result=await r.json();
     if(!r.ok)throw new Error(result.error||"Не удалось подключить устройство");
     // Recover the credential for this installation; a hostname is never identity.
     if(action==="status"&&result.status==="linked"&&result.tokenMatches===false&&config.approved&&secretAvailable()){
-      const recovery=await profileSession().fetch(config.server+"/api/desktop/binding",{method:"POST",headers:{"Content-Type":"application/json",Origin:config.server},body:JSON.stringify({action:"link",key,label:hostname().slice(0,80),platform:process.platform,previousToken:token||undefined}),redirect:"error"});
+      const recovery=await profileSession().fetch(config.server+"/api/desktop/binding",{method:"POST",headers:{"Content-Type":"application/json",Origin:config.server},body:JSON.stringify({action:"link",key,label:hostname().slice(0,80),platform:process.platform,previousToken:token||undefined}),redirect:"error",signal:AbortSignal.timeout(15000)});
       result=await recovery.json();if(!recovery.ok)throw Error(result.error||"Не удалось восстановить подключение");
       if(result.token){token=result.token;config.approved=true;}
     }
@@ -179,7 +179,7 @@ async function openApp(room, destination) {
     { label: "Перезагрузить", accelerator:"CmdOrCtrl+R", click:()=>webWindow?.visible?webWindow.webContents.reload():window.webContents.reload() }, { type: "separator" }, { label: "Завершить", click: () => window.close() },
   ] }]);
   window.setMenu(appMenu);
-  webWindow.setMenuBarVisibility(false);
+  window.setMenuBarVisibility(false);
   const navigationState = () => {
     if (!webWindow || webWindow.isDestroyed()) return;
     const canGoBack = webWindow.webContents.navigationHistory.canGoBack();
@@ -554,8 +554,9 @@ async function linkShikimori(){
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on("second-instance", () => {
-    const visible = webWindow && !webWindow.isDestroyed() ? webWindow : window;
-    visible?.restore(); visible?.show(); visible?.focus();
+    window?.restore();window?.show();
+    const visible=[pickerWindow,oauthView,webWindow].find(v=>v?.visible&&!v.isDestroyed());
+    (visible||window)?.focus();
   });
   app
     .whenReady()
@@ -604,6 +605,7 @@ else {
       });
       window = new BrowserWindow({
         show:false,
+        autoHideMenuBar:true,
         width: 1280,
         height: 800,
         minWidth: 360,
