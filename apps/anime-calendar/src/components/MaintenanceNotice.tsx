@@ -62,7 +62,7 @@ export function MaintenanceNotice({ standalone = false }: { standalone?: boolean
       <p className="mt-1 max-w-prose text-gray-300">{active ? "Просмотр приостановлен, позиция сохранена. Дождитесь завершения обновления." : plan ? `Начало в ${new Date(plan.startsAt).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}. Просмотр будет приостановлен на время обновления.` : completed ? "Обновите страницу, чтобы продолжить с сохранённого места." : "Страница подключится к серверу после обслуживания."}</p>
       {disconnected && <p className="mt-1 text-gray-300">Связь с сервером восстанавливается…</p>}
     </div>
-    {plan && !active && <span aria-hidden="true" className="shrink-0 rounded-md bg-gray-700 px-2 py-1 font-medium tabular-nums">{Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, "0")}</span>}
+    {plan && !active && <span role="timer" aria-live="off" aria-label={`До обслуживания: ${Math.floor(seconds / 60)} мин ${seconds % 60} сек`} className="shrink-0 rounded-md bg-gray-700 px-2 py-1 font-medium tabular-nums">{Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, "0")}</span>}
     {!plan && (completed || (standalone && snapshot)) && <button onClick={() => { window.location.href = standalone ? "/" : window.location.href; }} className="min-h-9 rounded-lg px-3 text-indigo-300 underline-offset-4 hover:bg-gray-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400">{standalone ? "Вернуться в приложение" : "Обновить страницу"}</button>}
   </section>;
   return fullscreen ? createPortal(<div className="absolute inset-x-4 top-4 z-60">{notice}</div>, fullscreen) : notice;
