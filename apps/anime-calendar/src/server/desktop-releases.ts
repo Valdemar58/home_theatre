@@ -8,6 +8,7 @@ import { ApiError } from "./route";
 const entries = new Map<string, { device: string; release: ProwlarrRelease; expires: number }>();
 export async function desktopReleases(device: string, query: string) {
   if (query.trim().length < 2 || query.length > 150) throw new ApiError(400, "Введите название раздачи (2–150 символов)");
+  if (!env.prowlarrUrl || !env.prowlarrApiKey) throw new ApiError(503, "Поиск раздач не подключён. Добавьте torrent-файл или magnet-ссылку на устройство.");
   const results = await Promise.allSettled([searchRu(query.trim()), searchOrig(query.trim(), true)]);
   if (results.every(r => r.status === "rejected")) throw new ApiError(502, "Индексаторы недоступны. Проверьте серверные подключения и повторите поиск.");
   for (const [id, e] of entries) if (e.expires < Date.now()) entries.delete(id);

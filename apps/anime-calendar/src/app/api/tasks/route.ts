@@ -1,5 +1,6 @@
 import { ApiError, authed, json } from "@/server/route";
 import { latestTask, startTask } from "@/server/tasks";
+import { env } from "@/server/env";
 
 const KINDS = ["voices"];
 
@@ -20,6 +21,8 @@ export const GET = authed(async (req) => {
 export const POST = authed(async (req, user) => {
   const body = (await req.json().catch(() => ({}))) as { kind?: string; key?: string; origin?: string };
   const { kind, key } = parse(body.kind, body.key);
+  if (kind === "voices" && (!env.prowlarrUrl || !env.prowlarrApiKey))
+    throw new ApiError(503, "Поиск раздач не подключён. Добавьте torrent-файл или magnet-ссылку на устройство.");
   const origin = body.origin === "auto" ? "auto" : "user";
   return json({ task: await startTask(kind, key, { userId: user.id, origin }) });
 });

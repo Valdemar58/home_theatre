@@ -5,6 +5,7 @@ import { db } from "@/server/db";
 import { isRemote } from "@/server/remote";
 import { shikiRedirectFor } from "@/server/shikimori";
 import type { Visibility } from "@/lib/social-rules";
+import { integrationCapabilities } from "@/lib/system-modules";
 
 export type Me = {
   id: number;
@@ -16,7 +17,7 @@ export type Me = {
   /** Сервисы системы для меню: admin — только админу */
   services: { id: string; name: string; hint: string; url: string; admin: boolean }[];
   /** RU-индексатор: выбор раздачи с озвучкой */
-  ru: { configured: boolean; stream: boolean };
+  ru: { configured: boolean; stream: boolean; serverDownload: boolean };
   shikimori: {
     configured: boolean;
     linked: boolean;
@@ -30,7 +31,8 @@ export type Me = {
 
 export const GET = authed(async (req, user) => {
   // Из интернета сервисы — на поддоменах за единым входом (apps/caddy/Caddyfile), дома — по портам
-  const sub = (name: string, local: string) => (isRemote(req) && env.publicUrl ? env.publicUrl.replace("://", `://${name}.`) : local);
+  const sub = (name: string, local: string) => (!local ? "" : isRemote(req) && env.publicUrl ? env.publicUrl.replace("://", `://${name}.`) : local);
+  const capabilities = integrationCapabilities(env);
   const seerrUrl = sub("seerr", env.seerrPublicUrl);
   const me: Me = {
     id: user.id,
@@ -47,8 +49,8 @@ export const GET = authed(async (req, user) => {
       { id: "bazarr", name: "Bazarr", hint: "субтитры", url: sub("bazarr", env.servicesPublic.bazarr), admin: true },
       { id: "qbittorrent", name: "qBittorrent", hint: "торрент-клиент", url: sub("qbit", env.servicesPublic.qbittorrent), admin: true },
       { id: "torrserver", name: "TorrServer", hint: "онлайн-просмотр торрентов", url: sub("torrserver", env.servicesPublic.torrserver), admin: true },
-    ].filter((s) => !s.admin || user.is_admin),
-    ru: { configured: Boolean(env.sonarrApiKey && env.prowlarrApiKey), stream: Boolean(env.jellyfinApiKey && env.prowlarrApiKey) },
+    ].filter((s) => Boolean(s.url) && (!s.admin || user.is_admin)),
+    ru: { configured: capabilities.search, stream: capabilities.serverStream, serverDownload: capabilities.serverDownload },
     shikimori: {
       configured: shikimoriConfigured(),
       linked: Boolean(user.shiki_refresh),

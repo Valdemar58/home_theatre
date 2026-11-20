@@ -284,7 +284,7 @@ async function runOne(row: Row) {
  * чтобы кнопка открывалась мгновенно, а о новых раздачах приходило уведомление.
  */
 export async function scheduleVoices(limit = 5) {
-  if (!env.sonarrApiKey || !env.prowlarrApiKey) return;
+  if (!env.prowlarrUrl || !env.prowlarrApiKey) return;
   recover();
   const rows = db.prepare<[], { anilist_id: number; user_id: number }>(
     "SELECT anilist_id, user_id FROM list_entries WHERE status IN ('watching', 'rewatching', 'planned')").all();

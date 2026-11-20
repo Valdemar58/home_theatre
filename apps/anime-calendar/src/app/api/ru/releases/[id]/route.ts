@@ -5,7 +5,7 @@ import { grabRuRelease } from "@/server/ru/releases";
 import { cachedVoices, latestTask } from "@/server/tasks";
 
 const requireRu = () => {
-  if (!env.sonarrApiKey || !env.prowlarrApiKey) throw new ApiError(400, "RU-индексатор не настроен (нет ключей Sonarr/Prowlarr)");
+  if (!env.prowlarrUrl || !env.prowlarrApiKey) throw new ApiError(503, "Поиск раздач не подключён. Можно добавить torrent или magnet на устройство.");
 };
 
 /**
@@ -24,6 +24,7 @@ export const GET = authed<{ id: string }>(async (_req, _user, { id }) => {
 export const POST = authed<{ id: string }>(async (req, user, { id }) => {
   adminOnly(user);
   requireRu();
+  if (!env.sonarrUrl || !env.sonarrApiKey) throw new ApiError(503, "Серверное скачивание не подключено. Используйте desktop-устройство.");
   const { guid } = (await req.json().catch(() => ({}))) as { guid?: string };
   if (!guid) throw new ApiError(400, "Не выбрана раздача");
   const result = await grabRuRelease(intParam(id, "id"), guid);

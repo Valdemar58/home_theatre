@@ -14,6 +14,7 @@ import { searchQueries, type Hit, type Provider } from "./types";
 const base = () => providerConfig().suwayomi.url.replace(/\/+$/, "");
 
 export async function suwa<T>(query: string, variables?: Record<string, unknown>, timeoutMs = 60_000, signal?: AbortSignal, isolated = false): Promise<T> {
+  if (!base()) throw new Error("Suwayomi не подключён");
   const run = async () => {
     const r = await fetch(`${base()}/api/graphql`, {
       method: "POST", headers: { "Content-Type": "application/json" },

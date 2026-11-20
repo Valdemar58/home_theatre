@@ -3,16 +3,23 @@ import type { BookDetails } from "@/lib/books";
 
 vi.mock("server-only", () => ({}));
 vi.mock("../../sources", () => ({ guarded: (_source: string, fn: () => unknown) => fn() }));
-const { state, remember } = vi.hoisted(() => ({ state: vi.fn(), remember: vi.fn() }));
+const { state, remember, config } = vi.hoisted(() => ({ state: vi.fn(), remember: vi.fn(), config: { url: "http://suwayomi:4567" } }));
 vi.mock("../source-state", () => ({ sourceState: state, rememberSource: remember }));
-vi.mock("../provider-config", () => ({ providerConfig: () => ({ suwayomi: { url: "http://suwayomi:4567", sources: ["ru", "en", "ja"], languages: ["ru", "en", "ja"] } }) }));
-import { suwayomi } from "./suwayomi";
+vi.mock("../provider-config", () => ({ providerConfig: () => ({ suwayomi: { url: config.url, sources: ["ru", "en", "ja"], languages: ["ru", "en", "ja"] } }) }));
+import { suwa, suwayomi } from "./suwayomi";
 
 const book = { id: 30002, title: { romaji: "Berserk", english: "Berserk", ru: "Берсерк", native: "ベルセルク" }, synonyms: ["Berserk"] } as BookDetails;
 const response = (data: unknown) => ({ ok: true, json: async () => ({ data }) });
 
-beforeEach(() => { state.mockClear(); remember.mockClear(); });
+beforeEach(() => { state.mockClear(); remember.mockClear(); config.url = "http://suwayomi:4567"; });
 describe("Suwayomi adapter", () => {
+  it("an intentionally absent bridge does not make a failing upstream request", async () => {
+    config.url = "";
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    await expect(suwa("{ aboutServer { version } }")).rejects.toThrow("не подключён");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
   it("keeps healthy language sources when another extension fails and records the failure", async () => {
     const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
       const { query, variables } = JSON.parse(init.body as string);
