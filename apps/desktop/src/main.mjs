@@ -16,6 +16,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { hostname } from "node:os";
 import { installationKey } from "./device-identity.mjs";
 import { serverUrl } from "./server-url.mjs";
+import { allowAppFullscreen } from "./desktop-permissions.mjs";
 import { Library } from "./library.mjs";
 import { prepare, stopPreparation } from "./prepare.mjs";
 import { HostTransport } from "./transport.mjs";
@@ -150,12 +151,38 @@ async function openApp(room, destination) {
   const guard = (event, url) => { try { const u = new URL(url); if (u.protocol !== "https:" && u.origin !== config.server) event.preventDefault(); } catch { event.preventDefault(); } };
   webWindow.webContents.on("will-navigate", guard);
   webWindow.webContents.on("will-redirect", guard);
+  const goBack = () => {
+    if (webWindow && !webWindow.isDestroyed() && webWindow.webContents.navigationHistory.canGoBack())
+      webWindow.webContents.navigationHistory.goBack();
+  };
   const appMenu = Menu.buildFromTemplate([{ label: "home_theater", submenu: [
+    { id: "desktop-back", label: "Назад", accelerator: "Alt+Left", enabled: false, click: goBack },
     { label: "Локальные файлы и устройство", click: () => { window.show(); window.focus(); } },
     { label: "Перезагрузить", role: "reload" }, { type: "separator" }, { label: "Завершить", click: () => window.close() },
   ] }]);
   webWindow.setMenu(appMenu);
   webWindow.setMenuBarVisibility(false);
+  const navigationState = () => {
+    if (!webWindow || webWindow.isDestroyed()) return;
+    const canGoBack = webWindow.webContents.navigationHistory.canGoBack();
+    appMenu.getMenuItemById("desktop-back").enabled = canGoBack;
+    webWindow.webContents.send("desktop-navigation-state", { canGoBack });
+  };
+  for (const event of ["did-navigate", "did-navigate-in-page", "did-finish-load"])
+    webWindow.webContents.on(event, navigationState);
+  webWindow.on("app-command", (_event, command) => { if (command === "browser-backward") goBack(); });
+  webWindow.webContents.on("before-input-event", (event, input) => {
+    if (input.type === "keyDown" && input.key === "ArrowLeft" && input.alt && !input.control && !input.meta && !input.shift) {
+      event.preventDefault();
+      goBack();
+    }
+  });
+  const fromAppWindow = event => webWindow && !webWindow.isDestroyed() &&
+    event.sender === webWindow.webContents && event.senderFrame === webWindow.webContents.mainFrame;
+  ipcMain.removeAllListeners("desktop-go-back");
+  ipcMain.on("desktop-go-back", event => { if (fromAppWindow(event)) goBack(); });
+  ipcMain.removeAllListeners("desktop-navigation-ready");
+  ipcMain.on("desktop-navigation-ready", event => { if (fromAppWindow(event)) navigationState(); });
   ipcMain.removeAllListeners("desktop-menu");
   ipcMain.on("desktop-menu", event => {
     if (webWindow && !webWindow.isDestroyed() && event.sender === webWindow.webContents && event.senderFrame === webWindow.webContents.mainFrame)
@@ -360,10 +387,17 @@ else {
           return new Response("Not found", { status: 404 });
         return net.fetch(pathToFileURL(join(root, name)).toString());
       });
-      session.defaultSession.setPermissionRequestHandler((_w, _p, cb) =>
-        cb(false),
-      );
-      session.defaultSession.setPermissionCheckHandler(() => false);
+      const fullscreenAllowed = (contents, permission, url, details) => allowAppFullscreen({
+        permission,
+        ownWindow: !!webWindow && !webWindow.isDestroyed() && contents === webWindow.webContents,
+        isMainFrame: details.isMainFrame,
+        requestingUrl: url,
+        server: config.server,
+      });
+      session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) =>
+        callback(fullscreenAllowed(contents, permission, details.requestingUrl, details)));
+      session.defaultSession.setPermissionCheckHandler((contents, permission, origin, details) =>
+        fullscreenAllowed(contents, permission, details.requestingUrl || origin, details));
       ipcMain.handle("host", async (event, kind, data) => {
         if (
           event.sender !== window.webContents ||
@@ -438,4 +472,3 @@ else {
   });
   app.on("window-all-closed", () => app.quit());
 }
-
