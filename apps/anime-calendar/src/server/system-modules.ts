@@ -6,9 +6,11 @@ import type { SystemModule, SystemModulesView } from "@/lib/system-modules";
 type Probe = {
   id: string; name: string; purpose: string; url: string; path: string; key?: string;
   requiresKey?: boolean; publicUrl?: string; profile?: string; inspect?: "version" | "indexers" | "models" | "suwayomi";
+  authHeader?: "Authorization";
 };
 const profiles = () => new Set((process.env.HOME_THEATER_MODULES ?? "").split(",").filter(Boolean));
 const definitions = (): Probe[] => [
+  { id: "unleash", name: "Управление функциями", purpose: "Разрешение ИИ-операций. При сбое сохраняются последние решения; локальное отключение имеет приоритет.", url: process.env.UNLEASH_URL ?? "", path: "client/features", key: process.env.UNLEASH_API_TOKEN, requiresKey: true, authHeader: "Authorization", profile: "flags", publicUrl: process.env.UNLEASH_PUBLIC_URL },
   { id: "prowlarr", name: "Поиск раздач", purpose: "Поиск для desktop. Скачивание выполняется на устройстве.", url: env.prowlarrUrl, path: "/api/v1/indexer", key: env.prowlarrApiKey, requiresKey: true, profile: "search", inspect: "indexers", publicUrl: env.servicesPublic.prowlarr },
   { id: "sonarr", name: "Sonarr", purpose: "Существующий серверный путь скачивания; для desktop не требуется.", url: env.sonarrUrl, path: "/api/v3/system/status", key: env.sonarrApiKey, requiresKey: true, inspect: "version", publicUrl: env.servicesPublic.sonarr },
   { id: "jellyfin", name: "Jellyfin", purpose: "Существующая медиатека и серверный плеер. Desktop-хосты работают отдельно.", url: env.jellyfinUrl, path: "/System/Info/Public", inspect: "version", publicUrl: env.jellyfinPublicUrl },
@@ -43,7 +45,7 @@ export async function probeModule(probe: Probe, fetcher: typeof fetch = fetch): 
     const response = await fetcher(endpoint, {
       method: probe.inspect === "suwayomi" ? "POST" : "GET",
       body: probe.inspect === "suwayomi" ? JSON.stringify({ query: "{ aboutServer { version } }" }) : undefined,
-      headers: { Accept: "application/json", ...(probe.key ? { "X-Api-Key": probe.key } : {}), ...(probe.inspect === "suwayomi" ? { "Content-Type": "application/json" } : {}) },
+      headers: { Accept: "application/json", ...(probe.key ? { [probe.authHeader ?? "X-Api-Key"]: probe.key } : {}), ...(probe.inspect === "suwayomi" ? { "Content-Type": "application/json" } : {}) },
       signal: AbortSignal.timeout(2500), redirect: "error", cache: "no-store",
     });
     if ([401, 403].includes(response.status)) return { ...base, state: "unauthorized", detail: "Компонент ответил, но отклонил доступ. Проверьте ключ." };

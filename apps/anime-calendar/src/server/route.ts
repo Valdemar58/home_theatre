@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { HttpError } from "./http";
 import { currentUser, type User } from "./session";
 import { SourceDown, withServedLog } from "./sources";
+import { AiDisabled } from "./feature-flags";
 import { beginMaintenanceWork, maintenanceActive, maintenanceProgressAllowed, MAINTENANCE_MESSAGE } from "./maintenance";
 
 export class ApiError extends Error {
@@ -46,6 +47,8 @@ export function authed<P = Record<string, string>>(
       return res;
       } finally { finish(); }
     } catch (err) {
+      if (err instanceof AiDisabled)
+        return json({ error: err.message, code: "feature_disabled" }, 503);
       if (err instanceof ApiError)
         return json({ error: err.message }, err.status);
       // Источник лежит, а сохранённого нет — честно об этом, без трассировки в логе

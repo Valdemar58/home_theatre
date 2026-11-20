@@ -6,6 +6,12 @@ import { extractJson, validate, type JsonSchema } from "@/lib/json-lite";
 import { costUsd, type Usage } from "@/lib/llm-pricing";
 import { tierOf } from "@/lib/llm-tier";
 import type { LlmTask } from "@/lib/llm-tasks";
+import type { AiCategory } from "@/lib/feature-flags";
+import { AiDisabled, featureFlags } from "./feature-flags";
+
+export const taskCategory = (task: LlmTask): AiCategory =>
+  task === "portrait" || task === "rerank" ? "personal" :
+    ["look", "frame", "manga_translate"].includes(task) ? "media" : "shared";
 
 // Вызовы LLM по задачам: внешний API (если задача в его пуле, есть ключ и бюджет) →
 // локальная Ollama → «без ИИ» (LlmUnavailable — функция работает упрощённо, как без Ollama).
@@ -43,11 +49,11 @@ const has = (names: string[], m: string) => names.some((n) => n === m || n === `
 
 /** Локальная чат-модель скачана и Ollama отвечает (проверка кэшируется на минуту). */
 export async function ollamaAvailable(): Promise<boolean> {
-  return getLlmConfig().mode !== "off" && has(await ollamaModels(), LLM_MODEL);
+  return featureFlags().enabled("ai-enabled") && getLlmConfig().mode !== "off" && has(await ollamaModels(), LLM_MODEL);
 }
 /** Модель эмбеддингов доступна (нужна «похожему», карте и рекомендациям по смыслу). */
 export async function embedAvailable(): Promise<boolean> {
-  return has(await ollamaModels(), EMBED_MODEL);
+  return featureFlags().allowed("shared") && has(await ollamaModels(), EMBED_MODEL);
 }
 
 // ---------------------------------------------------------------- предохранитель внешнего API
@@ -72,6 +78,7 @@ function tripOn(e: unknown) {
 
 /** Звенья цепочки для задачи (пусто — ИИ недоступен). */
 export async function taskRoute(task: LlmTask): Promise<Link[]> {
+  if (!featureFlags().allowed(taskCategory(task))) return [];
   const s = getLlmConfig();
   if (s.mode === "off") return [];
   const links: Link[] = [];
@@ -116,6 +123,7 @@ async function attempt(link: Link, r: ChatRequest): Promise<ChatResponse> {
 
 /** Ответ по JSON-схеме для задачи — с запасными вариантами и записью расхода. */
 export async function runTask<T>(task: LlmTask, req: TaskRequest): Promise<LlmResult<T>> {
+  featureFlags().assert(taskCategory(task));
   const links = (await taskRoute(task)).filter((l) => l.tier >= (req.minTier ?? 0) && (!req.images?.length || l.provider === "ollama"));
   if (!links.length) throw new LlmUnavailable(task);
   const prices = getLlmConfig().prices;
@@ -129,6 +137,7 @@ export async function runTask<T>(task: LlmTask, req: TaskRequest): Promise<LlmRe
       const base = { task, provider: link.provider, model: link.model };
       try {
         const out = await attempt(link, {
+          aiCategory: taskCategory(task),
           model: link.model, schema: req.schema, system: req.system, user: req.user, repair,
           timeoutMs: req.timeoutMs ?? 300_000, maxTokens: req.maxTokens, images: req.images, freeform: req.freeform,
         });
@@ -159,6 +168,7 @@ export async function runTask<T>(task: LlmTask, req: TaskRequest): Promise<LlmRe
         }
         repair = { answer: out.text, errors };
       } catch (e) {
+        if (e instanceof AiDisabled) throw e; // A switch is not a provider failure; never try a fallback.
         logUsage({ ...base, prompt: 0, cacheHit: 0, completion: 0, costUsd: 0, ms: Date.now() - started, ok: false, error: String(e) });
         if (link.provider === "external") tripOn(e);
         lastError = e;
@@ -192,7 +202,9 @@ export async function testPool(pool: "local" | "cheap" | "smart"): Promise<TestR
 
 /** Эмбеддинги текстов (нормированные векторы) — локально. */
 export async function embed(texts: string[]): Promise<number[][]> {
+  featureFlags().assert("shared");
   return ollamaRun(async () => {
+    featureFlags().assert("shared");
     const res = await fetch(`${OLLAMA_URL}/api/embed`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

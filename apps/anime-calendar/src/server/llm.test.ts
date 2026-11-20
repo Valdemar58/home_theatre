@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -37,6 +37,7 @@ const usageRows = () => db.prepare<[], { task: string; provider: string; ok: num
   "SELECT task, provider, ok, cost_usd, error FROM llm_usage ORDER BY id").all();
 
 beforeEach(() => {
+  rmSync(path.join(process.env.DATA_DIR!, "feature-flags", "overrides.json"), { force: true });
   db.exec("DELETE FROM llm_usage");
   resetLlmConfig();
   extQueue.length = 0;
@@ -45,6 +46,16 @@ beforeEach(() => {
 });
 
 describe("маршрутизация задач LLM", () => {
+  it("отключение персонального ИИ блокирует провайдера, не затрагивая общие задачи", async () => {
+    const directory = path.join(process.env.DATA_DIR!, "feature-flags");
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(path.join(directory, "overrides.json"), JSON.stringify({ version: 1, disabled: ["ai-personal"] }));
+    await expect(runTask("portrait", req)).rejects.toThrow("отключён администратором");
+    expect(calls).toEqual([]);
+    expect(usageRows()).toEqual([]);
+    expect(await taskRoute("portrait")).toEqual([]);
+    expect(await taskRoute("analysis")).not.toEqual([]);
+  });
   it("задача из внешнего пула идёт во внешний API, расход записан", async () => {
     extQueue.push(extAnswer('{"text":"внешне"}'));
     const r = await runTask<{ text: string }>("recap", req);

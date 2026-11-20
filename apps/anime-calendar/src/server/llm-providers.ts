@@ -3,11 +3,14 @@ import { RateLimiter } from "./http";
 import { OLLAMA_URL, external } from "./llm-config";
 import { schemaPrompt, type JsonSchema } from "@/lib/json-lite";
 import type { Usage } from "@/lib/llm-pricing";
+import type { AiCategory } from "@/lib/feature-flags";
+import { featureFlags } from "./feature-flags";
 
 // Провайдеры чата: локальная Ollama (одна видеокарта — строго по очереди) и внешний
 // OpenAI-совместимый API (DeepSeek) — несколько запросов параллельно.
 
 export type ChatRequest = {
+  aiCategory?: AiCategory;
   model: string;
   schema: JsonSchema;
   system: string;
@@ -54,6 +57,7 @@ export function ollamaRun<T>(fn: () => Promise<T>): Promise<T> {
 
 export function ollamaChat(r: ChatRequest): Promise<ChatResponse> {
   return ollamaRun(async () => {
+    featureFlags().assert(r.aiCategory ?? "shared");
     const res = await fetch(`${OLLAMA_URL}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -100,6 +104,7 @@ async function slot<T>(fn: () => Promise<T>): Promise<T> {
 export function externalChat(r: ChatRequest): Promise<ChatResponse> {
   if (!external.apiKey) return Promise.reject(new ProviderError(401, "ключ внешнего API не задан"));
   return slot(async () => {
+    featureFlags().assert(r.aiCategory ?? "shared");
     const res = await fetch(`${external.url}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${external.apiKey}` },

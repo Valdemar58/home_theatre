@@ -3,6 +3,7 @@
   "modules": {
     "https": {"services": ["proxy"], "role": "Публичный HTTPS", "optional": true},
     "search": {"services": ["prowlarr"], "role": "Поиск раздач; скачивание остаётся на desktop", "optional": true},
-    "llm": {"services": ["ollama"], "role": "Локальная LLM; модели устанавливаются отдельно", "optional": true}
+    "llm": {"services": ["ollama"], "role": "Локальная LLM; модели устанавливаются отдельно", "optional": true},
+    "flags": {"services": ["unleash"], "role": "Управление разрешением функций; Unleash OSS", "optional": true}
   }
 }
