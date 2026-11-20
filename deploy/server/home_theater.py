@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tarfile
 from urllib.parse import urlsplit
 from urllib.request import urlopen
 import xml.etree.ElementTree as ET
@@ -134,8 +135,11 @@ class Installation:
         write_json(self.root / "installation.json", config)
 
     def compose(self, *args, capture=False):
-        return run(["docker", "compose", "--project-directory", str(self.root),
-                    "--env-file", str(self.root / "server.env"), "-f", str(self.root / "compose.yml"), *args], capture=capture)
+        return run(self.compose_args(*args), capture=capture)
+
+    def compose_args(self, *args):
+        return ["docker", "compose", "--project-directory", str(self.root),
+                "--env-file", str(self.root / "server.env"), "-f", str(self.root / "compose.yml"), *args]
 
     def render(self, config):
         values = read_env(self.root / "server.env")
@@ -143,6 +147,7 @@ class Installation:
                       PUBLIC_HOST=urlsplit(config["origin"]).hostname,
                       COOKIE_SECURE="1" if config["origin"].startswith("https:") else "0",
                       HTTP_PORT=str(config["httpPort"]), COMPOSE_PROJECT_NAME=config["project"],
+                      DATABASE_NAME=config.get("databaseName", "calendar"),
                       COMPOSE_PROFILES=",".join(config["modules"]))
         values.update(config.get("images", {}))
         write_env(self.root / "server.env", values)
@@ -274,7 +279,7 @@ def install(args):
         raise ValueError("Supported optional modules: search,llm")
     if origin.startswith("https:"):
         modules.append("https")
-    required = ("compose.yml", "Caddyfile", "modules.json", "home_theater.py", "home-theater", "profiles.toml")
+    required = ("compose.yml", "Caddyfile", "modules.json", "home_theater.py", "home-theater", "server_backup.py", "profiles.toml")
     for name in required:
         if not (bundle / name).is_file():
             raise ValueError(f"Incomplete installer bundle: {name}")
@@ -298,6 +303,8 @@ def install(args):
               "httpPort": args.http_port, "project": args.project, "modules": modules}
     installation.save(config)
     installation.up()
+    from server_backup import daily_schedule
+    daily_schedule(installation)
     print(f"Installed. Run: sudo {root}/home-theater owner-link")
     print("Owner setup is explicit; no default public admin password or automatic registration approval")
 
@@ -317,6 +324,15 @@ def main():
     commands.add_parser("up")
     commands.add_parser("doctor")
     commands.add_parser("owner-link")
+    backup = commands.add_parser("backup")
+    backup.add_argument("--reason", choices=["manual", "pre-update", "daily"], default="manual")
+    commands.add_parser("daily-backup-install")
+    daily = commands.add_parser("daily-backup")
+    daily.add_argument("state", choices=["on", "off"])
+    restore = commands.add_parser("restore")
+    restore.add_argument("archive")
+    verify = commands.add_parser("verify-backup")
+    verify.add_argument("archive")
     origin = commands.add_parser("origin")
     origin.add_argument("value")
     reset = commands.add_parser("reset-password")
@@ -343,6 +359,19 @@ def main():
             installation.module(args.name, args.state == "on")
         elif args.command == "origin":
             installation.origin(args.value)
+        elif args.command == "backup":
+            from server_backup import create_backup
+            create_backup(installation, args.reason)
+        elif args.command == "restore":
+            from server_backup import restore_backup
+            restore_backup(installation, args.archive)
+        elif args.command == "verify-backup":
+            from server_backup import verify_backup
+            verify_backup(args.archive)
+            print("Backup checksums verified")
+        elif args.command in ("daily-backup", "daily-backup-install"):
+            from server_backup import daily_schedule
+            daily_schedule(installation, None if args.command == "daily-backup-install" else args.state == "on")
         elif args.command in ("owner-link", "reset-password"):
             command = "create-owner" if args.command == "owner-link" else "reset"
             extra = [] if command == "create-owner" else ["--user-id", str(args.user_id)]
@@ -352,6 +381,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (ValueError, RuntimeError, OSError) as error:
+    except (ValueError, RuntimeError, OSError, tarfile.TarError, subprocess.CalledProcessError) as error:
         print(f"home-theater: {error}", file=sys.stderr)
         sys.exit(1)

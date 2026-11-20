@@ -4,10 +4,12 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import sys
 from unittest.mock import patch
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "deploy/server"))
 SPEC = importlib.util.spec_from_file_location("installer", ROOT / "deploy/server/home_theater.py")
 installer = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(installer)
@@ -104,12 +106,13 @@ class InstallerTests(unittest.TestCase):
             up.assert_called_once()
 
     @patch.object(installer.Installation, "up")
+    @patch("server_backup.daily_schedule")
     @patch.object(installer.os, "chown")
     @patch.object(installer, "docker_install")
     @patch.object(installer, "check_platform")
-    def test_fresh_install_has_private_secrets_and_readable_profiles(self, platform, docker, chown, up):
+    def test_fresh_install_has_private_secrets_and_readable_profiles(self, platform, docker, chown, schedule, up):
         with tempfile.TemporaryDirectory() as folder, tempfile.TemporaryDirectory() as bundle:
-            for name in ("compose.yml", "Caddyfile", "modules.json", "home_theater.py", "home-theater", "profiles.toml"):
+            for name in ("compose.yml", "Caddyfile", "modules.json", "home_theater.py", "home-theater", "server_backup.py", "profiles.toml"):
                 (Path(bundle) / name).write_text("fixture")
             args = self.args(folder)
             args.bundle, args.image = bundle, PIN
