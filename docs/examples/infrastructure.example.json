@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "servers": {
+    "production": {
+      "enabled": false,
+      "label": "Основной VPS",
+      "roles": ["application", "feature_flags"],
+      "ssh": {
+        "configHost": "",
+        "host": "",
+        "port": 22,
+        "user": "",
+        "authentication": "password-interactive",
+        "identityFile": "",
+        "useAgent": true
+      },
+      "services": {
+        "home_theater": { "publicUrl": "", "installDirectory": "/opt/home_theater" },
+        "unleash": { "publicUrl": "" }
+      }
+    },
+    "observability": {
+      "enabled": false,
+      "label": "Наблюдаемость",
+      "roles": ["observability"],
+      "ssh": {
+        "configHost": "",
+        "host": "",
+        "port": 22,
+        "user": "",
+        "authentication": "agent-or-key",
+        "identityFile": "",
+        "useAgent": true
+      },
+      "services": {
+        "dashboard": { "publicUrl": "" },
+        "metrics": { "publicUrl": "" }
+      }
+    },
+    "kubernetes-node": {
+      "enabled": false,
+      "label": "Узел Kubernetes",
+      "roles": ["kubernetes"],
+      "ssh": {
+        "configHost": "",
+        "host": "",
+        "port": 22,
+        "user": "",
+        "authentication": "agent-or-key",
+        "identityFile": "",
+        "useAgent": true
+      },
+      "services": {}
+    }
+  },
+  "clusters": {
+    "main": {
+      "enabled": false,
+      "label": "Основной кластер",
+      "kubeconfigFile": "",
+      "context": "",
+      "namespace": "home-theater"
+    }
+  }
+}
