@@ -30,7 +30,7 @@ export function authed<P = Record<string, string>>(
     try {
       const user = await currentUser();
       if (!user) return json({ error: "Нужно войти" }, 401);
-      const readOnlyRoom = req.method === "GET" && /^\/api\/rooms\/[a-f0-9]+(?:\/events)?$/.test(new URL(req.url).pathname);
+      const readOnlyRoom = req.method === "GET" && /^\/api\/rooms\/[A-Za-z0-9_-]{1,128}(?:\/events)?$/.test(new URL(req.url).pathname);
       if (maintenanceActive() && !maintenanceProgressAllowed(req.method, new URL(req.url).pathname) && !readOnlyRoom && new URL(req.url).pathname !== "/api/me")
         return json({ error: MAINTENANCE_MESSAGE, maintenance: true }, 503);
       const finish = beginMaintenanceWork("request");

@@ -61,6 +61,7 @@ it("blocks new API work including desktop routes, retains health and rewrites fu
   }
   expect(proxy(new NextRequest("https://test.example/api/health/database")).status).toBe(200);
   expect(proxy(new NextRequest("https://test.example/api/maintenance")).status).toBe(200);
+  expect(proxy(new NextRequest("https://test.example/api/rooms/Za_-Y1aB/events")).status).toBe(200);
   expect(proxy(new NextRequest("https://test.example/api/play/abc123", { method: "POST" })).status).toBe(200);
   writeFileSync(maintenancePath(), JSON.stringify({ ...plan(), startsAt: Date.now() - 15000 }));
   expect(proxy(new NextRequest("https://test.example/api/play/abc123", { method: "POST" })).status).toBe(503);
