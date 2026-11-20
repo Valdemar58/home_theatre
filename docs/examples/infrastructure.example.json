@@ -12,7 +12,15 @@
         "user": "",
         "authentication": "password-interactive",
         "identityFile": "",
-        "useAgent": true
+        "useAgent": true,
+        "knownHostsFile": "",
+        "hostKeyFingerprint": "",
+        "credentialFile": "",
+        "activeAccount": "",
+        "accounts": {
+          "root": { "user": "root", "authentication": "password-interactive", "identityFile": "", "credentialFile": "" },
+          "admin": { "user": "homeadmin", "authentication": "agent-or-key", "identityFile": "", "credentialFile": "" }
+        }
       },
       "services": {
         "home_theater": { "publicUrl": "", "installDirectory": "/opt/home_theater" },
