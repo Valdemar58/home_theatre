@@ -66,6 +66,8 @@ def copy_tree(source, destination, *, data=False):
                       and name not in ("logs", "Backups")]
         for name in filenames:
             path = here / name
+            if data and here == source and name in ("maintenance.json", "maintenance-ack.json"):
+                continue
             if path.is_symlink() or not path.is_file() or (data and path.suffix.lower() in MEDIA):
                 continue
             target = destination / path.relative_to(source)
@@ -205,6 +207,14 @@ def restore_backup(installation, source, *, allow_active=False, safety_backup=Tr
         old_application = (installation.root / "application.env").read_bytes()
         old_server = (installation.root / "server.env").read_bytes()
         (stage / "data/stream").mkdir(parents=True, exist_ok=True)
+        # Runtime coordination belongs to the target installation, not to a historical
+        # snapshot. In particular a manual pre-update restore must not resurrect an
+        # expired maintenance window. An ongoing automatic rollback keeps its lock.
+        for name in ("maintenance.json", "maintenance-ack.json"):
+            (stage / "data" / name).unlink(missing_ok=True)
+        current_control = installation.root / "data/maintenance.json"
+        if current_control.is_file() and not current_control.is_symlink():
+            shutil.copyfile(current_control, stage / "data/maintenance.json")
         chown_tree(stage / "data")
         suffix = secrets.token_hex(6)
         saved_data = installation.root / ("data-before-restore-" + suffix)
