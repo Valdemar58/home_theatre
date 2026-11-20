@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/client";
 import { Button, ErrorBox } from "./ui";
+import { useCurrentDesktop } from "./CurrentDesktopDevice";
 type Device = {
   id: string;
   label: string;
@@ -18,15 +19,9 @@ export function Devices() {
   const [error, setError] = useState<unknown>(null),
     [done, setDone] = useState(false),
     [busy, setBusy] = useState(false);
-  const [desktop, setDesktop] = useState(false);
-  const [binding, setBinding] = useState<{ id: string | null; status: string; active?: boolean } | null>(null);
+  const currentDesktop=useCurrentDesktop(),desktop=currentDesktop.desktop,binding=currentDesktop.data;
   const localDevice = binding?.id;
   type DesktopWindow = Window & { homeTheaterDesktop?: { linkDevice: () => Promise<{ id: string | null; status: string; active?: boolean }>; unlinkDevice: () => Promise<{ id: string | null; status: string; active?: boolean }>; deviceInfo: () => Promise<{ id: string | null; status: string; active?: boolean }> } };
-  useEffect(() => {
-    const bridge = (window as DesktopWindow).homeTheaterDesktop;
-    setDesktop(!!bridge);
-    if (bridge) void bridge.deviceInfo().then(setBinding).catch(setError);
-  }, []);
   const devices = useQuery({
     queryKey: ["devices"],
     queryFn: () => api<Device[]>("/api/desktop/devices"),
@@ -50,7 +45,7 @@ export function Devices() {
       if (action === "approve") setDone(true);
       await qc.invalidateQueries({ queryKey: ["devices"] });
       const bridge = (window as DesktopWindow).homeTheaterDesktop;
-      if (bridge) setBinding(await bridge.deviceInfo());
+      if (bridge) await qc.invalidateQueries({queryKey:['current-desktop-device']});
     } catch (e) {
       setError(e);
     } finally {
@@ -60,20 +55,18 @@ export function Devices() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <h1 className="text-2xl font-bold">Мои устройства</h1>
-      {desktop && !pair && <section className="space-y-3 rounded-xl bg-gray-800 p-4">
+      {desktop && !pair && binding?.status==='other-account' && <section className="space-y-3 rounded-xl bg-gray-800 p-4">
         <h2 className="text-lg font-semibold">Этот компьютер</h2>
-        <p className="text-sm text-gray-300">Вход в аккаунт уже выполнен. Подключите устройство для загрузок на этот компьютер и управления ими из браузера. Раздача комнатам разрешается отдельно.</p>
-        {binding?.status === "linked" && binding.active ? <p role="status" className="text-sm text-emerald-300">Этот компьютер уже подключён к вашему аккаунту.</p> : <>
-          {binding?.status === "other-account" && <p className="text-sm text-amber-300">Компьютер подключён к другому аккаунту. Сначала отвяжите его: прежний аккаунт потеряет доступ к загрузкам и раздаче на этом устройстве. Файлы сохранятся.</p>}
+          <p className="text-sm text-amber-300">Компьютер подключён к другому аккаунту. Сначала отвяжите его: прежний аккаунт потеряет доступ к загрузкам и раздаче на этом устройстве. Файлы сохранятся.</p>
           <Button disabled={busy || !binding} onClick={async () => {
             setBusy(true); setError(null);
             try {
               const bridge = (window as DesktopWindow).homeTheaterDesktop!;
-              setBinding(await (binding?.status === "other-account" ? bridge.unlinkDevice() : bridge.linkDevice()));
+              await bridge.unlinkDevice();
+              await qc.invalidateQueries({queryKey:['current-desktop-device']});
               await qc.invalidateQueries({ queryKey: ["devices"] });
             } catch (e) { setError(e); } finally { setBusy(false); }
-          }}>{busy ? "Подождите…" : binding?.status === "other-account" ? "Отвязать от другого аккаунта" : binding?.status === "linked" ? "Восстановить подключение" : "Подключить этот компьютер"}</Button>
-        </>}
+          }}>{busy ? "Подождите…" : "Отвязать от другого аккаунта"}</Button>
       </section>}
       <p className="text-sm text-gray-400">
         Здесь можно привязать desktop-приложение и отозвать его доступ. Загрузки

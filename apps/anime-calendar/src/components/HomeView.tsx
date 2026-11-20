@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useCurrentDesktop } from "./CurrentDesktopDevice";
 import { PlayIcon, ArrowRightIcon, ComputerDesktopIcon, CalendarDaysIcon } from "@heroicons/react/24/outline";
 import { api } from "@/lib/client";
 import { displayTitle } from "@/lib/schedule";
@@ -58,8 +59,9 @@ export function HomeView() {
   </div>;
 }
 function ContinueLink({item,devices,compact=false}:{item:Home["continuing"][number];devices:Home["devices"];compact?:boolean}) {
+  const current=useCurrentDesktop();
   const [device,setDevice]=useState("");
-  useEffect(()=>{const remembered=sessionStorage.getItem("home-theater-device");setDevice(devices.some(d=>d.id===remembered) ? remembered! : "");},[devices]);
+  useEffect(()=>{const remembered=current.data?.active?current.data.id:sessionStorage.getItem("home-theater-device");setDevice(devices.some(d=>d.id===remembered) ? remembered! : "");},[devices,current.data?.id,current.data?.active]);
   return item.available ? <Link href={`/anime/${item.media.id}/watch/${item.ep}${device ? `?device=${encodeURIComponent(device)}` : ""}`} className={compact ? quiet : primary}><PlayIcon className="h-4 w-4"/>{compact ? "Смотреть" : "Продолжить"}</Link> : <Link href={`/anime/${item.media.id}`} className={quiet}>Ожидается</Link>;
 }
 

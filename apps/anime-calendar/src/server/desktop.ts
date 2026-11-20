@@ -258,7 +258,7 @@ export function installationBinding(user: number, key: string, label: string, pl
     if (row) db.prepare("UPDATE desktop_devices SET id=id WHERE id=?").run(row.id);
     if (row) row=db.prepare<[string],Device>("SELECT * FROM desktop_devices WHERE id=?").get(row.id);
     const status = row && !row.revoked && row.user_id ? row.user_id===user?"linked":"other-account" : "unlinked";
-    if (action==="status") return {id:row?.id??null,status};
+    if (action==="status") return {id:row?.id??null,status,tokenMatches:!!previousToken&&row?.token_hash===digest(previousToken)};
     if (action==="unlink") {
       if(row) revokeDevice(row.id,row.user_id!);
       return {id:row?.id??null,status:"unlinked"};

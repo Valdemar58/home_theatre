@@ -38,6 +38,7 @@ import { Avatar } from "./Avatar";
 import { HoverCardHost } from "./HoverCard";
 import { ModeProvider, ModeSwitch, sectionHref, sectionOf, useMode, type Section } from "./Mode";
 import { Notifications } from "./Notifications";
+import { CurrentDesktopDevice } from "./CurrentDesktopDevice";
 import { SearchBox } from "./SearchBox";
 import { Drawer } from "./Drawer";
 import { useGroupInvites } from "./SharedListsView";
@@ -228,7 +229,7 @@ function Shell({ userName, sidebar = "collapsed", children }: ShellProps) {
 
         {/* На телефоне режимы — отдельной строкой под шапкой */}
         <div className="relative z-10 bg-gray-900 px-4 pt-3 md:hidden"><ModeSwitch wide /></div>
-        <main className="app-main min-w-0 px-4 pb-24 pt-4 md:pb-10 md:pt-6 lg:px-8"><MaintenanceNotice /><StaleBanner /><HoverCardHost>{children}</HoverCardHost></main>
+        <main className="app-main min-w-0 px-4 pb-24 pt-4 md:pb-10 md:pt-6 lg:px-8"><CurrentDesktopDevice /><MaintenanceNotice /><StaleBanner /><HoverCardHost>{children}</HoverCardHost></main>
       </div>
 
       <Drawer open={mobileMenu} onClose={() => setMobileMenu(false)} title="Меню">
