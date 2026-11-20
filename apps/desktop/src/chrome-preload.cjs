@@ -36,5 +36,10 @@ window.addEventListener("DOMContentLoaded", () => {
   style.textContent = `html{padding-top:40px;scroll-padding-top:120px}body{min-height:calc(100vh - 40px)!important}.app-header{top:40px!important}aside.fixed{top:40px!important;height:calc(100dvh - 40px)!important}html:is(:fullscreen,:has(:fullscreen)){padding-top:0}html:is(:fullscreen,:has(:fullscreen)) #home-theater-chrome{display:none}`;
   document.head.append(style);
   document.body.append(chrome);
+  const dragLayout=()=>ipcRenderer.send("desktop-chrome-layout",{left:Math.ceil(root.querySelector('#device-settings').getBoundingClientRect().right)+8,visible:!document.fullscreenElement});
+  new ResizeObserver(dragLayout).observe(root.querySelector('#menu'));
+  window.addEventListener('resize',dragLayout);
+  document.addEventListener('fullscreenchange',dragLayout);
+  dragLayout();
   ipcRenderer.send("desktop-navigation-ready");
 });
