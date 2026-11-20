@@ -79,12 +79,32 @@ class BackupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             source = root / "data"
-            for name in ("stream/episode.bin", "img-cache/poster.jpg", "pages/page.jpg", "plot/episode.mkv", "import/history.json"):
+            for name in ("stream/episode.bin", "img-cache/poster.jpg", "pages/page.jpg", "plot/episode.mkv", "import/history.json", "maintenance.json", "maintenance-ack.json"):
                 file = source / name
                 file.parent.mkdir(parents=True, exist_ok=True)
                 file.write_text("fixture")
             backup.copy_tree(source, root / "copy", data=True)
             self.assertEqual([file.relative_to(root / "copy").as_posix() for file in (root / "copy").rglob("*") if file.is_file()], ["import/history.json"])
+
+    def test_restore_keeps_target_maintenance_and_does_not_resurrect_old_window(self):
+        for current in (None, "current-target-plan"):
+            with self.subTest(current=current), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                source = root / "backup.tar.gz"
+                archive(source, {"installation.json": json.dumps({"modules": []}).encode(), "data/maintenance.json": b"expired-plan"})
+                (root / "data").mkdir()
+                if current:
+                    (root / "data/maintenance.json").write_text(current)
+                (root / "application.env").write_text("SESSION_SECRET=current\n")
+                (root / "server.env").write_text("POSTGRES_PASSWORD=current\n")
+                instance = Mock(root=root)
+                instance.config.return_value = {"image": PIN, "origin": "http://127.0.0.1:5056", "modules": []}
+                instance.compose.return_value = "application\n"
+                with patch.object(backup, "active_rooms", return_value=0), patch.object(backup, "binary_compose"), \
+                        patch.object(backup, "create_backup"), patch.object(backup, "chown_tree"):
+                    backup.restore_backup(instance, source)
+                target = root / "data/maintenance.json"
+                self.assertEqual(target.read_text() if target.exists() else None, current)
 
     def test_restore_does_not_restart_a_module_disabled_by_restored_configuration(self):
         instance = Mock()
