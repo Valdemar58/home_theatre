@@ -1,5 +1,5 @@
 export type ModuleState = "not_configured" | "available" | "unreachable" | "unauthorized" | "needs_setup";
-export const SYSTEM_MODULE_IDS = ["prowlarr", "sonarr", "jellyfin", "seerr", "ollama", "mapvec", "upscaler", "suwayomi"] as const;
+export const SYSTEM_MODULE_IDS = ["prowlarr", "sonarr", "jellyfin", "seerr", "ollama", "mapvec", "upscaler", "suwayomi", "unleash"] as const;
 export type SystemModule = {
   id: string;
   name: string;

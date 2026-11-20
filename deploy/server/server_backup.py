@@ -45,13 +45,14 @@ def active_rooms(installation):
 @contextmanager
 def stopped_writers(installation):
     running = installation.compose("ps", "--status", "running", "--services", capture=True).splitlines()
-    writers = [name for name in ("application", "prowlarr") if name in running]
+    writers = [name for name in ("application", "prowlarr", "unleash") if name in running]
     if writers:
         installation.compose("stop", "--timeout", "60", *writers)
     try:
         yield
     finally:
         writers = [name for name in writers if name != "prowlarr" or "search" in installation.config()["modules"]]
+        writers = [name for name in writers if name != "unleash" or "flags" in installation.config()["modules"]]
         if writers:
             installation.compose("up", "-d", "--wait", "--wait-timeout", "180", *writers)
 
@@ -95,7 +96,7 @@ def verify_backup(source, destination=None):
             path = PurePosixPath(entry.name)
             if not entry.isfile() or path.is_absolute() or ".." in path.parts or "\\" in entry.name or path.as_posix() != entry.name:
                 raise ValueError("Unsafe path or link in backup")
-            if entry.name != "manifest.json" and not (entry.name == "database.dump" or entry.name in FILES
+            if entry.name != "manifest.json" and not (entry.name in ("database.dump", "unleash.dump") or entry.name in FILES
                                                       or entry.name.startswith(("data/", "modules/prowlarr/"))):
                 raise ValueError("Unexpected backup file")
         if "manifest.json" not in names:
@@ -148,6 +149,11 @@ def create_backup(installation, reason="manual", allow_active=False):
             binary_compose(installation, ["exec", "-T", "database", "pg_dump", "-U", "calendar", "-d",
                                          database_name(installation), "--format=custom", "--no-owner", "--no-acl"],
                            destination=stage / "database.dump")
+            if installation.config().get("unleashDatabaseName"):
+                from home_theater import flags_database_name
+                binary_compose(installation, ["exec", "-T", "database", "pg_dump", "-U", "calendar", "-d",
+                                             flags_database_name(installation.config()), "--format=custom", "--no-owner", "--no-acl"],
+                               destination=stage / "unleash.dump")
             for name in FILES:
                 source = installation.root / name
                 if source.is_file() and not source.is_symlink():
@@ -196,8 +202,10 @@ def restore_backup(installation, source, *, allow_active=False, safety_backup=Tr
         stage = Path(temporary)
         verify_backup(source, stage)
         source_config = json.loads((stage / "installation.json").read_text())
-        if not set(source_config["modules"]) <= {"search", "llm", "https"}:
+        if not set(source_config["modules"]) <= {"search", "llm", "https", "flags"}:
             raise ValueError("Unknown modules in backup")
+        if ("flags" in source_config["modules"] or source_config.get("unleashDatabaseName")) and not (stage / "unleash.dump").is_file():
+            raise ValueError("Unleash database missing from backup")
         new_database = "calendar_restore_" + secrets.token_hex(8)
         installation.compose("exec", "-T", "database", "createdb", "-U", "calendar", "-O", "calendar", new_database)
         binary_compose(installation, ["exec", "-T", "database", "pg_restore", "-U", "calendar", "-d", new_database,
@@ -206,6 +214,25 @@ def restore_backup(installation, source, *, allow_active=False, safety_backup=Tr
             create_backup(installation, "pre-restore", allow_active=allow_active)
         old_application = (installation.root / "application.env").read_bytes()
         old_server = (installation.root / "server.env").read_bytes()
+        flags_database = None
+        flags_server = None
+        if (stage / "unleash.dump").is_file():
+            from home_theater import read_env
+            from home_theater import flags_prepare, flags_prepare_database
+            flags_database = "unleash_restore_" + secrets.token_hex(8)
+            flags_server = read_env(installation.root / "server.env")
+            flags_config = {**source_config, "unleashDatabaseName": flags_database, "modules": ["flags"]}
+            flags_prepare(flags_config, flags_server, {})
+            # Restored DB contains the source admin password/session state. Keep the
+            # target PostgreSQL role password, but restore matching panel credentials.
+            original_flags = read_env(stage / "server.env")
+            for key in ("UNLEASH_DEFAULT_ADMIN_USERNAME", "UNLEASH_DEFAULT_ADMIN_PASSWORD", "UNLEASH_SESSION_SECRET"):
+                if key in original_flags:
+                    flags_server[key] = original_flags[key]
+            flags_prepare_database(installation, flags_config, flags_server)
+            binary_compose(installation, ["exec", "-T", "database", "pg_restore", "-U", "calendar", "--role=unleash",
+                                         "-d", flags_database, "--single-transaction", "--exit-on-error", "--no-owner", "--no-acl"],
+                           source=stage / "unleash.dump")
         (stage / "data/stream").mkdir(parents=True, exist_ok=True)
         # Runtime coordination belongs to the target installation, not to a historical
         # snapshot. In particular a manual pre-update restore must not resurrect an
@@ -234,6 +261,10 @@ def restore_backup(installation, source, *, allow_active=False, safety_backup=Tr
                 shutil.copyfile(stage / "application.env", installation.root / "application.env")
                 restored = {**config, "databaseName": new_database,
                             "modules": [module for module in source_config["modules"] if module != "https"]}
+                if flags_database:
+                    from home_theater import write_env
+                    restored["unleashDatabaseName"] = flags_database
+                    write_env(installation.root / "server.env", flags_server)
                 if config["origin"].startswith("https:"):
                     restored["modules"].append("https")
                 installation.save(restored)

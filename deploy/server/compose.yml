@@ -64,6 +64,7 @@ services:
     profiles: [https]
     environment:
       PUBLIC_HOST: ${PUBLIC_HOST:-localhost}
+      UNLEASH_UPSTREAM: ${UNLEASH_UPSTREAM:-application:5056}
     ports: ["80:80", "443:443", "443:443/udp"]
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
@@ -91,6 +92,36 @@ services:
     profiles: [llm]
     volumes:
       - ./modules/ollama:/root/.ollama
+
+  unleash:
+    <<: *runtime
+    image: ${UNLEASH_IMAGE:-unleashorg/unleash-server:8.3.1}
+    profiles: [flags]
+    environment:
+      DATABASE_HOST: database
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: ${UNLEASH_DATABASE_NAME:-unleash}
+      DATABASE_USERNAME: unleash
+      DATABASE_PASSWORD: ${UNLEASH_DATABASE_PASSWORD:-}
+      DATABASE_SSL: "false"
+      DATABASE_POOL_MIN: "0"
+      DATABASE_POOL_MAX: "4"
+      UNLEASH_DEFAULT_ADMIN_USERNAME: ${UNLEASH_DEFAULT_ADMIN_USERNAME:-homeadmin}
+      UNLEASH_DEFAULT_ADMIN_PASSWORD: ${UNLEASH_DEFAULT_ADMIN_PASSWORD:-}
+      SESSION_SECRET: ${UNLEASH_SESSION_SECRET:-}
+      BASE_URI_PATH: /unleash
+      UNLEASH_URL: ${PUBLIC_URL}/unleash
+      LOG_LEVEL: warn
+    ports: ["127.0.0.1:${UNLEASH_PORT:-4242}:4242"]
+    depends_on:
+      database:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, wget, -qO, /dev/null, 'http://127.0.0.1:4242/unleash/health']
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 30
 
 volumes:
   database:

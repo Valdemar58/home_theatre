@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Установка и диагностика одного серверного продукта. Только стандартная библиотека."""
 import argparse
+import http.cookiejar
+from datetime import datetime, timezone
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, build_opener, HTTPCookieProcessor
 import fcntl
 import ipaddress
 import json
@@ -124,6 +128,130 @@ def docker_install():
     run(["systemctl", "enable", "--now", "docker"])
 
 
+FLAGS = ("ai-enabled", "ai-shared", "ai-personal", "ai-media")
+
+
+def flags_prepare(config, server, application):
+    if "flags" not in config["modules"]:
+        # Keep the configuration and cached decisions when the optional service is stopped.
+        # Explicit disconnect/reset is different from a temporary service outage.
+        return
+    for key, default in (
+        ("UNLEASH_DATABASE_PASSWORD", secrets.token_hex(24)),
+        ("UNLEASH_DEFAULT_ADMIN_USERNAME", "homeadmin"),
+        ("UNLEASH_DEFAULT_ADMIN_PASSWORD", "HT!" + secrets.token_hex(24) + "A1"),
+        ("UNLEASH_SESSION_SECRET", secrets.token_hex(32)),
+        ("UNLEASH_PORT", "4242"),
+    ):
+        server.setdefault(key, default)
+    server["UNLEASH_DATABASE_NAME"] = config.setdefault("unleashDatabaseName", "unleash")
+    server["UNLEASH_UPSTREAM"] = "unleash:4242"
+    application.update(UNLEASH_URL="http://unleash:4242/unleash/api",
+                       UNLEASH_ENVIRONMENT="production",
+                       UNLEASH_PUBLIC_URL=config["origin"] + "/unleash" if config.get("origin", "").startswith("https:") else "")
+
+
+def flags_database_name(config):
+    name = config.get("unleashDatabaseName", "unleash")
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", name):
+        raise ValueError("Invalid Unleash database name")
+    return name
+
+
+def flags_prepare_database(installation, config=None, values=None):
+    values = values or read_env(installation.root / "server.env")
+    password = values["UNLEASH_DATABASE_PASSWORD"]
+    if not re.fullmatch(r"[a-f0-9]{48}", password):
+        raise ValueError("Invalid generated Unleash database password")
+    name = flags_database_name(config or installation.config())
+    # The app and the flag service have separate roles/databases. Existing roles are preserved.
+    sql = ("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='unleash') THEN "
+           f"CREATE ROLE unleash LOGIN PASSWORD '{password}' NOSUPERUSER NOCREATEDB NOCREATEROLE; "
+           "END IF; END $$;\n"
+           f"SELECT 'CREATE DATABASE {name} OWNER unleash' WHERE NOT EXISTS "
+           f"(SELECT FROM pg_database WHERE datname='{name}')\\gexec\n"
+           f"REVOKE ALL ON DATABASE {name} FROM PUBLIC;\n")
+    run(installation.compose_args("exec", "-T", "database", "psql", "-U", "calendar", "-d", "calendar",
+                                  "-v", "ON_ERROR_STOP=1"), capture=True, data=sql)
+
+
+def flags_configure(installation):
+    application = read_env(installation.root / "application.env")
+    if application.get("UNLEASH_API_TOKEN"):
+        return
+    server = read_env(installation.root / "server.env")
+    base = f"http://127.0.0.1:{int(server['UNLEASH_PORT'])}/unleash"
+    opener = build_opener(HTTPCookieProcessor(http.cookiejar.CookieJar()))
+
+    def request(endpoint, body=None, allow_conflict=False):
+        req = Request(base + endpoint, data=json.dumps(body).encode() if body is not None else None, headers={
+            "Content-Type": "application/json", "Origin": base.removesuffix("/unleash"),
+        })
+        try:
+            with opener.open(req, timeout=15) as response:
+                data = response.read()
+                return json.loads(data) if data else {}
+        except HTTPError as error:
+            if allow_conflict and error.code == 409:
+                return {}
+            raise RuntimeError("Unleash bootstrap failed; check module health/admin credentials") from None
+        except (URLError, ValueError):
+            # Do not include response bodies, credentials, or request headers.
+            raise RuntimeError("Unleash bootstrap failed; check module health/admin credentials") from None
+
+    request("/auth/simple/login", {"username": server["UNLEASH_DEFAULT_ADMIN_USERNAME"],
+                                   "password": server["UNLEASH_DEFAULT_ADMIN_PASSWORD"]})
+    for name in FLAGS:
+        request("/api/admin/projects/default/features", {
+            "name": name, "type": "operational", "description": "home_theater: разрешение новых ИИ-операций",
+        }, allow_conflict=True)
+        feature = request(f"/api/admin/projects/default/features/{name}")
+        production = next((e for e in feature.get("environments", []) if e["name"] == "production"), None)
+        if production is None:
+            raise RuntimeError("Unleash production environment is missing")
+        if not production.get("strategies"):
+            request(f"/api/admin/projects/default/features/{name}/environments/production/strategies",
+                    {"name": "default", "parameters": {}})
+    token = request("/api/admin/api-tokens", {"tokenName": "home-theater-backend", "type": "backend",
+                    "projects": ["default"], "environment": "production", "secure": True})
+    secret = token.get("secret")
+    if not secret:
+        raise RuntimeError("Unleash did not return a backend token")
+    application["UNLEASH_API_TOKEN"] = secret
+    write_env(installation.root / "application.env", application)
+    installation.compose("up", "-d", "--wait", "--wait-timeout", "180", "application")
+    print("Unleash configured. AI switches start disabled; enable them deliberately in the panel.")
+    panel = installation.config()["origin"] + "/unleash" if installation.config()["origin"].startswith("https:") else base
+    print("Panel: " + panel)
+    print("Panel credentials: UNLEASH_DEFAULT_ADMIN_* in the private server.env")
+
+
+def flags_override(installation, name, state):
+    if name not in FLAGS:
+        raise ValueError("Unknown operational switch")
+    directory = installation.root / "data/feature-flags"
+    directory.mkdir(mode=0o700, exist_ok=True)
+    target = directory / "overrides.json"
+    data = json.loads(target.read_text()) if target.exists() else {"version": 1, "disabled": []}
+    if data.get("version") != 1 or not isinstance(data.get("disabled"), list) or not set(data["disabled"]) <= set(FLAGS):
+        raise ValueError("Invalid local overrides; inspect the file before changing it")
+    disabled = set(data["disabled"])
+    if state == "off":
+        disabled.add(name)
+    else:
+        disabled.discard(name)  # Removes local veto; does not force-enable the remote flag.
+    atomic(target, json.dumps({"version": 1, "disabled": sorted(disabled)}) + "\n")
+    os.chown(directory, 1000, 1000)
+    os.chown(target, 1000, 1000)
+    audit = directory / "local-events.jsonl"
+    record = {"at": datetime.now(timezone.utc).isoformat(), "flag": name, "action": state, "actor": "server-cli"}
+    fd = os.open(audit, os.O_APPEND | os.O_WRONLY | os.O_CREAT, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as stream:
+        stream.write(json.dumps(record) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    print(f"Local override {name}: {'disabled' if state == 'off' else 'released to remote/default policy'}")
+
 class Installation:
     def __init__(self, root):
         self.root = Path(root).resolve()
@@ -152,6 +280,9 @@ class Installation:
         values.update(config.get("images", {}))
         write_env(self.root / "server.env", values)
         application = read_env(self.root / "application.env")
+        values["UNLEASH_UPSTREAM"] = "application:5056"
+        flags_prepare(config, values, application)
+        write_env(self.root / "server.env", values)
         application["HOME_THEATER_MODULES"] = ",".join(config["modules"])
         application["OLLAMA_URL"] = "http://ollama:11434" if "llm" in config["modules"] else ""
         if "search" not in config["modules"]:
@@ -167,6 +298,8 @@ class Installation:
             pairs["PROWLARR_IMAGE"] = "lscr.io/linuxserver/prowlarr:latest"
         if "llm" in config["modules"]:
             pairs["OLLAMA_IMAGE"] = "ollama/ollama:latest"
+        if "flags" in config["modules"]:
+            pairs["UNLEASH_IMAGE"] = "unleashorg/unleash-server:8.3.1"
         locked = config.setdefault("images", {})
         for key, image in pairs.items():
             if key not in locked:
@@ -190,7 +323,12 @@ class Installation:
         if not cached:
             self.compose("pull")
         self.lock_images(config)
+        if "flags" in config["modules"]:
+            self.compose("up", "-d", "--wait", "--wait-timeout", "180", "database")
+            flags_prepare_database(self)
         self.compose("up", "-d", "--wait", "--wait-timeout", "300", "--remove-orphans")
+        if "flags" in config["modules"]:
+            flags_configure(self)
         if "search" in config["modules"]:
             self.configure_search()
         self.doctor()
@@ -226,7 +364,7 @@ class Installation:
         config = self.config()
         registry = json.loads((self.root / "modules.json").read_text())["modules"]
         if name not in registry or name == "https":
-            raise ValueError("Use module search|llm on|off; HTTPS follows the configured origin")
+            raise ValueError("Use module search|llm|flags on|off; HTTPS follows the configured origin")
         if enabled and name not in config["modules"]:
             config["modules"].append(name)
         if not enabled and name in config["modules"]:
@@ -284,8 +422,8 @@ def install(args):
     if not re.fullmatch(r"[a-z][a-z0-9-]{0,40}", args.project):
         raise ValueError("Invalid Compose project name")
     modules = sorted(set(filter(None, args.modules.split(","))))
-    if not set(modules) <= {"search", "llm"}:
-        raise ValueError("Supported optional modules: search,llm")
+    if not set(modules) <= {"search", "llm", "flags"}:
+        raise ValueError("Supported optional modules: search,llm,flags")
     if origin.startswith("https:"):
         modules.append("https")
     required = ("compose.yml", "Caddyfile", "modules.json", "home_theater.py", "home-theater", "server_backup.py", "server_update.py", "profiles.toml")
@@ -354,8 +492,11 @@ def main():
     reset = commands.add_parser("reset-password")
     reset.add_argument("--user-id", type=int, required=True)
     module = commands.add_parser("module")
-    module.add_argument("name", choices=["search", "llm"])
+    module.add_argument("name", choices=["search", "llm", "flags"])
     module.add_argument("state", choices=["on", "off"])
+    flag = commands.add_parser("flag")
+    flag.add_argument("name", choices=["ai-enabled", "ai-shared", "ai-personal", "ai-media"])
+    flag.add_argument("state", choices=["off", "release"])
     args = parser.parse_args()
     if os.geteuid() != 0:
         raise RuntimeError("Run with sudo; installation contains private credentials")
@@ -382,6 +523,8 @@ def main():
             installation.doctor()
         elif args.command == "module":
             installation.module(args.name, args.state == "on")
+        elif args.command == "flag":
+            flags_override(installation, args.name, args.state)
         elif args.command == "origin":
             installation.origin(args.value)
         elif args.command == "backup":

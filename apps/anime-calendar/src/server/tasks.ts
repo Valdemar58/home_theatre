@@ -1,5 +1,7 @@
 import "server-only";
 import { maintenanceActive } from "./maintenance";
+import { AiDisabled, featureFlags } from "./feature-flags";
+import type { AiCategory } from "@/lib/feature-flags";
 import type { TaskInfo } from "@/lib/types";
 import { getDetails } from "./anilist";
 import { getCached, setCached } from "./cache";
@@ -72,6 +74,7 @@ export function registerHandler(kind: string, h: Handler) {
 // Состояние очереди — одно на процесс: Next.js собирает маршруты отдельными пакетами, и у каждого может быть
 // своя копия этого модуля. С копией на модуль новый маршрут «восстанавливался» и отменял чужие идущие задачи
 const g = globalThis as unknown as {
+  __aiPausedTasks?: Map<number, AiCategory>;
   __tasks?: { handlers: Record<string, Handler>; queues: Map<string, number[]>; controllers: Map<number, AbortController>; running: Set<string>; recovered: boolean };
 };
 const state = (g.__tasks ??= { handlers: {}, queues: new Map(), controllers: new Map(), running: new Set(), recovered: false });
@@ -109,6 +112,7 @@ const HANDLERS: Record<string, Handler> = Object.assign(state.handlers, {
 // ---------------------------------------------------------------- очередь
 
 const { queues, controllers, running } = state;
+const aiPaused = g.__aiPausedTasks ??= new Map<number, AiCategory>();
 const queueOf = (kind: string): number[] => queues.get(kind) ?? (queues.set(kind, []), queues.get(kind)!);
 
 const getRow = (id: number) => db.prepare<[number], Row>("SELECT * FROM tasks WHERE id = ?").get(id);
@@ -189,6 +193,7 @@ export function cancelAuto(kind: string, key: string, userId: number) {
 }
 
 function stop(active: Row) {
+  aiPaused.delete(active.id);
   if (active.status === "queued") {
     const queue = queueOf(active.kind);
     const i = queue.indexOf(active.id);
@@ -224,7 +229,10 @@ async function drain(kind: string) {
   try {
     while (queue.length) {
       if (maintenanceActive()) break;
+      const blocked = aiPaused.get(queue[0]);
+      if (blocked && !featureFlags().allowed(blocked)) break;
       const id = queue.shift()!;
+      aiPaused.delete(id);
       const row = getRow(id);
       if (!row || row.status !== "queued") continue;
       await runOne(row);
@@ -241,7 +249,7 @@ async function runOne(row: Row) {
   const h = HANDLERS[row.kind];
   const ctl = new AbortController();
   controllers.set(row.id, ctl);
-  db.prepare("UPDATE tasks SET status = 'running', started_at = ? WHERE id = ?").run(now(), row.id);
+  db.prepare("UPDATE tasks SET status = 'running', error = NULL, started_at = ? WHERE id = ?").run(now(), row.id);
   try {
     const anilistId = await h.anilistId?.(row.key).catch(() => null) ?? null;
     // Тайтл есть — его название и обложку покажет карточка; нет — подпись задачи
@@ -266,6 +274,12 @@ async function runOne(row: Row) {
       }
     }
   } catch (err) {
+    if (err instanceof AiDisabled && !ctl.signal.aborted) {
+      db.prepare("UPDATE tasks SET status = 'queued', error = ?, started_at = NULL WHERE id = ?").run(err.message, row.id);
+      aiPaused.set(row.id, err.category);
+      queueOf(row.kind).unshift(row.id);
+      return; // Existing checkpoints remain; the maintenance loop retries after re-enabling.
+    }
     const aborted = ctl.signal.aborted;
     const message = err instanceof Error ? err.message : String(err);
     db.prepare("UPDATE tasks SET status = ?, error = ?, finished_at = ? WHERE id = ?")

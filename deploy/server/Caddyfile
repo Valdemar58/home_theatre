@@ -5,5 +5,11 @@
         Referrer-Policy strict-origin-when-cross-origin
         -Server
     }
-    reverse_proxy application:5056
+    @unleash path /unleash /unleash/*
+    handle @unleash {
+        reverse_proxy {$UNLEASH_UPSTREAM:application:5056}
+    }
+    handle {
+        reverse_proxy application:5056
+    }
 }

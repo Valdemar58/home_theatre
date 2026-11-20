@@ -1,4 +1,5 @@
 import "server-only";
+import { AiDisabled, featureFlags } from "./feature-flags";
 import { maintenanceActive, beginMaintenanceWork } from "./maintenance";
 import { EventEmitter } from "node:events";
 import { planUpscale, UPSCALE_MODELS, type UpscaleConfig } from "@/lib/upscale-plan";
@@ -33,6 +34,7 @@ upscaleEvents.setMaxListeners(0);
 let health: { ok: boolean; device: string | null; at: number } | null = null;
 
 export async function upscalerHealth(): Promise<{ ok: boolean; device: string | null }> {
+  if (!featureFlags().allowed("media")) return { ok: false, device: null };
   if (!URL_) return { ok: false, device: null };
   if (health && Date.now() - health.at < 60_000) return health;
   try {
@@ -47,6 +49,7 @@ export async function upscalerHealth(): Promise<{ ok: boolean; device: string | 
 
 /** Один вызов апскейлера (очередь и лаборатория). */
 export async function callUpscaler(image: Buffer, model: string, scale: number): Promise<{ png: Buffer; ms: number }> {
+  featureFlags().assert("media");
   const r = await fetch(`${URL_}/upscale?model=${encodeURIComponent(model)}&scale=${scale}`, {
     method: "POST", body: new Uint8Array(image), signal: AbortSignal.timeout(300_000),
   });
@@ -167,7 +170,7 @@ async function processOne(url: string, target: number) {
     upscaleEvents.emit("change", { url, state: "done" });
   } catch (e) {
     // Апскейлер недоступен (остановили, перезапуск) — не ошибка картинки: повторим при следующем показе
-    if (/fetch failed|ECONNREFUSED|ENOTFOUND|aborted/i.test(String(e))) {
+    if (e instanceof AiDisabled || /fetch failed|ECONNREFUSED|ENOTFOUND|aborted/i.test(String(e))) {
       health = null;
       setRow(key, url, { state: "new" });
       upscaleEvents.emit("change", { url, state: "none" });

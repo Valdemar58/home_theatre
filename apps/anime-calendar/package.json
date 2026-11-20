@@ -34,7 +34,8 @@
     "server-only": "^0.0.1",
     "sharp": "^0.35.5",
     "sigma": "^3.0.3",
-    "synckit": "^0.11.11"
+    "synckit": "^0.11.11",
+    "unleash-client": "6.12.2"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
