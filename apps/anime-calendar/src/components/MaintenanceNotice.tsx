@@ -27,7 +27,11 @@ export function MaintenanceNotice({ standalone = false }: { standalone?: boolean
         if (!response.ok) throw new Error();
         const value: Snapshot = await response.json();
         if (disposed || value.protocol !== 1) return;
-        setSnapshot(previous => { if (previous?.plan && !value.plan && value.serverNow >= previous.plan.startsAt) setCompleted(true); return value; });
+        setSnapshot(previous => {
+          if (value.plan) setCompleted(false);
+          else if (previous?.plan && value.serverNow >= previous.plan.startsAt) setCompleted(true);
+          return value;
+        });
         setClock({ now: Date.now(), offset: value.serverNow - Date.now() });
         setDisconnected(false);
       } catch { if (!disposed) setDisconnected(true); }
@@ -59,7 +63,7 @@ export function MaintenanceNotice({ standalone = false }: { standalone?: boolean
       {disconnected && <p className="mt-1 text-gray-300">Связь с сервером восстанавливается…</p>}
     </div>
     {plan && !active && <span aria-hidden="true" className="shrink-0 rounded-md bg-gray-700 px-2 py-1 font-medium tabular-nums">{Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, "0")}</span>}
-    {(completed || (standalone && snapshot && !plan)) && <button onClick={() => { window.location.href = standalone ? "/" : window.location.href; }} className="min-h-9 rounded-lg px-3 text-indigo-300 underline-offset-4 hover:bg-gray-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400">Продолжить</button>}
+    {!plan && (completed || (standalone && snapshot)) && <button onClick={() => { window.location.href = standalone ? "/" : window.location.href; }} className="min-h-9 rounded-lg px-3 text-indigo-300 underline-offset-4 hover:bg-gray-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400">{standalone ? "Вернуться в приложение" : "Обновить страницу"}</button>}
   </section>;
   return fullscreen ? createPortal(<div className="absolute inset-x-4 top-4 z-60">{notice}</div>, fullscreen) : notice;
 }
