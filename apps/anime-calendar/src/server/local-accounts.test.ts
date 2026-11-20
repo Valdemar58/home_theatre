@@ -49,6 +49,17 @@ beforeEach(() => {
     >("SELECT * FROM users WHERE id=?")
     .get(id)!;
 });
+it("accepts an invitation for the existing pending identity, once, with provenance", async () => {
+  const pending=await auth.register({login:"invited-pending",name:"Pending",password});
+  const invitation=auth.issueToken(owner,"invite",null);
+  expect(auth.acceptAccountInvitation(pending.id,tokenOf(invitation.link))).toEqual({ok:true,access:"approved"});
+  expect(auth.credential(pending.id)?.access).toBe("approved");
+  expect(db.prepare<[number],{invited_by:number}>("SELECT invited_by FROM users WHERE id=?").get(pending.id)?.invited_by).toBe(owner.id);
+  expect(()=>auth.acceptAccountInvitation(pending.id,tokenOf(invitation.link))).toThrow();
+  const another=await auth.register({login:"other-pending",name:"Other",password});
+  expect(()=>auth.acceptAccountInvitation(another.id,tokenOf(invitation.link))).toThrow();
+  expect(auth.credential(another.id)?.access).toBe("pending");
+});
 it("migrates the same identity, preserving lists, history references and an existing device token", async () => {
   const group = Number(
     db

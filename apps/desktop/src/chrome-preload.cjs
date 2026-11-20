@@ -7,6 +7,9 @@ contextBridge.exposeInMainWorld("homeTheaterDesktop", Object.freeze({
 }));
 window.addEventListener("DOMContentLoaded", () => {
   if (window.top !== window) return;
+  const playback=()=>ipcRenderer.send("desktop-playback-state",[...document.querySelectorAll("video")].some(v=>!v.paused&&!v.ended));
+  for(const event of ["play","pause","ended","emptied"])document.addEventListener(event,playback,true);
+  playback();
   const chrome = document.createElement("div");
   chrome.id = "home-theater-chrome";
   const root = chrome.attachShadow({mode:"closed"});
@@ -18,11 +21,14 @@ window.addEventListener("DOMContentLoaded", () => {
     button:disabled{opacity:.35;cursor:default}button:disabled:hover{background:transparent;color:inherit}
     #back{width:36px;padding:0;justify-content:center;flex-shrink:0}
     svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.5}
-  </style><nav aria-label="Навигация приложения"><button id="back" aria-label="Назад" title="Назад (Alt+←)" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></button><button id="menu" aria-label="Меню home_theater"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>home_theater</button></nav>`;
+    #menu{min-width:0}#server{overflow:hidden;text-overflow:ellipsis;max-width:55vw}
+  </style><nav aria-label="Навигация приложения"><button id="back" aria-label="Назад" title="Назад (Alt+←)" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></button><button id="menu" aria-label="Выбрать сервер" aria-haspopup="menu"><span id="server">home_theater</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button><button id="device-settings" aria-label="Настройки устройства и локальные файлы" title="Настройки устройства"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg></button></nav>`;
   root.querySelector("#menu").addEventListener("click",()=>ipcRenderer.send("desktop-menu"));
+  ipcRenderer.on("desktop-picker-state",(_event,state)=>{const menu=root.querySelector("#menu");menu.setAttribute("aria-expanded",String(!!state.open));if(state.focus)menu.focus();});
   const back = root.querySelector("#back");
   back.addEventListener("click",()=>ipcRenderer.send("desktop-go-back"));
-  ipcRenderer.on("desktop-navigation-state",(_event,state)=>{back.disabled=!state?.canGoBack;});
+  root.querySelector("#device-settings").addEventListener("click",()=>ipcRenderer.send("desktop-local-settings"));
+  ipcRenderer.on("desktop-navigation-state",(_event,state)=>{back.disabled=!state?.canGoBack;const label=root.querySelector("#server");label.textContent=state?.server||"home_theater";label.title=label.textContent;});
   const style = document.createElement("style");
   style.textContent = `html{padding-top:40px;scroll-padding-top:120px}body{min-height:calc(100vh - 40px)!important}.app-header{top:40px!important}aside.fixed{top:40px!important;height:calc(100dvh - 40px)!important}html:is(:fullscreen,:has(:fullscreen)){padding-top:0}html:is(:fullscreen,:has(:fullscreen)) #home-theater-chrome{display:none}`;
   document.head.append(style);
