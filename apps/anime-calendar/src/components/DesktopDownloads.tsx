@@ -85,7 +85,7 @@ export function DesktopDownloads({ title, titleName = "", episodeCount, watchEpi
   const canMove=(id:number)=>{
     const batch=allJobs.filter(j=>j.title===id&&j.files.some(f=>f.selected)),count=data.data?.context[id]?.episodes;
     const files=batch.flatMap(j=>j.files.filter(f=>f.selected));
-    return !!count&&batch.length>0&&batch.every(j=>!!j.storageId&&!["selecting","downloading","verifying","preparing"].includes(j.state))&&Array.from({length:count},(_,i)=>i+1).every(n=>files.some(f=>f.episode===n&&f.downloaded>=f.bytes&&!!f.libraryId))&&files.every(f=>!f.inUse&&!["preparing","moving","error"].includes(f.prepareState||""));
+    return !!count&&batch.length>0&&batch.every(j=>!!j.storageId&&!["selecting","downloading","verifying","preparing"].includes(j.state))&&Array.from({length:count},(_,i)=>i+1).every(n=>files.some(f=>f.episode===n&&f.downloaded>=f.bytes&&!!f.libraryId))&&files.every(f=>f.downloaded>=f.bytes&&!!f.libraryId&&!f.inUse&&!["preparing","moving","error"].includes(f.prepareState||""));
   };
   const selectedIds=[...selectedTitles].filter(canMove);
   const moveBytes=(storage?.volumes??[]).flatMap(v=>v.titles).filter(t=>selectedIds.includes(t.id)).reduce((n,t)=>n+t.bytes,0);
@@ -115,7 +115,7 @@ export function DesktopDownloads({ title, titleName = "", episodeCount, watchEpi
       {message && <p role="status" className="text-sm text-indigo-300">{message}</p>}
       {!!pending.length && <p role="status" className="text-sm text-gray-400">{device.online ? "Устройство обрабатывает задания" : "Ожидают подключения"}: {pending.length}</p>}
       {data.data?.commands.filter(c => c.state === "error").slice(0, 3).map(c => <ErrorBox key={c.id} error={c.result.error || "Действие не выполнено"} />)}
-      {!title && !jobs.length && !(data.data?.library?.length) && !pending.length && <p className="text-sm text-gray-400">Пока нет загрузок. Откройте тайтл и выберите «Скачать на устройство».</p>}
+      {!title && !jobs.length && !library.length && !pending.length && <p className="text-sm text-gray-400">На этом диске пока нет загрузок. Откройте тайтл и выберите «Скачать на устройство».</p>}
       <div hidden={compact&& !jobs.some(j=>j.state==="selecting")}>
       <DownloadInventory onActiveTitle={setActiveTitle} storage={data.data?.storage} jobs={jobs} library={library} selectedTitles={selectedTitles} onSelectTitle={!compact&&hasVolumes?id=>setSelectedTitles(old=>{const next=new Set(old);next.has(id)?next.delete(id):next.add(id);return next;}):undefined} canMoveTitle={canMove} context={data.data?.context??{}} device={device} canDelete={data.data?.capabilities?.includes("episode-delete-v1")??false} busy={busy||pending.some(c=>["remove-episode","prepare-episode","move-titles"].includes(c.kind))} focusTitle={title}
         remove={async body=>{await call("remove-episode",body);}} prepareEpisode={async body=>{await call("prepare-episode",body);}} canPrepare={data.data?.capabilities.includes("episode-prepare-v1")}
