@@ -89,6 +89,20 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(application["SHIKIMORI_CLIENT_ID"], "keep-client")
             self.assertEqual(installer.read_env(Path(folder) / "server.env")["POSTGRES_PASSWORD"], "do-not-rotate")
 
+    @patch.object(installer.Installation, "up")
+    def test_explicit_https_preserves_identity_and_image(self, up):
+        with tempfile.TemporaryDirectory() as folder:
+            instance = installer.Installation(folder)
+            original = {"image": PIN, "origin": "http://127.0.0.1:5056", "httpPort": 5056,
+                        "project": "home-theater", "modules": ["search"]}
+            instance.save(original)
+            instance.origin("https://test.example.org")
+            result = instance.config()
+            self.assertEqual(result["image"], PIN)
+            self.assertEqual(result["modules"], ["search", "https"])
+            self.assertEqual(result["project"], original["project"])
+            up.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

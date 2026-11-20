@@ -223,9 +223,23 @@ class Installation:
         self.save(config)
         self.up()
 
+    def origin(self, value):
+        config = self.config()
+        origin = validate_origin(value)
+        if origin.startswith("https:") and "https" not in config["modules"]:
+            config["modules"].append("https")
+        elif origin.startswith("http:") and "https" in config["modules"]:
+            self.compose("stop", "proxy")
+            config["modules"].remove("https")
+        config["origin"] = origin
+        self.save(config)
+        self.up()
+
 
 def install(args):
     check_platform()
+    if not Path(args.root).is_absolute():
+        raise ValueError("Installation directory must be absolute")
     root = Path(args.root).resolve()
     if root == Path("/") or not root.is_absolute():
         raise ValueError("Choose an absolute installation directory other than /")
@@ -301,6 +315,8 @@ def main():
     commands.add_parser("up")
     commands.add_parser("doctor")
     commands.add_parser("owner-link")
+    origin = commands.add_parser("origin")
+    origin.add_argument("value")
     reset = commands.add_parser("reset-password")
     reset.add_argument("--user-id", type=int, required=True)
     module = commands.add_parser("module")
@@ -323,6 +339,8 @@ def main():
             installation.doctor()
         elif args.command == "module":
             installation.module(args.name, args.state == "on")
+        elif args.command == "origin":
+            installation.origin(args.value)
         elif args.command in ("owner-link", "reset-password"):
             command = "create-owner" if args.command == "owner-link" else "reset"
             extra = [] if command == "create-owner" else ["--user-id", str(args.user_id)]
