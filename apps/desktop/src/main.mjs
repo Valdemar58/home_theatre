@@ -30,6 +30,10 @@ import { product } from "./product.mjs";
 let profiles, pickerWindow, rtcWindow, oauthView, switching=false, probeGeneration=0;
 let playbackActive=false;
 let lastHeartbeat=0;
+let chromeDrag={left:0,visible:false};
+function syncChromeDrag(){
+  if(window&&!window.isDestroyed()&&window.webContents.getURL()==="hostapp://local/loading.html")window.webContents.send("desktop-chrome-drag",chromeDrag);
+}
 const profileSession = () => profiles?.partition() ? session.fromPartition(profiles.partition()) : session.defaultSession;
 let remoteDownloads, webWindow, quitting = false;
 let downloads;
@@ -212,6 +216,12 @@ async function openApp(room, destination) {
   });
   ipcMain.removeAllListeners("desktop-dismiss-picker");
   ipcMain.on("desktop-dismiss-picker",event=>{if(fromAppWindow(event)&&pickerWindow)void setupAction("setup-close-picker",{});});
+  ipcMain.removeAllListeners("desktop-chrome-layout");
+  ipcMain.on("desktop-chrome-layout",(event,state)=>{
+    if(!fromAppWindow(event)||!Number.isFinite(state?.left))return;
+    const width=window.getContentBounds().width;
+    chromeDrag={left:Math.max(0,Math.min(width,state.left)),visible:state.visible===true&&state.left<width-150};syncChromeDrag();
+  });
   ipcMain.removeAllListeners("desktop-local-settings");
   ipcMain.on("desktop-local-settings",event=>{if(fromAppWindow(event))void setupAction("setup-device-settings",{});});
   ipcMain.removeAllListeners("desktop-local-library");
@@ -472,6 +482,7 @@ async function showPicker(){
 let checkedServer=null;
 async function setupAction(kind,data){
   if(kind==="setup-close-picker"){const previous=pickerWindow;pickerWindow=null;previous?.close();if(webWindow&&!webWindow.isDestroyed())webWindow.focus();chromeState({open:false,focus:true});return;}
+  if(kind==="setup-loading-ready"){syncChromeDrag();return;}
   if(kind==="setup-dialog-size"){pickerWindow?.setSize(data.compact?355:420,data.compact?profiles.list().length*66+180:420);return;}
   if(kind==="setup-state")return {product,profiles:profiles.list(),active:profiles.active?.id,step:profiles.data.draft?.adding?profiles.data.draft.step:profiles.active?.wizard?.step||profiles.data.draft?.step||"welcome",adding:!!profiles.data.draft?.adding,linked:!!token,server:config.server,secureStorage:secretAvailable()};
   if(kind==="setup-step"){
