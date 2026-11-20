@@ -5,6 +5,7 @@ import { useState } from "react";
 import { api, useMe } from "@/lib/client";
 import { formatDateTime } from "@/lib/time";
 import { WatchHistorySettings } from "./WatchHistorySettings";
+import { SystemModulesCard } from "./SystemModulesCard";
 import { AnilibCard } from "./AnilibCard";
 import { ADMIN_NAV } from "./AppShell";
 import { LlmCard } from "./LlmCard";
@@ -93,6 +94,8 @@ export function SettingsView() {
       )}
       {error ? <ErrorBox error={error} /> : null}
       {message && <div className="rounded-lg border border-green-500/40 bg-green-500/10 px-4 py-3 text-sm text-green-200">{message}</div>}
+
+      {me.isAdmin && <Card title="Компоненты сервера"><SystemModulesCard /></Card>}
 
       <Card title="Shikimori">
         {!s.configured ? (

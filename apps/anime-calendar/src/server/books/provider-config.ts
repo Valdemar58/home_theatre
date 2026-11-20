@@ -19,7 +19,7 @@ export function providerConfig(): ProviderConfig {
   return {
     order: v.order ?? [], disabled: v.disabled ?? [], libToken: v.libToken ?? null,
     lnreader: { index: v.lnreader?.index || LNREADER_INDEX, plugins: v.lnreader?.plugins ?? [] },
-    suwayomi: { url: v.suwayomi?.url || process.env.SUWAYOMI_URL || "http://suwayomi:4567", repo: v.suwayomi?.repo ?? "", sources: v.suwayomi?.sources ?? [], languages: v.suwayomi?.languages ?? ["ru", "en", "ja"] },
+    suwayomi: { url: v.suwayomi?.url ?? process.env.SUWAYOMI_URL ?? "http://suwayomi:4567", repo: v.suwayomi?.repo ?? "", sources: v.suwayomi?.sources ?? [], languages: v.suwayomi?.languages ?? ["ru", "en", "ja"] },
   };
 }
 

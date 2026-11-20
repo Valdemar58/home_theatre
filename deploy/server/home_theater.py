@@ -147,6 +147,7 @@ class Installation:
         values.update(config.get("images", {}))
         write_env(self.root / "server.env", values)
         application = read_env(self.root / "application.env")
+        application["HOME_THEATER_MODULES"] = ",".join(config["modules"])
         application["OLLAMA_URL"] = "http://ollama:11434" if "llm" in config["modules"] else ""
         if "search" not in config["modules"]:
             application.update(PROWLARR_URL="", PROWLARR_API_KEY="")

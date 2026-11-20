@@ -108,11 +108,11 @@ function Suwayomi({ s, busy, refreshing, call }: { s: State["suwayomi"]; busy: s
         <Button size="sm" disabled={Boolean(busy)} onClick={() => void call("PUT", { url }, "connect")}>Подключить / проверить</Button></div>
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="font-semibold">Suwayomi</h3><span className="text-gray-500">манга</span>
-        {s.up ? <Badge tone="positive">работает · {s.version}</Badge> : <Badge tone="negative">недоступен</Badge>}
+        {s.up ? <Badge tone="positive">работает · {s.version}</Badge> : <Badge tone={s.url ? "negative" : "neutral"}>{s.url ? "недоступен" : "не подключён"}</Badge>}
         {refreshing && <Spinner className="h-4 w-4" />}
       </div>
       {!s.up ? (
-        <p className="text-gray-400">Контейнер не запущен: добавьте профиль <code>suwayomi</code> в <code>COMPOSE_PROFILES</code> и поднимите стек. {s.error ? <span className="text-gray-500">({s.error})</span> : null}</p>
+        <p className="text-gray-400">{s.url ? "Нет соединения с Suwayomi. Проверьте адрес и запуск компонента." : "Suwayomi не подключён. Другие провайдеры манги продолжают работать."}</p>
       ) : (
         <>
           <div className="space-y-1">

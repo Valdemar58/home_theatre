@@ -154,7 +154,7 @@ function VoicesDialog({ media, onClose, onSubs, watchEpisode }: { media: MediaLi
   // Русские субтитры к оригинальной раздаче — из самой раздаваемой русской раздачи с субтитрами
   const ruSubs = data?.releases.filter(hasSubs).sort((a, b) => b.seeders - a.seeders)[0] ?? null;
   const card = (r: RuRelease) => (
-    <ReleaseCard key={r.guid} r={r} busy={busy} result={result} canStream={Boolean(me?.ru.stream)} ruSubs={r.origin === "orig" ? ruSubs : null}
+    <ReleaseCard key={r.guid} r={r} busy={busy} result={result} canStream={Boolean(me?.ru.stream)} canDownload={Boolean(me?.isAdmin && me.ru.serverDownload)} ruSubs={r.origin === "orig" ? ruSubs : null}
       onRun={(rel, action) => run(rel, action, r.guid)} />
   );
 
@@ -222,9 +222,9 @@ function OrigSection({ list, card, ruSubs }: { list: RuRelease[]; card: (r: RuRe
 const LANG_LABELS: Record<string, string> = { JAP: "японский", ENG: "английский", RUS: "русский", MULTI: "много языков" };
 const SUB_LABELS: Record<string, string> = { ENG: "EN", RUS: "RU", MULTI: "мульти", "нет": "без субтитров" };
 
-function ReleaseCard({ r, busy, result, canStream, ruSubs, onRun }: {
+function ReleaseCard({ r, busy, result, canStream, canDownload, ruSubs, onRun }: {
   r: RuRelease; busy: string | null; result: { guid: string; action: Action; ok: boolean; message: string; url?: string | null } | null;
-  canStream: boolean; ruSubs: RuRelease | null; onRun: (r: RuRelease, action: Action) => void;
+  canStream: boolean; canDownload: boolean; ruSubs: RuRelease | null; onRun: (r: RuRelease, action: Action) => void;
 }) {
   const orig = r.origin === "orig";
   return (
@@ -282,12 +282,12 @@ function ReleaseCard({ r, busy, result, canStream, ruSubs, onRun }: {
                     <PlayIcon className="h-4 w-4" /> {busy === `${r.guid}:stream` ? "Готовлю…" : "Смотреть"}
                   </Button>
                 )}
-                <Button size="sm" variant="primary" onClick={() => onRun(r, "download")}
+                {canDownload && <Button size="sm" variant="primary" onClick={() => onRun(r, "download")}
                   disabled={Boolean(busy) || (result?.guid === r.guid && result.action === "download" && result.ok)}
                   title={orig ? "В Sonarr по названию раздачи; профиль «Anime RU» может её отклонить — причина будет здесь" : undefined}>
                   <ArrowDownTrayIcon className="h-4 w-4" />
                   {busy === `${r.guid}:download` ? "Отправка…" : result?.guid === r.guid && result.action === "download" && result.ok ? "В загрузке" : "Скачать"}
-                </Button>
+                </Button>}
               </div>
               {canStream && r.rus === "ext" && (
                 <p className="mt-1 text-xs text-yellow-300/80">Русская озвучка здесь отдельными файлами: онлайн будет только оригинал, для озвучки — «Скачать».</p>

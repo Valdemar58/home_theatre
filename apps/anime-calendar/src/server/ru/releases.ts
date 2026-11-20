@@ -1,4 +1,5 @@
 import "server-only";
+import { env } from "../env";
 import { getDetails } from "../anilist";
 import { mappingForAnilist, mappingsForTvdb, type TvdbMapping } from "../idmap";
 import { db, now } from "../db";
@@ -153,7 +154,8 @@ async function findReleases(anilistId: number, opts: FindOpts = {}): Promise<{ m
 
 export async function ruReleases(anilistId: number, opts: FindOpts = {}): Promise<RuReleasesResponse> {
   const { matches, pending, mapping } = await findReleases(anilistId, opts);
-  const series = mapping ? (await sonarrSeries()).find((s) => s.tvdbId === mapping.tvdb) : undefined;
+  const series = mapping && env.sonarrUrl && env.sonarrApiKey
+    ? (await sonarrSeries().catch(() => [])).find((s) => s.tvdbId === mapping.tvdb) : undefined;
   const rules = loadProfiles().anime;
   const all = matches.map(({ parsed, topic, release: r, origin }): RuRelease => {
     const voices = [...new Set([...parsed.voices, ...(topic?.voices ?? [])])];

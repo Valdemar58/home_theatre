@@ -2,7 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 const mocks = vi.hoisted(() => ({ ru: vi.fn(), orig: vi.fn() }));
 vi.mock("./ru/arr", () => ({ searchRu: mocks.ru, searchOrig: mocks.orig }));
-vi.mock("./env", () => ({ env: { prowlarrUrl: "http://indexer:9696" } }));
+vi.mock("./env", () => ({ env: { prowlarrUrl: "http://indexer:9696", prowlarrApiKey: "test-indexer-key" } }));
 const { desktopReleases, desktopTorrent } = await import("./desktop-releases");
 const magnet = `magnet:?xt=urn:btih:${"a".repeat(40)}&tr=https%3A%2F%2Ftracker.example%2Fannounce&xs=http%3A%2F%2Flocalhost%2Fsecret`;
 it("includes magnet-only releases, validates hashes and removes metadata/web-seed URLs", async () => {

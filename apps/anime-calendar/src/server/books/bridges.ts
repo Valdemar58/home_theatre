@@ -13,7 +13,9 @@ export async function bridgesState() {
   const cfg = providerConfig();
   const plugins = await pluginIndex().then((list) => list.map((p) => ({ id: p.id, name: p.name, lang: pluginLang(p), site: p.site }))).catch(() => null);
   let suwayomi: { up: boolean; version: string | null; extensions: SExt[]; sources: { id: string; name: string; lang: string; nsfw: boolean }[]; error: string | null };
-  try {
+  if (!cfg.suwayomi.url) {
+    suwayomi = { up: false, version: null, extensions: [], sources: [], error: null };
+  } else try {
     const about = await suwa<{ aboutServer: { version: string } }>(`{ aboutServer { version } }`, undefined, 5000);
     const { modern } = await suwaCapabilities();
     const ext = await suwa<{ extensions: { nodes: SExt[] } }>(`{ extensions { nodes { pkgName name lang versionName isInstalled hasUpdate ${modern ? "" : "isNsfw"} } } }`);
@@ -54,7 +56,7 @@ export function setBridges(patch: { plugins?: string[]; index?: string; sources?
   saveProviderConfig({
     lnreader: { index: patch.index?.trim() || cfg.lnreader.index, plugins: patch.plugins ?? cfg.lnreader.plugins },
     suwayomi: { ...cfg.suwayomi, sources: patch.sources ?? cfg.suwayomi.sources,
-      url: patch.url ? bridgeUrl(patch.url) : cfg.suwayomi.url,
+      url: patch.url === undefined ? cfg.suwayomi.url : patch.url.trim() ? bridgeUrl(patch.url) : "",
       languages: patch.languages?.filter((l) => ["ru", "en", "ja", "ko", "zh", "multi"].includes(l)) ?? cfg.suwayomi.languages },
   });
 }
