@@ -70,7 +70,9 @@ async function save() {
 }
 async function request(path, body, auth = true, origin = config.server, signal) {
   const requestToken = token;
-  const response = await fetch(origin + path, {
+  // Use the same system proxy/PAC handling as the application window.
+  const response = await net.fetch(origin + path, {
+    credentials: "omit",
     method: body ? "POST" : "GET",
     headers: {
       "X-Desktop-Protocol": "2",
@@ -396,7 +398,7 @@ else {
       await storageLocations.load(config.downloadFolder || join(app.getPath("videos"),"home_theater"));
       remoteDownloads = new RemoteDownloads(downloads, body => request("/api/desktop/commands", body), join(app.getPath("userData"), "remote-receipts.json"), () => storageLocations.defaultId?storageLocations.root():null,{locations:storageLocations,addLocation:addStorageLocation});
       await remoteDownloads.load();
-      transport = new HostTransport(library, () => ({ server: config.server, token: pair ? "" : token }));
+      transport = new HostTransport(library, () => ({ server: config.server, token: pair ? "" : token }), (url, options) => net.fetch(url, options));
       transport.start();
       protocol.handle("hostapp", (req) => {
         const name = new URL(req.url).pathname.slice(1) || "index.html";

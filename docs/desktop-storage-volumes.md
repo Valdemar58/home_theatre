@@ -20,6 +20,8 @@ The move copies source files and prepared derivatives, verifies complete hashes 
 
 Commands and receipts persist across reconnects. Already completed moves and preparation requests are safe to deliver again. Long-running operations still report progress. Episode preparation is available as a quiet icon; fixed action/size columns keep progress bars aligned. Each episode is a compact vertical row, with 80% download / 20% preparation weighting.
 
+Desktop API/queue and host signalling use Electron's Chromium network stack, including existing system proxy/PAC settings, rather than Node's independent HTTP stack. Device requests use bearer authentication with session cookies omitted and redirects rejected. BitTorrent retains its existing direct transport. No system networking settings are changed by this implementation.
+
 ## Verification
 
 - Native tests: real torrent/magnet transfers, real FFmpeg, stable volume identity, duplicate/folder-change protection, empty disconnect/reconnect, move/recovery, collision protection, playback protection, receipt replay and reporting while busy.

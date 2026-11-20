@@ -4,6 +4,16 @@ import { mkdtemp, writeFile, stat, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readMedia, HostTransport } from "../src/transport.mjs";
+test("host signalling uses the configured network stack with bearer authentication, no session cookies and no redirects",async()=>{
+  const transport=new HostTransport({files:[]},()=>({server:"https://fixture.invalid",token:"device-token"}),async(url,options)=>{
+    assert.equal(url,"https://fixture.invalid/api/desktop/transport");
+    assert.equal(options.credentials,"omit");assert.equal(options.redirect,"error");
+    assert.equal(options.headers.Authorization,"Bearer device-token");
+    assert.equal(options.headers["X-Desktop-Protocol"],"2");
+    return Response.json({streams:[{id:"lease"}],jobs:[]});
+  });
+  await transport.poll();assert.deepEqual(transport.list(),[{id:"lease"}]);transport.stop();
+});
 test("protocol mismatch revokes streams, preserves binding and exposes an actionable error; recovery clears it", async () => {
   const originalFetch = globalThis.fetch;
   const credentials = { server: "https://fixture.invalid", token: "fixture" };
