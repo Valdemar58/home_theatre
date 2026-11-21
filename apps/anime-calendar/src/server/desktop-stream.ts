@@ -31,7 +31,7 @@ export function sourceState(user: number, room: string) {
   const r = joined(user, room);
   const selected = db.prepare<[string], { device_id: string | null }>("SELECT device_id FROM desktop_room_sources WHERE room_id=?").get(room)?.device_id ?? null;
   const active = [...state.leases.values()].find(l => l.room === room && l.title === r.anilistId && l.ep === r.state.ep)?.device ?? selected;
-  return { selected, active, hosts: roomHosts(r.groupId!, user).map(h => ({ ...h, online: h.online && Date.now() - (hostPolls.get(h.id) ?? 0) < HOST_TIMEOUT, files: h.files.filter(f => f.title === r.anilistId && f.state === "ready" && f.preparedVersion) })) };
+  return { selected, active, relayEnabled: process.env.DESKTOP_RELAY_ENABLED !== "0", hosts: roomHosts(r.groupId!, user).map(h => ({ ...h, online: h.online && Date.now() - (hostPolls.get(h.id) ?? 0) < HOST_TIMEOUT, files: h.files.filter(f => f.title === r.anilistId && f.state === "ready" && f.preparedVersion) })) };
 }
 export function selectSource(user: number, room: string, device: string | null) {
   const r = joined(user, room);
@@ -114,7 +114,7 @@ export function viewerSignal(key: string, user: number, offer?: string, generati
     if (typeof offer !== "string" || offer.length > 32000 || !offer.startsWith("v=0")) throw new ApiError(400, "Некорректное предложение связи");
     if (l.offer !== offer) { l.offer = offer; l.negotiation = id(); l.answer = undefined; }
   }
-  return { device: l.device, generation: l.generation, recovering: Date.now() - (hostPolls.get(l.device) ?? l.created) >= HOST_TIMEOUT, answer: l.answer, bytes: l.bytes, relayBytes: l.relayBytes, iceServers: iceServers() };
+  return { device: l.device, generation: l.generation, recovering: Date.now() - (hostPolls.get(l.device) ?? l.created) >= HOST_TIMEOUT, answer: l.answer, bytes: l.bytes, relayBytes: l.relayBytes, relayEnabled: process.env.DESKTOP_RELAY_ENABLED !== "0", iceServers: iceServers() };
 }
 function iceServers() {
   // Administrator-provided STUN; no hidden third-party endpoint or static TURN secrets.

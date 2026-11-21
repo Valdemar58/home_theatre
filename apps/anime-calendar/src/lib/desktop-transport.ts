@@ -6,10 +6,14 @@ export async function connectDesktop(lease: string, report: (d: DesktopDiagnosti
   let queue = Promise.resolve();
   let generation = 1, lastNegotiation = 0;
   let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+  let initialTimer: ReturnType<typeof setTimeout> | undefined;
+  let initialFailure = "", relayEnabled = true;
   const lifetime = new AbortController();
   function closePeer() { const old = pc; pc = null; channel = null; old?.close(); if (pending) { clearTimeout(pending.timer); pending.reject(new Error("Соединение заменено")); pending = null; } }
   const diagnostic: DesktopDiagnostics = { mode: "connecting", reason: "Проверяем прямой канал", directBytes: 0, relayBytes: 0 };
   const publish = (mode: DesktopDiagnostics["mode"], reason: string) => { Object.assign(diagnostic, { mode, reason }); report({ ...diagnostic }); };
+  const failInitial = (reason: string) => { initialFailure = reason; closePeer(); publish("closed", reason); };
+  const received = (direct: boolean, bytes: number) => { clearTimeout(initialTimer); if (direct) diagnostic.directBytes += bytes; else diagnostic.relayBytes += bytes; };
   function direct(offset: number, length: number): Promise<ArrayBuffer> {
     return new Promise((resolve, reject) => {
       if (channel?.readyState !== "open") { reject(new Error("Прямой канал недоступен")); return; }
@@ -21,15 +25,17 @@ export async function connectDesktop(lease: string, report: (d: DesktopDiagnosti
   async function read(offset: number, length: number, request: AbortSignal) {
     if (stopped || request.aborted) throw new Error("Подключение закрыто");
     if (channel?.readyState === "open") {
-      try { const b = await direct(offset, length); diagnostic.directBytes += b.byteLength; publish("direct", "Прямое соединение с хостом"); return b; }
-      catch { publish("relay", "Прямой канал прервался; используется сервер"); }
+      try { const b = await direct(offset, length); received(true, b.byteLength); publish("direct", "Прямое соединение с хостом"); return b; }
+      catch { if (!initialFailure) publish("recovering", relayEnabled ? "Прямой канал прервался; проверяем резервную передачу" : "Прямой канал прервался; восстанавливаем соединение"); }
     }
     // Keep the byte-range request open during failover. Do not replace video.src:
     // the browser can consume its existing buffer and the room barrier handles exhaustion.
     while (!stopped && !request.aborted) {
+      if (initialFailure) throw new Error(initialFailure);
       if (channel?.readyState === "open") {
-        try { const b = await direct(offset, length); diagnostic.directBytes += b.byteLength; publish("direct", "Хост подключён · позиция сохранена"); return b; } catch { closePeer(); }
+        try { const b = await direct(offset, length); received(true, b.byteLength); publish("direct", "Хост подключён · позиция сохранена"); return b; } catch { closePeer(); }
       }
+      if (!relayEnabled) { await new Promise(resolve => setTimeout(resolve, 250)); continue; }
       try {
         const r = await fetch(`/api/desktop/media/${lease}?offset=${offset}&length=${length}`, { cache: "no-store", signal: AbortSignal.any([lifetime.signal, request, AbortSignal.timeout(18000)]) });
         if (!r.ok) {
@@ -37,7 +43,7 @@ export async function connectDesktop(lease: string, report: (d: DesktopDiagnosti
           if (![429, 502, 503, 504].includes(r.status)) throw Object.assign(new Error(b.error || `Ошибка ретрансляции ${r.status}`), { fatal: true });
           throw new Error(b.error || "Ожидаем хост");
         }
-        const b = await r.arrayBuffer(); diagnostic.relayBytes += b.byteLength;
+        const b = await r.arrayBuffer(); received(false, b.byteLength);
         publish("relay", generation > 1 ? "Хост автоматически заменён · позиция сохранена" : forceRelay ? "Ретрансляция выбрана для диагностики" : "Передача через сервер"); return b;
       } catch (e) {
         if (stopped || request.aborted || (e as { fatal?: boolean }).fatal) throw e;
@@ -57,13 +63,14 @@ export async function connectDesktop(lease: string, report: (d: DesktopDiagnosti
     const heartbeat = setInterval(() => port.postMessage({ waiting: true }), 5000);
     queue = queue.catch(() => {}).then(async () => {
       try { const bytes = await read(offset, length, request.signal); port.postMessage({ bytes }, [bytes]); }
-      catch (e) { if (!request.signal.aborted) publish("closed", (e as Error).message); port.postMessage({ error: (e as Error).message }); }
+      catch (e) { if (!stopped && !request.signal.aborted) publish("closed", (e as Error).message); port.postMessage({ error: (e as Error).message }); }
       finally { clearInterval(heartbeat); port.close(); }
     });
   };
-  const signal = () => api<{ answer?: string; generation: number; recovering: boolean; relayBytes?: number; iceServers: RTCIceServer[] }>(`/api/desktop/stream?lease=${lease}`);
+  const signal = () => api<{ answer?: string; generation: number; recovering: boolean; relayBytes?: number; relayEnabled?: boolean; iceServers: RTCIceServer[] }>(`/api/desktop/stream?lease=${lease}`, { signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(10000)]) });
   const initial = await signal();
   generation = initial.generation;
+  relayEnabled = initial.relayEnabled !== false;
   let canBridge = false;
   if ("serviceWorker" in navigator && window.isSecureContext) {
     navigator.serviceWorker.addEventListener("message", message);
@@ -74,13 +81,23 @@ export async function connectDesktop(lease: string, report: (d: DesktopDiagnosti
       canBridge = Boolean(navigator.serviceWorker.controller);
     } catch { /* Native HTTP Range relay remains available without a service worker. */ }
   }
+  if (!relayEnabled && (forceRelay || !canBridge || typeof RTCPeerConnection === "undefined")) {
+    failInitial(forceRelay ? "Передача через сервер отключена. Откройте просмотр без параметра relay." : "Браузер не подключил прямой видеоканал. Перезагрузите страницу; серверная ретрансляция отключена.");
+  } else initialTimer = setTimeout(() => {
+    if (!diagnostic.directBytes && !diagnostic.relayBytes) failInitial(relayEnabled ? "Хост не начал передачу за 30 секунд. Проверьте устройство и повторите подключение." : "Прямое соединение не установлено за 30 секунд. Возможна блокировка UDP, NAT или VPN. Серверная ретрансляция отключена; попробуйте другую сеть и повторите подключение.");
+  }, 30000);
   async function negotiate(iceServers: RTCIceServer[]) {
     closePeer();
-    if (!(canBridge && !forceRelay && typeof RTCPeerConnection !== "undefined")) return;
+    if (initialFailure || !(canBridge && !forceRelay && typeof RTCPeerConnection !== "undefined")) return;
     lastNegotiation = Date.now();
     const epoch = generation;
     pc = new RTCPeerConnection({ iceServers }); channel = pc.createDataChannel("media"); channel.binaryType = "arraybuffer";
     const connection = pc;
+    connection.onconnectionstatechange = () => {
+      if (connection.connectionState === "failed" && pc === connection && !stopped && !initialFailure) {
+        closePeer(); publish("recovering", "Прямой канал не установился · повторяем подключение");
+      }
+    };
     channel.onopen = () => {
       if (pc !== connection || stopped) return;
       if (generation > 1) {
@@ -100,19 +117,19 @@ export async function connectDesktop(lease: string, report: (d: DesktopDiagnosti
     };
     try {
       await pc.setLocalDescription(await pc.createOffer());
-      await new Promise<void>(resolve => { const t = setTimeout(done, 2000); function done() { clearTimeout(t); resolve(); } connection.onicegatheringstatechange = () => { if (connection.iceGatheringState === "complete") done(); }; if (connection.iceGatheringState === "complete") done(); });
+      await new Promise<void>(resolve => { const t = setTimeout(done, 8000); function done() { clearTimeout(t); resolve(); } connection.onicegatheringstatechange = () => { if (connection.iceGatheringState === "complete") done(); }; if (connection.iceGatheringState === "complete") done(); });
       await api("/api/desktop/stream", { method: "POST", json: { lease, generation: epoch, offer: connection.localDescription?.sdp } });
-    } catch { closePeer(); publish("relay", "Не удалось согласовать прямой канал"); }
+    } catch { closePeer(); if (!initialFailure) publish("connecting", "Не удалось согласовать прямой канал; повторяем подключение"); }
   }
   await negotiate(initial.iceServers);
   let polling = false;
   const timer = setInterval(async () => {
-    if (polling || stopped) return; polling = true;
-    try { const s = await signal(); if (s.generation !== generation) { generation = s.generation; publish("recovering", "Переключаемся на хост с той же версией файла"); await negotiate(s.iceServers); return; } if (!pc && canBridge && !forceRelay && !s.recovering && Date.now() - lastNegotiation > 10000) { await negotiate(s.iceServers); return; } if (s.recovering) publish("recovering", "Связь с хостом потеряна · ищем доступную копию"); if (!s.recovering && diagnostic.mode === "recovering" && Date.now() - lastNegotiation > 4000) publish("relay", "Хост доступен · передача через сервер"); if (!s.recovering && !canBridge && typeof s.relayBytes === "number") { diagnostic.relayBytes = s.relayBytes; publish("relay", "Передача через сервер без прямого транспорта"); } if (s.answer && pc && !pc.remoteDescription && pc.signalingState === "have-local-offer") await pc.setRemoteDescription({ type: "answer", sdp: s.answer }); }
-    catch (e) { closePeer(); publish("closed", (e as Error).message); }
+    if (polling || stopped || initialFailure) return; polling = true;
+    try { const s = await signal(); if (stopped || initialFailure) return; relayEnabled = s.relayEnabled !== false; if (s.generation !== generation) { generation = s.generation; publish("recovering", "Переключаемся на хост с той же версией файла"); await negotiate(s.iceServers); return; } if (!pc && canBridge && !forceRelay && !s.recovering && Date.now() - lastNegotiation > 10000) { await negotiate(s.iceServers); return; } if (s.recovering) publish("recovering", "Связь с хостом потеряна · ищем доступную копию"); if (!s.recovering && diagnostic.mode === "recovering" && Date.now() - lastNegotiation > 4000) publish("connecting", "Хост доступен · восстанавливаем прямой канал"); if (relayEnabled && !s.recovering && !canBridge && typeof s.relayBytes === "number") { diagnostic.relayBytes = s.relayBytes; if (s.relayBytes > 0) clearTimeout(initialTimer); publish("relay", "Передача через сервер без прямого транспорта"); } if (s.answer && pc && !pc.remoteDescription && pc.signalingState === "have-local-offer") await pc.setRemoteDescription({ type: "answer", sdp: s.answer }); }
+    catch (e) { if (!stopped && !initialFailure) { closePeer(); publish("closed", (e as Error).message); } }
     finally { polling = false; }
   }, 1000);
   const openingChannel = channel as RTCDataChannel | null;
   if (openingChannel && openingChannel.readyState !== "open") await new Promise<void>(resolve => { const t = setTimeout(done, 4000); function done() { clearTimeout(t); openingChannel?.removeEventListener("open", done); resolve(); } openingChannel!.addEventListener("open", done, { once: true }); });
-  return () => { stopped = true; clearTimeout(noticeTimer); lifetime.abort(); clearInterval(timer); closePeer(); navigator.serviceWorker?.removeEventListener("message", message); if (pending) { clearTimeout(pending.timer); pending.reject(new Error("Поток закрыт")); pending = null; } void fetch("/api/desktop/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "close", lease }), keepalive: true }); };
+  return () => { stopped = true; clearTimeout(initialTimer); clearTimeout(noticeTimer); lifetime.abort(); clearInterval(timer); closePeer(); navigator.serviceWorker?.removeEventListener("message", message); if (pending) { clearTimeout(pending.timer); pending.reject(new Error("Поток закрыт")); pending = null; } void fetch("/api/desktop/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "close", lease }), keepalive: true }); };
 }
