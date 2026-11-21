@@ -40,6 +40,13 @@ beforeEach(() => {
   h.heartbeat(device, [file]); device = h.deviceByToken(p.token); h.setGrant(device, 1, 42, true); s.hostState(device.id); s.selectSource(1, "room", device.id);
 });
 function open(user = 2) { const l = s.openLease(user, "room", 42, 1); leases.push(l); return l; }
+it("advertises the real relay policy independently from healthy room signaling", () => {
+  const l = open(), previous = process.env.DESKTOP_RELAY_ENABLED;
+  try {
+    process.env.DESKTOP_RELAY_ENABLED = "0"; expect(s.viewerSignal(l.id, 2).relayEnabled).toBe(false);
+    process.env.DESKTOP_RELAY_ENABLED = "1"; expect(s.viewerSignal(l.id, 2).relayEnabled).toBe(true);
+  } finally { if (previous === undefined) delete process.env.DESKTOP_RELAY_ENABLED; else process.env.DESKTOP_RELAY_ENABLED = previous; }
+});
 it("only joined room members may open and only controllers may change source", () => {
   expect(() => open(3)).toThrow(); expect(() => s.selectSource(2, "room", null)).toThrow(); expect(open().bytes).toBe(8);
 });

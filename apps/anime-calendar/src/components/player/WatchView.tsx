@@ -129,7 +129,7 @@ export function WatchView({ id: initialId, ep: initialEp }: { id: number; ep: nu
     id: rm.room.id,
     state: rm.connected ? rm.room.state : { ...rm.room.state, playing: false }, canControl: rm.canControl, serverNow: rm.serverNow,
     report: r => rm.report({ ...r, anilistId: id, ep, revision: rm.room?.state.session?.revision ?? rm.room?.state.generation }),
-    command: (action, pos) => void rm.act({ action, pos, expectedGeneration: rm.room?.state.generation??0, expectedTitle:id, expectedEp:ep }).catch(() => undefined),
+    command: (action, pos) => rm.act({ action, pos, expectedGeneration: rm.room?.state.generation??0, expectedTitle:id, expectedEp:ep }),
   } : null), [inRoom, rm, id, ep]);
   // Серию в комнате меняет тот, у кого пульт
   const pickEp = (n: number, play = false) => {

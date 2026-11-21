@@ -2,7 +2,7 @@
 import { api } from "@/lib/client";
 import { Button, ErrorBox } from "../ui";
 import { useState } from "react";
-export type DesktopSources = { selected: string | null; active: string | null; hosts: { id: string; name: string; label: string; online: boolean; files: { id: string; ep: number; preparedVersion: string; preparedBytes: number }[] }[] };
+export type DesktopSources = { selected: string | null; active: string | null; relayEnabled?: boolean; hosts: { id: string; name: string; label: string; online: boolean; files: { id: string; ep: number; preparedVersion: string; preparedBytes: number }[] }[] };
 export function DesktopSource({ room, ep, data, canControl, refresh }: { room: string; ep: number; data?: DesktopSources; canControl: boolean; refresh: () => void }) {
   const [error, setError] = useState<unknown>(null), [busy, setBusy] = useState(false);
   async function select(device: string | null) {
@@ -21,7 +21,7 @@ export function DesktopSource({ room, ep, data, canControl, refresh }: { room: s
     </label>
     {data?.active && data.active !== data.selected && <p className="text-xs text-gray-300">Передаёт {data.hosts.find(h => h.id === data.active)?.label || "запасной хост"} · та же версия файла</p>}
     {!canControl && <p className="text-xs text-gray-400">Источник выбирает участник с правом управления.</p>}
-    {data?.selected && <p className="text-xs text-gray-400">Desktop должен оставаться открытым. При недоступности прямого канала используется серверная ретрансляция.</p>}
+    {data?.selected && <p className="text-xs text-gray-400">Desktop должен оставаться открытым. {data.relayEnabled === false ? "Доступно только прямое соединение; некоторые мобильные сети и VPN могут его блокировать." : "При недоступности прямого канала используется серверная ретрансляция."}</p>}
     {error ? <ErrorBox error={error} /> : null}
     {data?.selected && canControl && <Button size="sm" disabled={busy} onClick={() => void select(null)}>Вернуться к серверному источнику</Button>}
   </section>;
