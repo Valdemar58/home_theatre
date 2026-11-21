@@ -1,8 +1,8 @@
-version: 0.5.0-rc.17
+version: 0.5.0-rc.18
 files:
-  - url: https://github.com/Valdemar58/home_theatre/releases/download/v0.5.0-rc.17/home_theater-0.5.0-rc.17-win-x64.exe
-    sha512: qtsHIDVjQR50RKo/SzUFODIFPkmihHLCJuTpz1f6cln9k2IPJx2oQY8BgMYH2B/eEPTvRJTmIDEDGqkjXJwxPg==
-    size: 242425349
-path: https://github.com/Valdemar58/home_theatre/releases/download/v0.5.0-rc.17/home_theater-0.5.0-rc.17-win-x64.exe
-sha512: qtsHIDVjQR50RKo/SzUFODIFPkmihHLCJuTpz1f6cln9k2IPJx2oQY8BgMYH2B/eEPTvRJTmIDEDGqkjXJwxPg==
-releaseDate: '2026-11-21T10:18:02.597Z'
+  - url: https://github.com/Valdemar58/home_theatre/releases/download/v0.5.0-rc.18/home_theater-0.5.0-rc.18-win-x64.exe
+    sha512: 5gMgja1aqW5+QJsxIaOe62hanclDkTNNCA1+saGcAYobbcbl9c/xWRz0Bh8+gL284JSpFUis+rhc+jl0p+OrZw==
+    size: 242426333
+path: https://github.com/Valdemar58/home_theatre/releases/download/v0.5.0-rc.18/home_theater-0.5.0-rc.18-win-x64.exe
+sha512: 5gMgja1aqW5+QJsxIaOe62hanclDkTNNCA1+saGcAYobbcbl9c/xWRz0Bh8+gL284JSpFUis+rhc+jl0p+OrZw==
+releaseDate: '2026-11-21T11:16:46.698Z'
