@@ -1,10 +1,11 @@
 import WebTorrent from "webtorrent";
 import parseTorrent from "parse-torrent";
 import { randomUUID } from "node:crypto";
-import { readFile, writeFile, rename, mkdir, statfs, lstat, unlink } from "node:fs/promises";
+import { readFile, mkdir, statfs, lstat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { resolveMagnet } from "./magnet.mjs";
 import { identifyFile } from "./file-identity.mjs";
+import { atomicWrite } from "./atomic-file.mjs";
 
 export function episodeGuess(name) {
   const base = path.basename(name).replace(/\.[^.]+$/, "");
@@ -55,8 +56,7 @@ export class Downloads {
   save() {
     const data = JSON.stringify(this.jobs);
     this.writes = this.writes.catch(() => {}).then(async () => {
-      await writeFile(path.join(this.directory, "downloads.json.tmp"), data, { mode: 0o600 });
-      await rename(path.join(this.directory, "downloads.json.tmp"), path.join(this.directory, "downloads.json"));
+      await atomicWrite(path.join(this.directory, "downloads.json"), data);
     });
     return this.writes;
   }
@@ -131,6 +131,8 @@ export class Downloads {
       }
     }
     j.state = "verifying"; delete j.error;
+    // An explicit retry verifies the existing pieces and retries failed imports.
+    for (const selection of j.selected) delete selection.error;
     this.connect();
     const t = this.client.add(Buffer.from(j.torrent, "base64"), { path: j.folder, deselect: true, storeCacheSlots: 8 });
     this.active.set(id, t);
@@ -221,6 +223,9 @@ export class Downloads {
         }
       }
       for (const j of this.jobs) {
+        for (const s of j.selected) {
+          if (s.error && this.library.files.find(f => f.id === s.libraryId)?.state === "ready") delete s.error;
+        }
         if (j.state === "error" && j.selected.length && j.selected.every(s => this.library.files.find(f => f.id === s.libraryId)?.state === "ready")) {
           j.state = "ready"; delete j.error;
         }

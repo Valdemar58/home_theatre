@@ -1,7 +1,5 @@
 import {
   readFile,
-  writeFile,
-  rename,
   mkdir,
   stat,
   unlink,
@@ -9,6 +7,7 @@ import {
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { identifyFile } from "./file-identity.mjs";
+import { atomicWrite } from "./atomic-file.mjs";
 
 export class Library {
   constructor(directory) {
@@ -35,13 +34,7 @@ export class Library {
     this.writes = this.writes
       .catch(() => {})
       .then(async () => {
-        await writeFile(join(this.directory, "library.json.tmp"), data, {
-          mode: 0o600,
-        });
-        await rename(
-          join(this.directory, "library.json.tmp"),
-          join(this.directory, "library.json"),
-        );
+        await atomicWrite(join(this.directory, "library.json"), data);
       });
     return this.writes;
   }

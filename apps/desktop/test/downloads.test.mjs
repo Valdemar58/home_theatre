@@ -11,6 +11,22 @@ import { resolveMagnet } from "../src/magnet.mjs";
 import { storageSnapshot } from "../src/storage.mjs";
 
 const options = { dht: false, tracker: false, lsd: false, utp: false, natUpnp: false, natPmp: false };
+test("successful preparation clears a persisted import failure without masking an unprepared episode", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "download-recovery-"));
+  const library = { files: [{ id: "one", state: "ready" }, { id: "two", state: "imported" }] };
+  const manager = new Downloads(dir, library, async () => {});
+  const job = { id: "job", state: "error", error: "save failed", selected: [{ libraryId: "one", error: "EPERM" }, { libraryId: "two", error: "EPERM" }] };
+  manager.jobs = [job];
+  try {
+    await manager.tick();
+    assert.equal(job.state, "error"); assert.equal(job.selected[0].error, undefined); assert.equal(job.selected[1].error, "EPERM");
+    library.files[1].state = "ready";
+    await manager.tick();
+    assert.equal(job.state, "ready"); assert.equal(job.error, undefined); assert(job.selected.every(s => !s.error));
+    const persisted = JSON.parse(await readFile(join(dir, "downloads.json"), "utf8"));
+    assert.equal(persisted[0].state, "ready");
+  } finally { await manager.close(); await rm(dir, { recursive: true, force: true }); }
+});
 async function until(fn) { const deadline = Date.now() + 20000; while (!fn()) { if (Date.now() > deadline) throw new Error("Timed out"); await new Promise(r => setTimeout(r, 30)); } }
 for (const source of ["torrent", "magnet"]) test(`${source}: selected episodes download over real localhost BitTorrent, pause/resume, persist and enter preparation only after verification`, { timeout: 40000 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), "desktop-download-"));
@@ -44,6 +60,18 @@ for (const source of ["torrent", "magnet"]) test(`${source}: selected episodes d
     // The ready state is assigned before the periodic tick finishes persisting it.
     // Wait for that operation before simulating a separate manual retry.
     await manager.operations;
+    const failedImport = manager.get(job.id).selected[0];
+    delete failedImport.libraryId;
+    failedImport.error = "EPERM while saving import";
+    manager.get(job.id).state = "error";
+    await manager.resume(job.id);
+    const retryTorrent = manager.active.get(job.id);
+    retryTorrent.addPeer(`127.0.0.1:${seed.torrentPort}`);
+    await until(() => manager.get(job.id).state === "ready");
+    await manager.operations;
+    assert(failedImport.libraryId);
+    assert.equal(failedImport.error, undefined);
+    assert.equal(library.files.length, 2);
     manager.get(job.id).state = "error";
     manager.get(job.id).error = "Preparation was retried manually";
     await manager.tick();
