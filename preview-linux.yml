@@ -1,9 +1,9 @@
-version: 0.5.0-rc.16
+version: 0.5.0-rc.17
 files:
-  - url: https://github.com/Valdemar58/home_theatre/releases/download/v0.5.0-rc.16/home_theater.AppImage
-    sha512: xPl0VpdCO0zYQL1Chz/l1nVMRSXHMnzqGeRkZOKOUXBwtnH6m154KOG8yN71OnZ+4uO7XQ8mH2GdjbRgqHBlVg==
-    size: 252054071
-    blockMapSize: 264779
-path: https://github.com/Valdemar58/home_theatre/releases/download/v0.5.0-rc.16/home_theater.AppImage
-sha512: xPl0VpdCO0zYQL1Chz/l1nVMRSXHMnzqGeRkZOKOUXBwtnH6m154KOG8yN71OnZ+4uO7XQ8mH2GdjbRgqHBlVg==
-releaseDate: '2026-11-20T23:59:16.730Z'
+  - url: https://github.com/Valdemar58/home_theatre/releases/download/v0.5.0-rc.17/home_theater.AppImage
+    sha512: Uwbqzb3/t6FvigG8P/QdH9AVM3ttXCjVr0lNGhQD2j87b6AMWVL2moXPaie5paogfdDV1EihyMhYVcz4dvRWJg==
+    size: 252058523
+    blockMapSize: 265135
+path: https://github.com/Valdemar58/home_theatre/releases/download/v0.5.0-rc.17/home_theater.AppImage
+sha512: Uwbqzb3/t6FvigG8P/QdH9AVM3ttXCjVr0lNGhQD2j87b6AMWVL2moXPaie5paogfdDV1EihyMhYVcz4dvRWJg==
+releaseDate: '2026-11-21T10:17:06.154Z'
