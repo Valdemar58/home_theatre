@@ -12,11 +12,11 @@ class Channel extends EventTarget {
     queueMicrotask(() => this.onmessage?.({ data: bytes.buffer }));
   }
 }
-class Peer {
+class Peer extends EventTarget {
   static all: Peer[] = [];
   dc = new Channel(); iceGatheringState = "complete"; connectionState = "new"; signalingState = "have-local-offer";
   localDescription = { sdp: "v=0\r\nfixture" }; remoteDescription: unknown = null;
-  constructor() { Peer.all.push(this); }
+  constructor() { super(); Peer.all.push(this); }
   createDataChannel() { return this.dc; }
   async createOffer() { return this.localDescription; }
   async setLocalDescription() {}
@@ -76,4 +76,22 @@ it("does not disconnect a slow mobile transfer while packets keep making progres
   const port=range();await vi.advanceTimersByTimeAsync(21000);
   expect(reports.at(-1)?.directBytes).toBe(4);expect(reports.some(r=>r.mode==="closed")).toBe(false);
   expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({bytes:expect.any(ArrayBuffer)}),expect.any(Array));
+});
+it("preserves the direct channel across a transient signaling error and reports the separate failure", async () => {
+  await start(); const peer = Peer.all.at(-1)!; peer.dc.open();
+  const first = range(); await vi.advanceTimersByTimeAsync(1);
+  expect(first.postMessage).toHaveBeenCalledWith(expect.objectContaining({ bytes: expect.any(ArrayBuffer) }), expect.any(Array));
+  mocks.api.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(peer.connectionState).not.toBe("closed"); expect(peer.dc.readyState).toBe("open");
+  expect(reports.some(r => r.mode === "direct" && r.progress?.signaling === "error")).toBe(true);
+  const next = range(); await vi.advanceTimersByTimeAsync(1001);
+  expect(next.postMessage).toHaveBeenCalledWith(expect.objectContaining({ bytes: expect.any(ArrayBuffer) }), expect.any(Array));
+  expect(reports.at(-1)?.progress).toMatchObject({ signaling: "ok", answerReceived: true, channel: "open", packets: 2 });
+});
+it("reports host and browser candidate kinds without copying their SDP addresses", async () => {
+  mocks.api.mockResolvedValue({ generation: 1, recovering: false, relayEnabled: false, iceServers: [], answer: "v=0\r\na=candidate:secret 1 udp 1 203.0.113.22 1234 typ srflx\r\n" });
+  await start();
+  expect(reports.at(-1)?.progress).toMatchObject({ offerSent: true, answerReceived: true, remoteCandidates: { host: 0, srflx: 1, prflx: 0, relay: 0 } });
+  expect(JSON.stringify(reports)).not.toContain("203.0.113"); expect(JSON.stringify(reports)).not.toContain("candidate:secret");
 });
