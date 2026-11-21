@@ -30,11 +30,47 @@ import { product } from "./product.mjs";
 import {StartupUpdates,releasePage} from "./updates.mjs";
 import {ElectronUpdates} from "./electron-updates.mjs";
 import { onboardingEndpoints } from "./onboarding-endpoints.mjs";
+import {ServerCompatibility} from "./compatibility.mjs";
 let profiles, pickerWindow, rtcWindow, oauthView, switching=false, probeGeneration=0;
 let playbackActive=false;
 let lastHeartbeat=0;
 let chromeDrag={left:16,visible:true};
 let startupUpdates,startupReady=false;
+let connectionState=null,connectionErrorVisible=false;
+const compatibility=new ServerCompatibility((url,options)=>net.fetch(url,options),{onState:(origin,state)=>{
+  if(origin!==config.server)return;
+  connectionState=state;emitLoadingState();
+  if(state.status==="blocked")void showConnectionError();
+}});
+function loadingState(){return {...startupUpdates?.snapshot(),networkError,compatibility:connectionState};}
+function emitLoadingState(){if(window&&!window.isDestroyed()&&window.webContents.getURL()==="hostapp://local/loading.html")window.webContents.send("desktop-update-state",loadingState());}
+async function showConnectionError(){
+  if(!startupReady||connectionErrorVisible||quitting)return;
+  connectionErrorVisible=true;pickerWindow?.close();oauthView?.close();
+  // End old page/SSE/media activity; hiding a view would leave playback running.
+  if(webWindow&&!webWindow.isDestroyed()){webWindow.destroy();webWindow=null;}
+  if(transport){transport.streams=[];transport.seen=0;}
+  await window.loadURL("hostapp://local/loading.html");window.show();
+}
+async function requireServer(origin=config.server){
+  const id=profiles?.active?.id;
+  const result=await compatibility.ensure(origin);
+  if(id!==profiles?.active?.id||origin!==config.server)throw Error("Профиль сервера изменился");
+  return result;
+}
+const guardedSessions=new WeakSet();
+function guardSession(s){
+  if(guardedSessions.has(s))return;guardedSessions.add(s);
+  s.webRequest.onBeforeSendHeaders((details,callback)=>{
+    const u=new URL(details.url),origin=config.server;
+    if(u.origin!==origin||u.pathname==="/api/desktop/info"||!(u.pathname.startsWith("/api/")||details.resourceType==="mainFrame")){callback({requestHeaders:details.requestHeaders});return;}
+    void requireServer(origin).then(()=>callback({requestHeaders:{...details.requestHeaders,"X-Desktop-Protocol":String(product.protocol)}}),()=>callback({cancel:true}));
+  });
+  s.webRequest.onHeadersReceived((details,callback)=>{
+    if(details.statusCode===426&&new URL(details.url).origin===config.server)compatibility.reject(config.server,"Сервер отклонил протокол desktop. Проверьте обновления приложения и сервера; данные и привязка сохранены.");
+    callback({responseHeaders:details.responseHeaders});
+  });
+}
 function syncChromeDrag(){
   if(window&&!window.isDestroyed()&&window.webContents.getURL()==="hostapp://local/loading.html")window.webContents.send("desktop-chrome-drag",chromeDrag);
 }
@@ -82,6 +118,7 @@ async function save() {
   await profiles.save();
 }
 async function request(path, body, auth = true, origin = config.server, signal) {
+  await requireServer(origin);
   const requestToken = token;
   const requestProfile = profiles?.active?.id;
   // Use the same system proxy/PAC handling as the application window.
@@ -89,7 +126,7 @@ async function request(path, body, auth = true, origin = config.server, signal) 
     credentials: "omit",
     method: body ? "POST" : "GET",
     headers: {
-      "X-Desktop-Protocol": "2",
+      "X-Desktop-Protocol": String(product.protocol),
       ...(auth ? { Authorization: `Bearer ${token}` } : {}),
       ...(body ? { "Content-Type": "application/json" } : {}),
     },
@@ -115,6 +152,7 @@ async function request(path, body, auth = true, origin = config.server, signal) 
 }
 let bindingBusy=false;
 async function accountBinding(action="status") {
+  await requireServer();
   if(bindingBusy)throw new Error("Подключение уже выполняется");
   if(action==="unlink" && (remoteDownloads?.busy || sending))throw new Error("Дождитесь завершения текущего задания и повторите отвязку");
   bindingBusy=true;
@@ -171,6 +209,7 @@ async function heartbeat() {
 async function openApp(room, destination) {
   startupUpdates?.publish({panel:false});
   if (!config.server) throw new Error("Сначала укажите сервер");
+  await requireServer();guardSession(profileSession());connectionErrorVisible=false;
   if(window.webContents.getURL()==="hostapp://local/index.html")await window.loadURL("hostapp://local/loading.html");
   if (webWindow && !webWindow.isDestroyed()) { webWindow.show(); webWindow.focus(); if (destination || room) await webWindow.loadURL(config.server + (destination || `/groups/${room}`)); return; }
   webWindow = new EmbeddedView(window,{ session:profileSession(), sandbox:true, contextIsolation:true, nodeIntegration:false, preload:join(root,"chrome-preload.cjs") });
@@ -423,10 +462,10 @@ async function loadLocalServices(){
     return request("/api/desktop/commands",body);
   },join(directory,"remote-receipts.json"),()=>storageLocations.defaultId?storageLocations.root():null,{locations:storageLocations,addLocation:addStorageLocation});
   await remoteDownloads.load();
-  transport=new HostTransport(library,()=>!switching&&profiles.active?.id===id?{server:config.server,token:pair?"":token}:{server:"",token:""},(url,options)=>net.fetch(url,options));transport.start();
+  transport=new HostTransport(library,()=>!switching&&profiles.active?.id===id?{server:config.server,token:pair?"":token}:{server:"",token:""},async(url,options)=>{await requireServer(new URL(url).origin);return net.fetch(url,options);});transport.start();
 }
 async function changeProfile(profile,confirm=false){
-
+  if(profile)await compatibility.ensure(profile.origin,{force:true});
   if(switching)throw Error("Сервер уже переключается");
   if((profile?.id??null)===(profiles.active?.id??null))return {ok:true};
   if(transport?.list().length)throw Error("Этот компьютер предоставляет видео комнате. Сначала завершите просмотр.");
@@ -446,6 +485,7 @@ async function changeProfile(profile,confirm=false){
 
     if(webWindow&&!webWindow.isDestroyed()){webWindow.destroy();webWindow=null;}
     profiles.data.activeId=profile?.id??null;config=profile?{...profile.settings,server:profile.origin}:{};
+    connectionState=null;connectionErrorVisible=false;guardSession(profileSession());
 
     token="";pair=null;rooms=[];grants=[];networkError="";lastHeartbeat=0;
     if(config.approved&&config.secret&&secretAvailable()){try{token=safeStorage.decryptString(Buffer.from(config.secret,"base64"));}catch{networkError="Не удалось прочитать ключ устройства. Вход и файлы сохранены; подключите устройство в настройках.";}}
@@ -460,6 +500,7 @@ async function changeProfile(profile,confirm=false){
 async function accountRequest(path,body){
   if(!config.server)throw Error("Сначала выберите сервер");
   const origin=config.server,id=profiles.active.id;
+  await requireServer(origin);guardSession(profileSession());
   const r=await profileSession().fetch(origin+path,{method:body?"POST":"GET",credentials:"include",headers:{Origin:origin,...(body?{"Content-Type":"application/json"}:{})},body:body?JSON.stringify(body):undefined,redirect:"error",signal:AbortSignal.timeout(path==="/api/shikimori/sync"?180000:20000)});
   const result=await r.json().catch(()=>null);
   if(id!==profiles.active.id)throw Error("Профиль изменился");
@@ -488,7 +529,11 @@ async function showPicker(){
 }
 let checkedServer=null;
 async function setupAction(kind,data){
-  if(kind==="setup-update-state")return {...startupUpdates.snapshot(),networkError};
+  if(kind==="setup-update-state")return loadingState();
+  if(kind==="setup-connection-retry"){
+    await compatibility.ensure(config.server,{force:true});connectionErrorVisible=false;
+    return profiles.active?.wizard?.step==="done"?openApp():showSetup();
+  }
   if(kind==="setup-update-retry"){if(startupUpdates.state.status!=="error")throw Error("Проверка уже выполняется");void startupUpdates.run({retry:true});return;}
   if(kind==="setup-update-channel")return startupUpdates.channel(data.channel);
   if(kind==="setup-open-releases")return shell.openExternal(releasePage);
@@ -512,12 +557,8 @@ async function setupAction(kind,data){
   }
   if(kind==="setup-probe"){
     const own=++probeGeneration,origin=normalizeServerAddress(data.address,{development:!app.isPackaged});checkedServer=null;
-    let r;try{r=await net.fetch(origin+"/api/desktop/info",{credentials:"omit",redirect:"error",signal:AbortSignal.timeout(15000)});}catch{throw Error("Не удалось безопасно подключиться к серверу. Проверьте адрес, сертификат и соединение.");}
-    const info=await r.json().catch(()=>null);
+    const info=await compatibility.ensure(origin,{force:true});
     if(own!==probeGeneration)throw Error("Адрес изменён; повторите проверку");
-    if(r.status>=500)throw Error(info?.maintenance?info.error:"Сервер временно недоступен. Повторите проверку позже.");
-    if(!r.ok||info?.service!=="home_theater")throw Error("Это другой сервис или сервер ещё не поддерживает подключение desktop");
-    if(info.desktopProtocol!==product.protocol)throw Error("Версия сервера не поддерживается. Требуется обновление сервера или приложения.");
     checkedServer={origin,at:Date.now(),name:String(info.name||new URL(origin).host).slice(0,80)};return checkedServer;
   }
   if(kind==="setup-cancel-probe"){probeGeneration++;checkedServer=null;return;}
@@ -640,7 +681,7 @@ else {
       window.on("blur",()=>{if(pickerWindow)void setupAction("setup-close-picker",{});});
       window.removeMenu();
       startupUpdates=new StartupUpdates({directory:app.getPath("userData"),version:app.getVersion(),packaged:app.isPackaged,adapter:app.isPackaged?new ElectronUpdates():null});
-      startupUpdates.on("state",state=>{if(!quitting&&!window.isDestroyed()&&!window.webContents.isDestroyed()&&window.webContents.getURL()==="hostapp://local/loading.html")window.webContents.send("desktop-update-state",{...state,networkError});});
+      startupUpdates.on("state",()=>{if(!quitting)emitLoadingState();});
       await window.loadURL("hostapp://local/loading.html");window.show();
       void startupUpdates.run();await startupUpdates.ready;
       profiles=new Profiles(app.getPath("userData"));await profiles.load();
@@ -657,6 +698,7 @@ else {
       }
       await loadLocalServices();
       startupReady=true;startupUpdates.markRuntimeReady();
+      guardSession(profileSession());
       rtcWindow=new EmbeddedView(window,{preload:join(root,"preload.cjs"),sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false});
       rtcWindow.webContents.setWindowOpenHandler(()=>({action:"deny"}));rtcWindow.webContents.on("will-navigate",event=>event.preventDefault());
       await rtcWindow.loadURL("hostapp://local/rtc.html");
@@ -692,9 +734,12 @@ else {
         } else if(!switching) { await heartbeat(); if (token && !bindingBusy) void remoteDownloads.tick().catch(e => { networkError = e.message; }); }
       }, 5000).unref();
       // Associate a legacy token with the installation before displaying a device ID.
-      if(config.server&&token)void accountBinding("status").catch(()=>{}).then(heartbeat);
-      if (config.server && profiles.active?.wizard?.step==="done") await openApp();
-      else await showSetup();
+      try{
+        if(config.server)await requireServer();
+        if(config.server&&token)void accountBinding("status").catch(()=>{}).then(heartbeat);
+        if (config.server && profiles.active?.wizard?.step==="done") await openApp();
+        else await showSetup();
+      }catch{await showConnectionError();}
     })
     .catch((e) => {
       dialog.showErrorBox("Не удалось запустить приложение", e.message);

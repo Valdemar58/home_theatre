@@ -11,10 +11,19 @@ function render(s){state=s;
   $("primary").hidden=!failed&&!(panel&&s.runtimeReady&&s.status!=="development");$("primary").textContent=failed?"Повторить":"Перезапустить и проверить";$("primary").disabled=acting;
   $("releases").hidden=!failed&&!panel;$("exit").hidden=!failed;
   $("navigation").hidden=!s.runtimeReady;$("back").hidden=!panel;$("choose").hidden=panel;$("local").hidden=panel;
+  if(s.compatibility&&!panel&&["checking","blocked"].includes(s.compatibility.status)){
+    const blocked=s.compatibility.status==="blocked";
+    $("heading").textContent=blocked?"Не удалось подключить сервер":"Проверяем совместимость";
+    $("detail").textContent=blocked?"Аккаунт, привязка и файлы сохранены. Можно повторить проверку или выбрать другой сервер.":"Проверяем протокол и возможности сервера до входа и отправки команд";
+    document.querySelector(".spinner").hidden=blocked;$("download").hidden=true;
+    $("error").hidden=!blocked;$("error").textContent=s.compatibility.error||"";
+    $("primary").hidden=!blocked;$("primary").textContent="Повторить проверку";$("releases").hidden=true;$("exit").hidden=!blocked;
+    $("navigation").hidden=!blocked;$("back").hidden=true;$("choose").hidden=false;$("local").hidden=false;
+  }
 }
 async function call(action,data){if(acting)return;acting=true;$("action-error").hidden=true;try{await window.host.call(action,data);}catch(e){$("action-error").textContent=e.message.replace(/^Error invoking remote method 'host': Error: /,"");$("action-error").hidden=false;}finally{acting=false;render(state);}}
 $("choose").onclick=()=>call("profile-add");$("local").onclick=()=>call("setup-local-library");$("back").onclick=()=>call("setup-update-return");
-$("primary").onclick=()=>call(state.runtimeReady?"setup-update-restart":"setup-update-retry");$("releases").onclick=()=>call("setup-open-releases");$("exit").onclick=()=>call("setup-update-exit");
+$("primary").onclick=()=>call(!state.panel&&state.compatibility?.status==="blocked"?"setup-connection-retry":state.runtimeReady?"setup-update-restart":"setup-update-retry");$("releases").onclick=()=>call("setup-open-releases");$("exit").onclick=()=>call("setup-update-exit");
 $("channel").onchange=e=>call("setup-update-channel",{channel:e.target.value});
 const strip=document.createElement("div");strip.className="native-drag-strip";strip.hidden=true;strip.setAttribute("aria-hidden","true");document.body.append(strip);
 window.host.onChromeDrag?.(s=>{strip.style.left=s.left+"px";strip.hidden=!s.visible;});void window.host.call("setup-loading-ready");
