@@ -17,8 +17,8 @@ const outputArg=process.argv.indexOf("--output"),output=resolve(outputArg>=0?pro
 await mkdir(output,{recursive:true});const root=await mkdtemp(join(output,"proof-"));
 assert(root.startsWith(output));
 const nonce=randomBytes(4).toString("hex"),name="home_theater_update_check_"+nonce,applicationId="org.hometheater.desktop.update-check-"+nonce;
-const current="0.5.0-rc.12",target="0.5.0-rc.16",install=join(root,"installed"),userdata=join(root,"userdata"),appdata=join(root,"appdata"),resultFile=join(root,"result.json"),trace=join(root,"trace.jsonl"),retryFile=join(root,"retry");
-const api=[],requests=[];let corrupt=true,assetRoot,metadata,initial;
+const current="0.5.0-rc.12",target=JSON.parse(await readFile(join(desktop,"package.json"),"utf8")).version,install=join(root,"installed"),userdata=join(root,"userdata"),appdata=join(root,"appdata"),resultFile=join(root,"result.json"),trace=join(root,"trace.jsonl"),retryFile=join(root,"retry"),compatBlocked=join(root,"compat-blocked.json"),compatRetry=join(root,"compat-retry");
+const api=[],requests=[],probes=[];let corrupt=true,compatible=false,assetRoot,metadata,initial;
 const server=createServer(async(req,res)=>{try{
   const url=new URL(req.url,"http://localhost");requests.push(url.pathname);await writeFile(join(root,"requests.json"),JSON.stringify({requests,api}));
   if(url.pathname.startsWith("/updates/")){
@@ -29,8 +29,10 @@ const server=createServer(async(req,res)=>{try{
     res.setHeader("content-length",bytes.length);res.end(bytes);return;
   }
   if(url.pathname.startsWith("/api/")){
+    if(url.pathname==="/api/desktop/info"){probes.push({cookie:!!req.headers.cookie,authorization:!!req.headers.authorization});res.setHeader("content-type","application/json");res.end(JSON.stringify({service:"home_theater",desktopProtocol:compatible?2:3,name:"Fixture"}));return;}
     const chunks=[];for await(const chunk of req)chunks.push(chunk);const body=JSON.parse(Buffer.concat(chunks).toString()||"{}");
-    api.push({path:url.pathname,version:req.headers["x-proof-version"],action:body.action,cookie:!!req.headers.cookie});await writeFile(join(root,"requests.json"),JSON.stringify({requests,api}));res.setHeader("content-type","application/json");
+    const runningVersion=req.headers["x-proof-version"]||JSON.parse((await readFile(trace,"utf8")).trim().split("\n").at(-1)).version;
+    api.push({path:url.pathname,version:runningVersion,action:body.action,cookie:!!req.headers.cookie});await writeFile(join(root,"requests.json"),JSON.stringify({requests,api}));res.setHeader("content-type","application/json");
     if(url.pathname==="/api/desktop/binding"){res.end(JSON.stringify({id:"0123456789abcdef01234567",status:"linked",tokenMatches:true}));return;}
     if(url.pathname==="/api/desktop/host"){res.end(JSON.stringify({deviceId:"0123456789abcdef01234567",rooms:[],grants:[]}));return;}
     if(url.pathname==="/api/desktop/transport"){res.end('{"streams":[],"jobs":[]}');return;}
@@ -58,7 +60,7 @@ app.once("ready",()=>{const host=path.join(user,"host.json");if(!fs.existsSync(h
 let reported=false;
 process.on("uncaughtExceptionMonitor",e=>fs.appendFileSync(${JSON.stringify(trace)},JSON.stringify({version:app.getVersion(),exception:e.message})+"\\n"));
 async function report(){if(reported)return;reported=true;try{const h=JSON.parse(fs.readFileSync(path.join(user,"host.json"),"utf8")),p=h.profiles[0],cookies=await session.defaultSession.cookies.get({url:origin});fs.writeFileSync(result,JSON.stringify({version:app.getVersion(),profileId:h.activeId,deviceId:p.settings.deviceId,secretPreserved:safeStorage.decryptString(Buffer.from(p.settings.secret,"base64"))==="f".repeat(64),custom:p.settings.custom,cookiePreserved:cookies.some(c=>c.name==="fixture_session"&&c.value==="retained"),mediaPreserved:fs.readFileSync(path.join(user,"media","keep.bin"),"utf8")==="media must survive",jobs:JSON.parse(fs.readFileSync(path.join(user,"downloads","downloads.json"),"utf8"))}));}catch(e){fs.writeFileSync(result,JSON.stringify({version:app.getVersion(),error:e.message}));}finally{app.quit();}}
-app.once("ready",()=>{let retried=false;setInterval(()=>{if(!retried&&activeUpdater?.state.status==="error"&&fs.existsSync(${JSON.stringify(retryFile)})){retried=true;void activeUpdater.run({retry:true});}const contents=webContents.getAllWebContents().filter(c=>!c.isDestroyed());fs.writeFileSync(path.join(user,"view-state.json"),JSON.stringify(contents.map(c=>({url:c.getURL(),loading:c.isLoadingMainFrame()}))));if(contents.some(c=>{try{const u=new URL(c.getURL());return u.origin===origin&&u.pathname==="/"&&!c.isLoadingMainFrame();}catch{return false;}}))void report();},500).unref();});
+app.once("ready",()=>{let retried=false,compatRetried=false;setInterval(()=>{if(!retried&&activeUpdater?.state.status==="error"&&fs.existsSync(${JSON.stringify(retryFile)})){retried=true;void activeUpdater.run({retry:true});}const contents=webContents.getAllWebContents().filter(c=>!c.isDestroyed());fs.writeFileSync(path.join(user,"view-state.json"),JSON.stringify(contents.map(c=>({url:c.getURL(),loading:c.isLoadingMainFrame()}))));const loading=contents.find(c=>c.getURL()==="hostapp://local/loading.html");if(loading&&app.getVersion()===${JSON.stringify(target)})void loading.executeJavaScript("window.host.call('setup-update-state')").then(s=>{if(s.compatibility?.status!=="blocked")return;fs.writeFileSync(${JSON.stringify(compatBlocked)},JSON.stringify(s.compatibility));if(!compatRetried&&fs.existsSync(${JSON.stringify(compatRetry)})){compatRetried=true;void loading.executeJavaScript("window.host.call('setup-connection-retry')").catch(()=>{});}}).catch(()=>{});if(contents.some(c=>{try{const u=new URL(c.getURL());return u.origin===origin&&u.pathname==="/"&&!c.isLoadingMainFrame();}catch{return false;}}))void report();},500).unref();});
 await import("./src/main.mjs");`);
   await run(process.execPath,[builder,"build","--projectDir",directory,"--win","nsis","--x64","--publish","never","--config.electronDist="+electronDist],join(root,label+"-build.log"));
   return {directory,out:join(directory,"out"),installer:join(directory,"out",`test-${version}-win-x64.exe`)};
@@ -73,11 +75,16 @@ try{
   assert.equal(api.length,0,"Old desktop must never access server APIs before a verified update");assert.equal(await access(resultFile).then(()=>true,()=>false),false);
   corrupt=false;await writeFile(retryFile,"retry");
   console.log("Installing latest directly and checking retained identity");
+  console.log("Checking incompatible-server barrier after mandatory update");
+  await waitFor(async()=>{try{return JSON.parse(await readFile(compatBlocked,"utf8"));}catch{return null;}});
+  assert.equal(api.length,0,"No credentials or commands may reach an incompatible server");
+  assert(probes.length>0&&probes.every(p=>!p.cookie&&!p.authorization),"Compatibility probe must be anonymous");
+  compatible=true;await writeFile(compatRetry,"retry");
   const result=await waitFor(async()=>{try{return JSON.parse(await readFile(resultFile,"utf8"));}catch{return null;}});
   assert.equal(result.error,undefined,result.error);assert.equal(result.version,target);assert.equal(result.profileId,"stable");assert.equal(result.deviceId,"0123456789abcdef01234567");assert.equal(result.custom,"preserve");assert(result.secretPreserved&&result.cookiePreserved&&result.mediaPreserved);assert.equal(result.jobs[0].id,"preserved-job");assert.equal(result.jobs[0].state,"paused");
   assert(api.length>0);assert(api.every(r=>r.version===target),"Only latest desktop may contact server APIs");assert(!api.some(r=>r.action==="link"),"Update cannot create another device binding");
   const states=(await readFile(trace,"utf8")).trim().split("\n").map(line=>JSON.parse(line));assert(states.some(s=>s.version===current&&s.status==="installing"));assert(states.some(s=>s.version===target&&s.status==="ready"));
-  const report={passed:true,from:current,to:target,directLatest:true,checksumFailureBlocked:true,oldApiRequests:0,onlyLatestConnected:true,profilePreserved:true,cookiePreserved:true,devicePreserved:true,secretPreserved:true,jobsPreserved:true,mediaPreserved:true};
+  const report={passed:true,from:current,to:target,directLatest:true,checksumFailureBlocked:true,oldApiRequests:0,onlyLatestConnected:true,incompatibleServerBlocked:true,anonymousProbe:true,compatibleServerRetry:true,profilePreserved:true,cookiePreserved:true,devicePreserved:true,secretPreserved:true,jobsPreserved:true,mediaPreserved:true};
   await writeFile(join(output,"installed-update-proof.json"),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
 }finally{
   stopInstalled();const names=await readdir(install).catch(()=>[]),uninstaller=names.find(n=>/^Uninstall.*\.exe$/i.test(n));

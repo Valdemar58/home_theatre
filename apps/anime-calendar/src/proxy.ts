@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { maintenanceActive, maintenanceProgressAllowed, MAINTENANCE_MESSAGE } from "./server/maintenance";
+import { unsupportedDesktop } from "./desktop-contract";
 
 export function proxy(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
+  if (pathname.startsWith("/api/") && pathname !== "/api/desktop/info" && unsupportedDesktop(req.headers))
+    return NextResponse.json({ error: "Протокол desktop несовместим с сервером. Проверьте обновления приложения и сервера.", code: "DESKTOP_INCOMPATIBLE" }, { status: 426, headers: { "Cache-Control": "no-store" } });
   // Existing SSE streams carry the coordinated pause. No new work is admitted.
   const readOnly = req.method === "GET" && (pathname === "/api/maintenance" || pathname === "/api/me" ||
     pathname.startsWith("/api/health/") || /^\/api\/rooms\/[A-Za-z0-9_-]{1,128}(?:\/events)?$/.test(pathname));
