@@ -26,10 +26,26 @@ it("synchronization events and buffering/ended events never become native user c
 it("ordinary page events and viewers without control cannot change the room", () => {
   const { r, sync } = fixture(); sync.nativePlayback(false, false); r.canControl = false; sync.nativePlayback(false, true); expect(r.command).not.toHaveBeenCalled();
 });
-it("play/pause aligns an initially late client immediately without repeatedly seeking on clock jitter", () => {
-  const { v, r, sync, advance } = fixture(); v.currentTime = 11.2; sync.sync(); expect(v.currentTime).toBe(12);
+it("catches up a small delay by speed and aligns on a shared pause", () => {
+  const { v, r, sync, advance } = fixture(); v.currentTime = 11.2; sync.sync(); expect(v.currentTime).toBe(11.2); expect(v.playbackRate).toBeGreaterThan(1);
   advance(200); v.currentTime = 12.1; sync.sync(); expect(v.currentTime).toBe(12.1);
   r.state = { ...r.state, at: 10_200, pos: 12.8, playing: false }; sync.sync(); expect(v.currentTime).toBe(12.8); expect(v.paused).toBe(true);
+});
+it("swiping out of fullscreen pauses the room regardless of event ordering; entering PiP does not", async () => {
+  const { v, r, sync } = fixture(); sync.transition(); v.paused = true; sync.endFullscreen(); await Promise.resolve();
+  expect(r.command).toHaveBeenCalledWith("pause", 12); sync.sync(); expect(v.play).not.toHaveBeenCalled();
+  const pip = fixture(); pip.sync.transition(); pip.sync.endFullscreen(true); await Promise.resolve(); expect(pip.r.command).not.toHaveBeenCalled();
+});
+it("native PiP seek is shared but internal correction does not echo", async () => {
+  const { v, r, sync } = fixture(); sync.setPosition(15); sync.nativeSeek(true); await Promise.resolve(); expect(r.command).not.toHaveBeenCalled();
+  v.currentTime = 25; sync.nativeSeek(true); await Promise.resolve(); expect(r.command).toHaveBeenCalledWith("seek", 25);
+});
+it("orders rapid native pause/play requests instead of losing the reversal while waiting", async () => {
+  const { v, r, sync } = fixture(); let ack!: () => void;
+  r.command.mockImplementationOnce(() => new Promise<void>(resolve => { ack = resolve; }));
+  v.paused = true; sync.nativePlayback(false, true); await Promise.resolve();
+  v.paused = false; sync.nativePlayback(true, true); ack();
+  await vi.waitFor(() => expect(r.command).toHaveBeenCalledTimes(2)); expect(r.command.mock.calls.map(c => c[0])).toEqual(["pause", "play"]);
 });
 it("a failed command releases synchronization and reports the error", async () => {
   const { r, sync, error } = fixture(); r.command.mockRejectedValue(Error("Нет связи")); sync.request("pause", 12);

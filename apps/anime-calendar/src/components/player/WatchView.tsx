@@ -127,6 +127,7 @@ export function WatchView({ id: initialId, ep: initialEp }: { id: number; ep: nu
   const nextTitle = nextAnime ? displayTitle(nextAnime.title) : "Следующий тайтл";
   const sync: RoomSync | null = useMemo(() => (inRoom && rm.room ? {
     id: rm.room.id,
+    policy: rm.room.syncPolicy,
     state: rm.connected ? rm.room.state : { ...rm.room.state, playing: false }, canControl: rm.canControl, serverNow: rm.serverNow,
     report: r => rm.report({ ...r, anilistId: id, ep, revision: rm.room?.state.session?.revision ?? rm.room?.state.generation }),
     command: (action, pos) => rm.act({ action, pos, expectedGeneration: rm.room?.state.generation??0, expectedTitle:id, expectedEp:ep }),

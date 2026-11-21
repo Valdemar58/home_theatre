@@ -12,6 +12,7 @@ import { imgSrc } from "@/lib/img";
 import { COMPAT_KEY, rememberedSub, subChoiceOf, type FrameItem, type PlayCaps, type PlayInfo, type PlayStatus, type SubChoice, videoTrackOf } from "@/lib/player";
 import { positionAt, type RoomState } from "@/lib/room";
 import { RoomPlayback } from "@/lib/room-playback";
+import { bindMediaSession } from "@/lib/media-session";
 import { cx, ErrorBox, Spinner } from "../ui";
 import { StreamStatus, type Stage } from "./StreamStatus";
 import { connectDesktop, type DesktopDiagnostics } from "@/lib/desktop-transport";
@@ -111,12 +112,13 @@ export type SubSettings = { delay: number; size: number };
 
 /** Комната совместного просмотра: плеер держится её позиции, свои пауза и перемотка уходят всем. */
 export type RoomSync = {
+  policy?: import("@/lib/sync-policy").SyncPolicy;
   id?: string;
   state: RoomState;
   canControl: boolean;
   serverNow: () => number;
   command: (action: "play" | "pause" | "seek", pos: number) => Promise<unknown> | void;
-  report: (r: { buffering: boolean; bw: number | null; drift: number | null; position?: number; buffered?: [number, number][] }) => void;
+  report: (r: { playbackError?: boolean; buffering: boolean; bw: number | null; drift: number | null; position?: number; buffered?: [number, number][] }) => void;
 };
 
 export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, next, onReport, children, autoPlay, preview, onState, controls, room, fullscreenRoot }: {
@@ -203,6 +205,8 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
   const roomRef = useRef(room);
   roomRef.current = room;
   const nativeFullscreen = useRef(false);
+  const pictureInPicture = useRef(false);
+  const nativeActive = () => nativeFullscreen.current || pictureInPicture.current || document.hidden;
   const playback = useRef<RoomPlayback | null>(null);
   const inRoom = Boolean(room);
   // Насколько плеер разошёлся с комнатой (для отчёта)
@@ -235,7 +239,7 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
       // В комнате — с её позиции
       const rm = roomRef.current;
       const start = opts.start ?? (rm ? positionAt(rm.state, rm.serverNow()) : undefined);
-      const r = await api<PlayInfo>("/api/play", { method: "POST", json: { anilistId, ep, source, desktopRoom, caps, ...opts, start, replace: sid.current } });
+      const r = await api<PlayInfo>("/api/play", { method: "POST", ...(desktopRoom ? { signal: AbortSignal.timeout(15000) } : {}), json: { anilistId, ep, source, desktopRoom, caps, ...opts, start, replace: sid.current } });
       hevcSent.current = caps.hevc;
       recoveries.current = 0;
       sid.current = r.sid;
@@ -246,7 +250,7 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
       const picked = rememberedSub(r.subs, saved, r.subIndex);
       setSub((prev) => (opts.audio !== undefined || opts.voice ? prev : picked));
     } catch (e) {
-      setError(e);
+      setError(["TimeoutError", "AbortError"].includes((e as Error).name) ? new Error("Сервер не ответил на запрос просмотра. Проверьте связь с комнатой и повторите подключение.") : e);
       setLoading(false);
     }
   }, [anilistId, ep, source, desktopRoom]);
@@ -449,6 +453,17 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
     }, 500);
     return () => clearInterval(t);
   }, [info, error, desktopUnavailable]);
+  useEffect(() => {
+    if (!desktopRoom || !info || !started) return;
+    let attemptedAt = 0, ready = false;
+    const timer = setInterval(() => {
+      const v = video.current; if (!v || ready) return;
+      if (v.readyState >= 2) { ready = true; return; }
+      if (!v.paused || roomRef.current?.state.playing) attemptedAt ||= Date.now();
+      if (attemptedAt && Date.now() - attemptedAt > 35000) { ready = true; setError(new Error("Первый кадр не получен за 35 секунд. Проверьте связь с комнатой и хостом, затем повторите подключение.")); }
+    }, 500);
+    return () => clearInterval(timer);
+  }, [desktopRoom, info, started]);
   // Раздача «Стрима»: скорость, пиры, подготовка и скачанные куски (полоска под шкалой) — раз в 3 с
   const { data: status } = useQuery({
     queryKey: ["play-status", info?.sid],
@@ -637,7 +652,7 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
     if (rm?.state.session && rm.state.session.phase !== "watching") return;
     if (rm && !rm.canControl) { flash("Управляет организатор комнаты"); return; }
     const t = Math.max(0, Math.min(to, (info?.duration || v.duration || to) - 0.5));
-    v.currentTime = t;
+    playback.current!.setPosition(t);
     // Время на панели — сразу, не дожидаясь загрузки (timeupdate придёт только после неё)
     setTime(t);
     if (rm) playback.current!.request("seek", t);
@@ -677,13 +692,13 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
       if (!force && buffering === was) return;
       was = buffering;
       const bw = hls.current?.bandwidthEstimate;
-      rm.report({ buffering, bw: bw && Number.isFinite(bw) ? Math.round(bw) : null, drift: drift.current, position: v.currentTime, buffered: Array.from({ length: Math.min(b.length, 16) }, (_, i) => [b.start(i), b.end(i)] as [number, number]) });
+      rm.report({ playbackError: Boolean(error) || desktopUnavailable, buffering, bw: bw && Number.isFinite(bw) ? Math.round(bw) : null, drift: drift.current, position: v.currentTime, buffered: Array.from({ length: Math.min(b.length, 16) }, (_, i) => [b.start(i), b.end(i)] as [number, number]) });
     };
     tick(true);
     const fast = setInterval(() => tick(false), 500);
     const slow = setInterval(() => tick(true), 5000);
     return () => { clearInterval(fast); clearInterval(slow); };
-  }, [inRoom, started, desktopRoom]);
+  }, [inRoom, started, desktopRoom, Boolean(error), desktopUnavailable]);
   // Some native MP4 loaders abandon a long-stalled Range response while paused.
   // Retry the same lease only AFTER exhaustion, never during buffered playback.
   useEffect(() => {
@@ -745,17 +760,42 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
     const v = video.current;
     const onFs = () => setFull(Boolean(document.fullscreenElement));
     const onNativeBegin = () => { nativeFullscreen.current = true; setFull(true); };
-    const onNativeEnd = () => { nativeFullscreen.current = false; setFull(false); };
+    let exitTimer: ReturnType<typeof setTimeout> | undefined;
+    const isPiP = () => document.pictureInPictureElement === v || (v as (HTMLVideoElement & { webkitPresentationMode?: string }) | null)?.webkitPresentationMode === "picture-in-picture" || pictureInPicture.current;
+    const onNativeEnd = () => {
+      nativeFullscreen.current = false; setFull(false); playback.current!.transition();
+      // WebKit can announce fullscreen exit before the PiP presentation change.
+      clearTimeout(exitTimer); exitTimer = setTimeout(() => playback.current!.endFullscreen(isPiP()), 150);
+    };
+    const onPiP = () => { pictureInPicture.current = document.pictureInPictureElement === v || (v as (HTMLVideoElement & { webkitPresentationMode?: string }) | null)?.webkitPresentationMode === "picture-in-picture"; };
+    const onEnterPiP = () => { pictureInPicture.current = true; };
+    const onLeavePiP = () => { pictureInPicture.current = false; };
     onFs();
     document.addEventListener("fullscreenchange", onFs);
     v?.addEventListener("webkitbeginfullscreen", onNativeBegin);
     v?.addEventListener("webkitendfullscreen", onNativeEnd);
+    v?.addEventListener("webkitpresentationmodechanged", onPiP);
+    v?.addEventListener("enterpictureinpicture", onEnterPiP);
+    v?.addEventListener("leavepictureinpicture", onLeavePiP);
     return () => {
       document.removeEventListener("fullscreenchange", onFs);
       v?.removeEventListener("webkitbeginfullscreen", onNativeBegin);
       v?.removeEventListener("webkitendfullscreen", onNativeEnd);
+      clearTimeout(exitTimer);
+      v?.removeEventListener("webkitpresentationmodechanged", onPiP);
+      v?.removeEventListener("enterpictureinpicture", onEnterPiP);
+      v?.removeEventListener("leavepictureinpicture", onLeavePiP);
     };
   }, []);
+
+  useEffect(() => {
+    if (!started || !info || !("mediaSession" in navigator)) return;
+    return bindMediaSession(navigator.mediaSession, {
+      play: () => { const r = roomRef.current; if (r && !r.canControl) { if (r.state.playing) void playback.current!.setPlaying(true); return; } if (r) playback.current!.request("play", video.current?.currentTime || 0); void playback.current!.setPlaying(true); },
+      pause: () => { const r = roomRef.current; if (r && !r.canControl) return; if (r) playback.current!.request("pause", video.current?.currentTime || 0); void playback.current!.setPlaying(false); },
+      seek, position: () => video.current?.currentTime || 0, duration: () => info.duration || video.current?.duration || 0, rate: () => video.current?.playbackRate || 1, paused: () => video.current?.paused ?? true,
+    });
+  }, [started, info, seek]);
 
   // Перевести кадр: пауза (если шло) → сервер берёт кадр у этой секунды, модель со зрением читает надписи
   const translateFrame = useCallback(async () => {
@@ -851,7 +891,8 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
       <style>{`.ac-video::cue { font-size: ${subSize}%; }`}</style>
       <video ref={video} className="ac-video h-full w-full" playsInline preload="auto"
         onClick={toggle} onDoubleClick={fullscreen}
-        onPlay={() => { setPlaying(true); setFrame(null); playback.current!.nativePlayback(true, nativeFullscreen.current); }} onPause={() => { setPlaying(false); send(); playback.current!.nativePlayback(false, nativeFullscreen.current); }}
+        onPlay={() => { setPlaying(true); setFrame(null); playback.current!.nativePlayback(true, nativeActive()); }} onPause={() => { setPlaying(false); send(); playback.current!.nativePlayback(false, nativeActive()); }}
+        onSeeked={() => playback.current!.nativeSeek(nativeActive())}
         onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)} onSeeking={(e) => setTime(e.currentTarget.currentTime)} onLoadedMetadata={() => { coverageSid.current = sid.current; applySpeed(); }}
         onProgress={(e) => { const b = e.currentTarget.buffered; setBuffered(b.length ? b.end(b.length - 1) : 0); }}
         onEnded={(e) => { send(); onEnded?.(e.currentTarget.duration); if (next && !room?.state.session) setCountdown(10); }}>

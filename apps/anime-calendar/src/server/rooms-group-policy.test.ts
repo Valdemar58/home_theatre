@@ -11,7 +11,7 @@ vi.mock("./lists", () => ({ getMedia: () => ({status:"FINISHED",episodes:12,sche
 process.env.DATABASE_DRIVER = process.env.POSTGRES_TEST === "1" ? "postgres" : "sqlite";
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "room-policy-"));
 const { db } = await import("./db");
-const { createRoom, roomCommand, roomReport, roomView, roomPresence } = await import("./rooms");
+const { createRoom, roomCommand, roomReport, roomView, roomPresence, roomPoll, roomSessionTick } = await import("./rooms");
 const owner = { id: 1, name: "organizer" }, member = { id: 2, name: "viewer" };
 let group: number;
 let room: string;
@@ -51,6 +51,22 @@ describe("group playback permissions", () => {
 });
 
 afterEach(() => vi.useRealTimers());
+it("polling keeps a viewer online without leaking SSE counts, and expires into the shared barrier", () => {
+  vi.useFakeTimers(); roomCommand(owner, room, {action:"play",pos:10});
+  for(let i=0;i<10;i++)roomPoll(2,room);
+  roomPresence(2,room,false);
+  expect(roomView(1,room).members.find(m=>m.id===2)?.presence?.online).toBe(true);
+  expect(roomView(1,room).state.playing).toBe(true);
+  vi.advanceTimersByTime(9000); roomSessionTick();
+  expect(roomView(1,room).members.find(m=>m.id===2)?.presence?.online).toBe(false);
+  expect(roomView(1,room).state.playing).toBe(false); expect(roomView(1,room).state.hold).toContain(2);
+});
+it("reports a media failure separately from buffering and clears it on retry", () => {
+  roomReport(2,room,{buffering:true,playbackError:true});
+  expect(roomView(1,room).members.find(m=>m.id===2)?.presence?.playbackError).toBe(true);
+  roomReport(2,room,{buffering:false,playbackError:false});
+  expect(roomView(1,room).members.find(m=>m.id===2)?.presence?.playbackError).toBe(false);
+});
 it("buffer exhaustion pauses everyone, never times out, and recovery resumes automatically", () => {
   vi.useFakeTimers(); roomCommand(owner, room, { action: "play", pos: 10 });
   roomReport(2, room, { buffering: false, position: 10, buffered: [[0,20]] });

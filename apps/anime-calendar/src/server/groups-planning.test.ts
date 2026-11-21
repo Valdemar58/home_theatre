@@ -33,6 +33,13 @@ beforeEach(() => {
 });
 
 describe("room planning: real storage and authorization", () => {
+  it("stores one validated sync policy for the room and restricts changes to its organizer", () => {
+    const policy = { tolerance:0.3, hardSeek:8, maxRate:1.15, minRate:0.95, settleSeconds:6, curve:"linear" };
+    expect(groupAction(owner,id,{action:"sync-policy",policy}).syncPolicy).toEqual(policy);
+    expect(groupPlan(member.id,id).syncPolicy).toEqual(policy);
+    expect(()=>groupAction(member,id,{action:"sync-policy",policy})).toThrow(/организатор/);
+    expect(()=>groupAction(owner,id,{action:"sync-policy",policy:{...policy,maxRate:3}})).toThrow();
+  });
   it("prepares every selected episode of every title, without filling gaps", async () => {
     await addItem(owner, id, 10); await addItem(owner, id, 11);
     vi.mocked(episodeItems).mockResolvedValue(new Map([1, 2, 3].map(ep => [ep, [{ itemId: `test-${ep}`, where: "stream", hash: "test", index: ep }]])) as Awaited<ReturnType<typeof episodeItems>>);

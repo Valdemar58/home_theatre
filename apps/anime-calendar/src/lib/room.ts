@@ -19,6 +19,7 @@ export type RoomState = {
 
 /** Связь участника: что сообщает его плеер раз в несколько секунд. */
 export type RoomPresence = {
+  playbackError?: boolean;
   position?: number | null;
   buffered?: [number, number][];
   online: boolean;
@@ -46,6 +47,7 @@ export type RoomActionKind = "play" | "pause" | "seek" | "ep" | "join" | "leave"
 export type RoomAction = { userId: number; kind: RoomActionKind; pos: number | null; ep?: number; at: number };
 
 export type RoomView = {
+  syncPolicy?: import("./sync-policy").SyncPolicy;
   groupId?: number | null;
   canInvite?: boolean;
   id: string;

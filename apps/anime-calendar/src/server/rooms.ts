@@ -1,4 +1,5 @@
 import "server-only";
+import { groupSyncPolicy } from "./room-sync-config";
 import { maintenanceActive } from "./maintenance";
 import { groupAccess, requireGroupCapability } from "./group-policy";
 import { randomBytes } from "node:crypto";
@@ -38,7 +39,7 @@ type RoomRow = {
 type MemberRow = { user_id: number; status: RoomMember["status"]; control: number };
 
 type Live = {
-  presence: Map<number, RoomPresence & { conns: number }>;
+  presence: Map<number, RoomPresence & { conns: number; pollUntil?: number }>;
   actions: RoomAction[];
   holdTimers: Map<number, ReturnType<typeof setTimeout>>;
   /** Управляющий продолжил без зрителя — не ждём снова до его возвращения */
@@ -60,12 +61,12 @@ function view(r: RoomRow, me: number): RoomView {
   const l = liveOf(r.id);
   const access = r.group_id ? groupAccess(r.group_id, me) : null;
   return {
-    id: r.id, anilistId: r.anilist_id, ownerId: r.owner_id, preset: access ? "host" : r.preset, state: JSON.parse(r.state) as RoomState,
+    id: r.id, anilistId: r.anilist_id, ownerId: r.owner_id, preset: access ? "host" : r.preset, state: JSON.parse(r.state) as RoomState, syncPolicy: groupSyncPolicy(r.group_id),
     members: memberRows(r.id).map((m) => {
       const p = l.presence.get(m.user_id);
       return {
         id: m.user_id, name: userName(m.user_id), status: m.status, host: access ? false : m.user_id === r.owner_id, control: access ? m.user_id === me && access.can("play") : Boolean(m.control),
-        presence: p ? { online: p.online, buffering: p.buffering, bw: p.bw, rtt: p.rtt, drift: p.drift, seenAt: p.seenAt } : null,
+        presence: p ? { online: p.online, buffering: p.buffering, playbackError: p.playbackError, bw: p.bw, rtt: p.rtt, drift: p.drift, seenAt: p.seenAt } : null,
       };
     }),
     groupId: r.group_id, canInvite: access ? access.can("invite") : undefined,
@@ -129,6 +130,7 @@ function moveEpisode(r:RoomRow,state:RoomState,title:number,ep:number,session=st
 
 /** Server clock owns the countdown. Called by the job loop, not by the viewers. */
 export function roomSessionTick() {
+  for (const [id, l] of live) for (const [user, p] of l.presence) if (p.pollUntil && p.pollUntil <= Date.now() && !p.conns && p.online) roomPresence(user, id, false);
   if (maintenanceActive()) return;
   const rows = db.prepare<[], { id: string }>("SELECT r.id FROM watch_rooms r JOIN group_sessions s ON s.id = r.session_id WHERE s.status = 'live' AND r.ended_at IS NULL").all();
   for (const { id } of rows) {
@@ -172,6 +174,17 @@ function mine(userId: number, id: string, statuses: RoomMember["status"][] = ["j
 export function roomView(userId: number, id: string): RoomView {
   const { r } = mine(userId, id, ["joined", "invited", "left"]);
   return view(r, userId);
+}
+
+/** Short-request fallback when a browser/network cannot retain an SSE stream. */
+export function roomPoll(userId: number, id: string) {
+  const { r, m } = mine(userId, id, ["joined", "invited", "left"]);
+  if (m.status === "joined") {
+    const l = liveOf(id), cur = l.presence.get(userId) ?? { online: false, buffering: false, bw: null, rtt: null, drift: null, seenAt: 0, conns: 0 };
+    l.presence.set(userId, { ...cur, online: true, seenAt: Date.now(), pollUntil: Date.now() + 8000 });
+    if (!cur.online) changed(id);
+  }
+  return { ...view(r, userId), now: Date.now() };
 }
 
 /** Комната тайтла, где пользователь вошёл или приглашён (вошёл — важнее). */
@@ -415,13 +428,13 @@ function release(id: string, userId: number, kind: "resume" | "skip" = "resume")
 }
 
 /** Плеер участника сообщает о себе (раз в несколько секунд и когда начал/перестал грузиться). Ответ — часы сервера. */
-export function roomReport(userId: number, id: string, p: { position?: number; buffered?: unknown; buffering?: boolean; bw?: number | null; rtt?: number | null; drift?: number | null; revision?: number; anilistId?: number; ep?: number }) {
+export function roomReport(userId: number, id: string, p: { playbackError?: boolean; position?: number; buffered?: unknown; buffering?: boolean; bw?: number | null; rtt?: number | null; drift?: number | null; revision?: number; anilistId?: number; ep?: number }) {
   return db.transaction(() => {
     db.prepare("UPDATE watch_rooms SET state = state WHERE id = ?").run(id);
     return reportLocked(userId, id, p);
   })();
 }
-function reportLocked(userId: number, id: string, p: { position?: number; buffered?: unknown; buffering?: boolean; bw?: number | null; rtt?: number | null; drift?: number | null; revision?: number; anilistId?: number; ep?: number }) {
+function reportLocked(userId: number, id: string, p: { playbackError?: boolean; position?: number; buffered?: unknown; buffering?: boolean; bw?: number | null; rtt?: number | null; drift?: number | null; revision?: number; anilistId?: number; ep?: number }) {
   const { r } = mine(userId, id);
   const s = JSON.parse(r.state) as RoomState;
   if ((s.generation??0)>0 && (p.anilistId!==r.anilist_id || p.ep!==s.ep || p.revision!==(s.session?.revision??s.generation))) return {now:Date.now()};
@@ -431,7 +444,7 @@ function reportLocked(userId: number, id: string, p: { position?: number; buffer
   const buffering = Boolean(p.buffering);
   const num = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? x : null);
   const buffered: [number, number][] = Array.isArray(p.buffered) ? p.buffered.slice(0,16).filter((v): v is [number, number] => Array.isArray(v) && v.length === 2 && v.every(n => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 86400) && v[1] >= v[0]) : [];
-  l.presence.set(userId, { ...cur, position: typeof p.position === "number" && Number.isFinite(p.position) ? Math.max(0, Math.min(86400, p.position)) : null, buffered, buffering, bw: num(p.bw), rtt: num(p.rtt), drift: num(p.drift), seenAt: Date.now() });
+  l.presence.set(userId, { ...cur, playbackError: p.playbackError === true, position: typeof p.position === "number" && Number.isFinite(p.position) ? Math.max(0, Math.min(86400, p.position)) : null, buffered, buffering, bw: num(p.bw), rtt: num(p.rtt), drift: num(p.drift), seenAt: Date.now() });
   if (buffering && s.playing && !l.skipped.has(userId)) {
     // Кто-то грузится, пока смотрим, — пауза у всех, ждём восстановления или команды управляющего
     const t = Date.now();
@@ -455,8 +468,9 @@ export function roomPresence(userId: number, id: string, online: boolean) {
   const l = liveOf(id);
   const cur = l.presence.get(userId) ?? { online: false, buffering: false, bw: null, rtt: null, drift: null, seenAt: 0, conns: 0 };
   const conns = Math.max(0, cur.conns + (online ? 1 : -1));
-  l.presence.set(userId, { ...cur, conns, online: conns > 0, buffering: conns > 0 && cur.buffering, seenAt: Date.now() });
-  if (!conns && cur.conns > 0 && memberRows(id).some(m => m.user_id === userId && m.status === "joined")) {
+  const onlineNow = conns > 0 || (cur.pollUntil ?? 0) > Date.now();
+  l.presence.set(userId, { ...cur, conns, online: onlineNow, buffering: onlineNow && cur.buffering, seenAt: Date.now() });
+  if (!onlineNow && cur.online && memberRows(id).some(m => m.user_id === userId && m.status === "joined")) {
     const r = roomRow(id);
     const s = r ? JSON.parse(r.state) as RoomState : null;
     if (s && (r?.group_id || s.session)) {
