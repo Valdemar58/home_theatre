@@ -31,13 +31,19 @@ import {StartupUpdates,releasePage} from "./updates.mjs";
 import {ElectronUpdates} from "./electron-updates.mjs";
 import { onboardingEndpoints } from "./onboarding-endpoints.mjs";
 import {ServerCompatibility} from "./compatibility.mjs";
+import {ServerNetwork} from "./server-network.mjs";
 let profiles, pickerWindow, rtcWindow, oauthView, switching=false, probeGeneration=0;
 let playbackActive=false;
 let lastHeartbeat=0;
 let chromeDrag={left:16,visible:true};
 let startupUpdates,startupReady=false;
 let connectionState=null,connectionErrorVisible=false;
-const compatibility=new ServerCompatibility((url,options)=>net.fetch(url,options),{onState:(origin,state)=>{
+const serverNetwork=new ServerNetwork(origin=>{
+  const profile=profiles?.data.profiles.find(p=>p.origin===origin);
+  const partition=profile?profiles.partition(profile):undefined;
+  return partition?session.fromPartition(partition):session.defaultSession;
+});
+const compatibility=new ServerCompatibility((url,options)=>serverNetwork.fetch(url,options),{getRoute:origin=>serverNetwork.route(origin),onState:(origin,state)=>{
   if(origin!==config.server)return;
   connectionState=state;emitLoadingState();
   if(state.status==="blocked")void showConnectionError();
@@ -118,16 +124,17 @@ async function save() {
   await profiles.save();
 }
 async function request(path, body, auth = true, origin = config.server, signal) {
-  await requireServer(origin);
   const requestToken = token;
   const requestProfile = profiles?.active?.id;
+  await requireServer(origin);
+  if(requestProfile!==profiles?.active?.id||requestToken!==token)throw Error("Профиль или привязка изменились");
   // Use the same system proxy/PAC handling as the application window.
-  const response = await net.fetch(origin + path, {
+  const response = await serverNetwork.fetch(origin + path, {
     credentials: "omit",
     method: body ? "POST" : "GET",
     headers: {
       "X-Desktop-Protocol": String(product.protocol),
-      ...(auth ? { Authorization: `Bearer ${token}` } : {}),
+      ...(auth ? { Authorization: `Bearer ${requestToken}` } : {}),
       ...(body ? { "Content-Type": "application/json" } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,
@@ -152,11 +159,11 @@ async function request(path, body, auth = true, origin = config.server, signal) 
 }
 let bindingBusy=false;
 async function accountBinding(action="status") {
-  await requireServer();
   if(bindingBusy)throw new Error("Подключение уже выполняется");
   if(action==="unlink" && (remoteDownloads?.busy || sending))throw new Error("Дождитесь завершения текущего задания и повторите отвязку");
   bindingBusy=true;
   try {
+    await requireServer();
     const dir=!app.isPackaged && process.env.HOME_THEATER_TEST_PROFILE ? app.getPath("userData") : join(app.getPath("appData"),"home_theater-device");
     const key=await installationKey(join(dir,"installation.key"));
     const r=await profileSession().fetch(config.server+"/api/desktop/binding",{method:"POST",headers:{"Content-Type":"application/json",Origin:config.server},body:JSON.stringify({action,key,label:hostname().slice(0,80),platform:process.platform,previousToken:token||undefined}),redirect:"error",signal:AbortSignal.timeout(15000)});
@@ -462,7 +469,7 @@ async function loadLocalServices(){
     return request("/api/desktop/commands",body);
   },join(directory,"remote-receipts.json"),()=>storageLocations.defaultId?storageLocations.root():null,{locations:storageLocations,addLocation:addStorageLocation});
   await remoteDownloads.load();
-  transport=new HostTransport(library,()=>!switching&&profiles.active?.id===id?{server:config.server,token:pair?"":token}:{server:"",token:""},async(url,options)=>{await requireServer(new URL(url).origin);return net.fetch(url,options);});transport.start();
+  transport=new HostTransport(library,()=>!switching&&profiles.active?.id===id?{server:config.server,token:pair?"":token}:{server:"",token:""},async(url,options)=>{await requireServer(new URL(url).origin);return serverNetwork.fetch(url,options);});transport.start();
 }
 async function changeProfile(profile,confirm=false){
   if(profile)await compatibility.ensure(profile.origin,{force:true});
@@ -501,7 +508,8 @@ async function accountRequest(path,body){
   if(!config.server)throw Error("Сначала выберите сервер");
   const origin=config.server,id=profiles.active.id;
   await requireServer(origin);guardSession(profileSession());
-  const r=await profileSession().fetch(origin+path,{method:body?"POST":"GET",credentials:"include",headers:{Origin:origin,...(body?{"Content-Type":"application/json"}:{})},body:body?JSON.stringify(body):undefined,redirect:"error",signal:AbortSignal.timeout(path==="/api/shikimori/sync"?180000:20000)});
+  if(id!==profiles.active.id||origin!==config.server)throw Error("Профиль изменился");
+  const r=await serverNetwork.fetch(origin+path,{method:body?"POST":"GET",credentials:"include",headers:{Origin:origin,...(body?{"Content-Type":"application/json"}:{})},body:body?JSON.stringify(body):undefined,redirect:"error",signal:AbortSignal.timeout(path==="/api/shikimori/sync"?180000:20000)});
   const result=await r.json().catch(()=>null);
   if(id!==profiles.active.id)throw Error("Профиль изменился");
   if(!r.ok)throw Error(result?.error||`Сервер вернул ошибку ${r.status}`);

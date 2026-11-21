@@ -13,8 +13,9 @@ function render(s){state=s;
   $("navigation").hidden=!s.runtimeReady;$("back").hidden=!panel;$("choose").hidden=panel;$("local").hidden=panel;
   if(s.compatibility&&!panel&&["checking","blocked"].includes(s.compatibility.status)){
     const blocked=s.compatibility.status==="blocked";
-    $("heading").textContent=blocked?"Не удалось подключить сервер":"Проверяем совместимость";
-    $("detail").textContent=blocked?"Аккаунт, привязка и файлы сохранены. Можно повторить проверку или выбрать другой сервер.":"Проверяем протокол и возможности сервера до входа и отправки команд";
+    const connecting=s.compatibility.phase==="connecting";
+    $("heading").textContent=blocked?"Не удалось подключить сервер":connecting?"Подключаемся к серверу":"Проверяем совместимость";
+    $("detail").textContent=blocked?"Аккаунт, привязка и файлы сохранены. Можно повторить проверку или выбрать другой сервер.":connecting?s.compatibility.attempt===2?"Соединение прервалось. Повторяем подключение по тому же сетевому маршруту.":s.compatibility.route==="proxy"?"Устанавливаем защищённое соединение через системный прокси. Дождитесь ответа сервера.":"Устанавливаем защищённое соединение с сервером":"Проверяем протокол и возможности сервера до входа и отправки команд";
     document.querySelector(".spinner").hidden=blocked;$("download").hidden=true;
     $("error").hidden=!blocked;$("error").textContent=s.compatibility.error||"";
     $("primary").hidden=!blocked;$("primary").textContent="Повторить проверку";$("releases").hidden=true;$("exit").hidden=!blocked;
