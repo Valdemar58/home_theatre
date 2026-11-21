@@ -52,6 +52,9 @@ jobs:
       - name: Verify installed Windows updates
         if: matrix.platform == 'win'
         run: node test/installed-updates.mjs --output ../../.local/installed-updates
+      - name: Verify installed differential updates and full fallback
+        if: matrix.platform == 'win'
+        run: node test/installed-updates.mjs --differential --output ../../.local/differential-updates
       - name: Preserve installed update evidence
         if: always() && matrix.platform == 'win'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -62,6 +65,11 @@ jobs:
             .local/installed-updates/**/*-build.log
             .local/installed-updates/**/trace.jsonl
             .local/proxy-network/proxy-network-proof.json
+            .local/differential-updates/differential-update-proof.json
+            .local/differential-updates/differential-transfers.json
+            .local/differential-updates/**/*-build.log
+            .local/differential-updates/**/trace.jsonl
+            .local/differential-updates/**/*-trace.jsonl
           retention-days: 14
           if-no-files-found: ignore
       - name: Verify packaged source and updater feed
