@@ -4,7 +4,6 @@ import {mkdtemp,mkdir,writeFile,readFile} from "node:fs/promises";
 import {spawn} from "node:child_process";
 import {createRequire} from "node:module";
 import {resolve,join} from "node:path";
-import {fileURLToPath} from "node:url";
 import assert from "node:assert/strict";
 const require=createRequire(import.meta.url),electron=require("electron");
 const index=process.argv.indexOf("--output"),output=resolve(index>=0?process.argv[index+1]:".local/proxy-network");
