@@ -19,6 +19,7 @@ for (const archive of process.argv.slice(2)) {
   assert.deepEqual(extractFile(resolve(archive),"src/desktop-permissions.mjs"),await readFile(new URL("../src/desktop-permissions.mjs",import.meta.url)));
   const update=yaml.load(await readFile(resolve(archive,"..","app-update.yml"),"utf8"));
   assert.equal(update.provider,"generic");assert.equal(update.url,updateFeed);
+  assert.equal(update.useMultipleRangeRequest,false,"Release assets must use supported single HTTP ranges");
   console.log(`Verified current sources and version: ${archive}`);
 }
 

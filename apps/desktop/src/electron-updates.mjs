@@ -9,7 +9,7 @@ const {CancellationToken}=createRequire(require.resolve("electron-updater"))("bu
 export class ElectronUpdates {
   constructor(engine=electronUpdater.autoUpdater){
     this.engine=engine;engine.autoDownload=false;engine.autoInstallOnAppQuit=false;
-    engine.disableDifferentialDownload=true;engine.disableWebInstaller=true;
+    engine.disableDifferentialDownload=false;engine.disableWebInstaller=true;
     engine.logger={info(){},warn(){},error(){},debug(){}};
     engine.on("error",e=>this.errorHandler?.(e));
   }
