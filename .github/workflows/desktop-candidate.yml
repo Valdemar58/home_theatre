@@ -44,6 +44,9 @@ jobs:
       - run: pnpm audit --audit-level=low
       - run: node ../../scripts/ci/desktop-native.cjs --with-electron
       - run: pnpm test
+      - name: Verify proxy routing and cold connections
+        if: matrix.platform == 'win'
+        run: node test/proxy-network.mjs --output ../../.local/proxy-network
       - name: Build candidate
         run: node node_modules/electron-builder/out/cli/cli.js build --${{ matrix.platform }} ${{ matrix.target }} --x64 --publish never --config.electronDist=node_modules/electron/dist
       - name: Verify installed Windows updates
@@ -58,6 +61,7 @@ jobs:
             .local/installed-updates/installed-update-proof.json
             .local/installed-updates/**/*-build.log
             .local/installed-updates/**/trace.jsonl
+            .local/proxy-network/proxy-network-proof.json
           retention-days: 14
           if-no-files-found: ignore
       - name: Verify packaged source and updater feed
