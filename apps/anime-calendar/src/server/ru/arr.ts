@@ -79,7 +79,7 @@ export type ProwlarrRelease = {
   categories: { id: number }[];
 };
 
-type ProwlarrIndexer = { id: number; name: string; enable: boolean; tags: number[]; language?: string };
+type ProwlarrIndexer = { id: number; name: string; definitionName?: string; enable: boolean; tags: number[]; language?: string };
 
 /** Нерусские трекеры (Nyaa, 1337x…): оригинал, английские и мультиязычные раздачи (IDEAS #88). */
 export const origIndexers = () =>
@@ -100,24 +100,29 @@ export async function searchOrig(query: string, movie = false): Promise<Prowlarr
 
 /** Индексаторы Prowlarr с тегом ru (RuTracker, Kinozal...). */
 export const ruIndexers = () =>
-  cached("ru:prowlarr-indexers", (list: { id: number }[]) => (list.length ? 600 : 30), async () => {
+  cached("ru:prowlarr-indexers:v2", (list: { id: number }[]) => (list.length ? 600 : 30), async () => {
     const [tags, indexers] = await Promise.all([
       getJson<{ id: number; label: string }[]>(env.prowlarrUrl, env.prowlarrApiKey, "/api/v1/tag", prowlarrLimiter),
       getJson<ProwlarrIndexer[]>(env.prowlarrUrl, env.prowlarrApiKey, "/api/v1/indexer", prowlarrLimiter),
     ]);
     const tag = tags.find((t) => t.label === env.ruIndexerTag)?.id;
-    return indexers.filter((i) => i.enable && tag !== undefined && i.tags.includes(tag)).map((i) => ({ id: i.id, name: i.name }));
+    return indexers.filter((i) => i.enable && tag !== undefined && i.tags.includes(tag)).map((i) => ({ id: i.id, name: i.name, definitionName: i.definitionName }));
   });
 
 /** Поиск на RU-трекерах. Пустой запрос — свежие раздачи (для RSS). */
 export async function searchRu(query: string): Promise<ProwlarrRelease[]> {
   const indexers = await ruIndexers();
   if (!indexers.length) return [];
-  const params = new URLSearchParams({ query, type: "search", limit: "100" });
-  for (const i of indexers) params.append("indexerIds", String(i.id));
-  // Категории: ТВ (5000) и аниме (5070); фильмы ищет Radarr напрямую через Prowlarr
-  params.append("categories", "5000");
-  params.append("categories", "5070");
-  return cached(`ru:search:${params}`, (r: ProwlarrRelease[]) => (r.length ? 15 * 60 : 60), () =>
-    getJson<ProwlarrRelease[]>(env.prowlarrUrl, env.prowlarrApiKey, `/api/v1/search?${params}`, prowlarrLimiter, 120_000));
+  // RuTor maps its anime releases to Other (8000), not TV/Anime.
+  // Keep this exception scoped to that definition: do not broaden every tracker.
+  const groups = [indexers.filter(i => i.definitionName !== "rutor"), indexers.filter(i => i.definitionName === "rutor")];
+  const results = await Promise.allSettled(groups.filter(g => g.length).map(group => {
+    const params = new URLSearchParams({ query, type: "search", limit: "100" });
+    for (const i of group) params.append("indexerIds", String(i.id));
+    for (const category of group[0].definitionName === "rutor" ? [5000, 5070, 8000] : [5000, 5070]) params.append("categories", String(category));
+    return cached(`ru:search:${params}`, (r: ProwlarrRelease[]) => (r.length ? 15 * 60 : 60), () =>
+      getJson<ProwlarrRelease[]>(env.prowlarrUrl, env.prowlarrApiKey, `/api/v1/search?${params}`, prowlarrLimiter, 120_000));
+  }));
+  if (results.every(r => r.status === "rejected")) throw (results[0] as PromiseRejectedResult).reason;
+  return results.flatMap(r => r.status === "fulfilled" ? r.value : []);
 }
