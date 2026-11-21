@@ -1,0 +1,8 @@
+version: 0.5.0-rc.16
+files:
+  - url: https://github.com/Valdemar58/home_theatre/releases/download/v0.5.0-rc.16/home_theater-0.5.0-rc.16-win-x64.exe
+    sha512: xQ7tdXxnvQuERYyR0zESQYK58sprGqNhLb2xh8DE9sAMBbt+xOC+Wm3Yth5qNffFcjJCk6fJ3ibgv4jLXhziZA==
+    size: 242423406
+path: https://github.com/Valdemar58/home_theatre/releases/download/v0.5.0-rc.16/home_theater-0.5.0-rc.16-win-x64.exe
+sha512: xQ7tdXxnvQuERYyR0zESQYK58sprGqNhLb2xh8DE9sAMBbt+xOC+Wm3Yth5qNffFcjJCk6fJ3ibgv4jLXhziZA==
+releaseDate: '2026-11-21T00:01:03.497Z'
