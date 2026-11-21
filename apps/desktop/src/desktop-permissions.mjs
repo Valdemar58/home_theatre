@@ -6,3 +6,11 @@ export function allowAppFullscreen({ permission, ownWindow, isMainFrame, request
     return app.origin !== "null" && page.origin === app.origin && !page.username && !page.password;
   } catch { return false; }
 }
+
+/** Writing text is separate from reading the user's clipboard. */
+export function allowAppPermission(request) {
+  if (request.permission === "clipboard-sanitized-write") {
+    return allowAppFullscreen({ ...request, permission: "fullscreen" });
+  }
+  return allowAppFullscreen(request);
+}
