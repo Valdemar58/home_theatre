@@ -46,7 +46,10 @@ function loadingState(){return {...startupUpdates?.snapshot(),networkError,compa
 function emitLoadingState(){if(window&&!window.isDestroyed()&&window.webContents.getURL()==="hostapp://local/loading.html")window.webContents.send("desktop-update-state",loadingState());}
 async function showConnectionError(){
   if(!startupReady||connectionErrorVisible||quitting)return;
-  connectionErrorVisible=true;webWindow?.hide();pickerWindow?.close();oauthView?.close();
+  connectionErrorVisible=true;pickerWindow?.close();oauthView?.close();
+  // End old page/SSE/media activity; hiding a view would leave playback running.
+  if(webWindow&&!webWindow.isDestroyed()){webWindow.destroy();webWindow=null;}
+  if(transport){transport.streams=[];transport.seen=0;}
   await window.loadURL("hostapp://local/loading.html");window.show();
 }
 async function requireServer(origin=config.server){
