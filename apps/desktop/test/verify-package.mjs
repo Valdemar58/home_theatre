@@ -16,6 +16,7 @@ for (const archive of process.argv.slice(2)) {
   assert.deepEqual(extractFile(resolve(archive),"src/compatibility.mjs"),await readFile(new URL("../src/compatibility.mjs",import.meta.url)));
   assert.deepEqual(extractFile(resolve(archive),"src/server-network.mjs"),await readFile(new URL("../src/server-network.mjs",import.meta.url)));
   assert.deepEqual(extractFile(resolve(archive),"src/atomic-file.mjs"),await readFile(new URL("../src/atomic-file.mjs",import.meta.url)));
+  assert.deepEqual(extractFile(resolve(archive),"src/desktop-permissions.mjs"),await readFile(new URL("../src/desktop-permissions.mjs",import.meta.url)));
   const update=yaml.load(await readFile(resolve(archive,"..","app-update.yml"),"utf8"));
   assert.equal(update.provider,"generic");assert.equal(update.url,updateFeed);
   console.log(`Verified current sources and version: ${archive}`);

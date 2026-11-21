@@ -17,7 +17,7 @@ import { hostname } from "node:os";
 import { EmbeddedView } from "./embedded-view.mjs";
 import { installationKey } from "./device-identity.mjs";
 import { serverUrl } from "./server-url.mjs";
-import { allowAppFullscreen } from "./desktop-permissions.mjs";
+import { allowAppPermission } from "./desktop-permissions.mjs";
 import { Library } from "./library.mjs";
 import { prepare, stopPreparation } from "./prepare.mjs";
 import { HostTransport } from "./transport.mjs";
@@ -279,7 +279,7 @@ async function openApp(room, destination) {
   ipcMain.removeAllListeners("desktop-local-library");
   ipcMain.on("desktop-local-library",event=>{if(fromAppWindow(event))void setupAction("setup-local-library",{});});
   for(const s of [profileSession()]){
-    const allowed=(contents,permission,url,details)=>allowAppFullscreen({permission,ownWindow:contents===webWindow?.webContents,isMainFrame:details.isMainFrame,requestingUrl:url,server:config.server});
+    const allowed=(contents,permission,url,details)=>allowAppPermission({permission,ownWindow:contents===webWindow?.webContents,isMainFrame:details.isMainFrame,requestingUrl:url,server:config.server});
     s.setPermissionRequestHandler((contents,permission,callback,details)=>callback(allowed(contents,permission,details.requestingUrl,details)));
     s.setPermissionCheckHandler((contents,permission,origin,details)=>allowed(contents,permission,details.requestingUrl||origin,details));
   }
@@ -645,7 +645,7 @@ else {
           return new Response("Not found", { status: 404 });
         return net.fetch(pathToFileURL(join(root, name)).toString());
       });
-      const fullscreenAllowed = (contents, permission, url, details) => allowAppFullscreen({
+      const appPermissionAllowed = (contents, permission, url, details) => allowAppPermission({
         permission,
         ownWindow: !!webWindow && !webWindow.isDestroyed() && contents === webWindow.webContents,
         isMainFrame: details.isMainFrame,
@@ -653,9 +653,9 @@ else {
         server: config.server,
       });
       session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) =>
-        callback(fullscreenAllowed(contents, permission, details.requestingUrl, details)));
+        callback(appPermissionAllowed(contents, permission, details.requestingUrl, details)));
       session.defaultSession.setPermissionCheckHandler((contents, permission, origin, details) =>
-        fullscreenAllowed(contents, permission, details.requestingUrl || origin, details));
+        appPermissionAllowed(contents, permission, details.requestingUrl || origin, details));
       ipcMain.handle("host", async (event, kind, data) => {
         if (
           ![window?.webContents,pickerWindow?.webContents,rtcWindow?.webContents].includes(event.sender) ||
