@@ -121,7 +121,8 @@ export type RoomSync = {
   report: (r: { playbackError?: boolean; buffering: boolean; bw: number | null; drift: number | null; position?: number; buffered?: [number, number][] }) => void;
 };
 
-export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, next, onReport, children, autoPlay, preview, onState, controls, room, fullscreenRoot }: {
+export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, next, onReport, children, autoPlay, preview, onState, onConnection, controls, room, fullscreenRoot }: {
+  onConnection?: (value: DesktopDiagnostics | null) => void;
   desktopRoom?: string;
   anilistId: number;
   source?: string;
@@ -194,6 +195,7 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
   const [notice, setNotice] = useState<string | null>(null);
   const [bufferAhead, setBufferAhead] = useState(0);
   const [desktopNet, setDesktopNet] = useState<DesktopDiagnostics | null>(null);
+  const connectionReport = useRef(onConnection); connectionReport.current = onConnection;
   const desktopUnavailable = desktopNet?.mode === "closed" && !desktopNet.directBytes && !desktopNet.relayBytes;
   // До нажатия ▶ — превью: сессия уже открыта (Jellyfin прочитал файл), поток не запрошен
   const [started, setStarted] = useState(Boolean(autoPlay));
@@ -230,6 +232,7 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
     setError(null);
     setStalled(false);
     setDesktopNet(null);
+    connectionReport.current?.(null);
     progressAt.current = Date.now();
     setStage({ step: "session", since: Date.now() });
     try {
@@ -320,7 +323,7 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
     startAt.current = at;
     const attach = async () => {
       if (info.desktop) {
-        disconnectDesktop = await connectDesktop(info.desktop.lease, setDesktopNet, new URLSearchParams(location.search).get("relay") === "1");
+        disconnectDesktop = await connectDesktop(info.desktop.lease, value => { if (alive) { setDesktopNet(value); connectionReport.current?.(value); } }, new URLSearchParams(location.search).get("relay") === "1");
         if (!alive) { disconnectDesktop(); return; }
       }
       hls.current?.destroy();

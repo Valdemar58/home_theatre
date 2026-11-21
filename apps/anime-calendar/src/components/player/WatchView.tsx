@@ -32,6 +32,8 @@ import { nextSessionItem } from "@/lib/session-playback";
 import { SessionTransition } from "./SessionTransition";
 import type { WatchHistoryData } from "../WatchHistorySettings";
 import { DesktopSource, type DesktopSources } from "./DesktopSource";
+import { ConnectionDiagnostics } from "./ConnectionDiagnostics";
+import type { DesktopDiagnostics } from "@/lib/desktop-transport";
 
 // Страница просмотра серии (по мотивам AniLib): шапка тайтла, плеер и боковая панель «Озвучка / Субтитры», лента
 // серий (кадр, готовность, кэш TorrServer, «Подготовить», прогресс), под плеером — серия, сюжет, друзья, обсуждение.
@@ -40,6 +42,7 @@ import { DesktopSource, type DesktopSources } from "./DesktopSource";
 const SPOILERS_KEY = "episodes-show-all";
 
 export function WatchView({ id: initialId, ep: initialEp }: { id: number; ep: number }) {
+  const [connectionMedia, setConnectionMedia] = useState<DesktopDiagnostics | null>(null);
   const [id, setId] = useState(initialId);
   useEffect(() => setId(initialId), [initialId]);
   const router = useRouter();
@@ -85,6 +88,7 @@ export function WatchView({ id: initialId, ep: initialEp }: { id: number; ep: nu
   const inRoom = Boolean(rm.room && !rm.ended && meInRoom?.status === "joined");
   const desktopSources = useQuery({ queryKey: ["desktop-source", rid, id, ep], enabled: inRoom && Boolean(rm.room?.groupId), queryFn: () => api<DesktopSources>(`/api/desktop/stream?room=${rid}`), refetchInterval: 2000 });
   const desktopDevice = desktopSources.data?.selected;
+  useEffect(() => setConnectionMedia(null), [rid, id, ep, desktopDevice]);
   const preferredFiles = desktopSources.data?.hosts.find(h => h.id === desktopDevice)?.files ?? [];
   const desktopEpisodes = new Set(preferredFiles.filter(f => desktopSources.data?.hosts.some(h => h.online && h.files.some(copy => copy.ep === f.ep && copy.preparedVersion === f.preparedVersion && copy.preparedBytes === f.preparedBytes))).map(f => f.ep));
   const personalDevice = !inRoom ? params.get("device") : null;
@@ -201,7 +205,7 @@ export function WatchView({ id: initialId, ep: initialEp }: { id: number; ep: nu
           next={session ? (plannedNext && rm.canControl ? { label: `${plannedNext.anilistId !== id ? nextTitle + " · " : ""}${plannedNext.ep} серия`, go: () => { void rm.act({ action: "session-next", revision: session.revision }).catch(e => alert({ title: "Не удалось перейти", text: String(e.message) })); } } : null) : nextEp && (!inRoom || rm.canControl) ? { label: `${nextEp.ep} серия`, go: () => pickEp(nextEp.ep, true) } : null}
           onEnded={session ? duration => { void rm.act({ action: "session-ended", revision: session.revision, anilistId: id, ep, duration }).catch(e => alert({ title: "Не удалось завершить серию", text: String(e.message) })); } : undefined}
           onReport={onReport}
-          onState={setPlayer} controls={controls} room={sync}>
+          onState={setPlayer} onConnection={setConnectionMedia} controls={controls} room={sync}>
           {() => (toast || waiting.length > 0 || (inRoom && !rm.connected)) && (
             <div className="mx-auto w-fit max-w-full rounded-lg bg-black/80 px-3 py-1.5 text-sm text-white ring-1 ring-white/10">
               {!rm.connected ? "Связь с комнатой потеряна. Восстанавливаем подключение…" : waiting.length ? `Ждём: ${waiting.join(", ")}` : toast}
@@ -211,6 +215,7 @@ export function WatchView({ id: initialId, ep: initialEp }: { id: number; ep: nu
         </Player>}
         {session && <SessionTransition handle={rm} nextTitle={nextTitle} />}
         </div>
+        {rid && <ConnectionDiagnostics room={rm.connection} media={connectionMedia} sourceError={desktopSources.isError && !desktopSources.data} />}
       {eps.length > 0 && (
         <EpisodeStrip id={id} current={ep} statuses={eps} watched={currentCycle?.baseline??watched} seenEpisodes={currentCycle?.episodes ?? []} positions={st?.positions ?? []}
           schedule={[...(a?.schedule??[]),...(a?.nextAiringEpisode?[a.nextAiringEpisode]:[])]} titles={new Map(plot?.episodes.map((e) => [e.number, e]) ?? [])} onPick={(n) => pickEp(n)} />
