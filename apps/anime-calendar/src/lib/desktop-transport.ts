@@ -67,7 +67,10 @@ export async function connectDesktop(lease: string, report: (d: DesktopDiagnosti
       finally { clearInterval(heartbeat); port.close(); }
     });
   };
-  const signal = () => api<{ answer?: string; generation: number; recovering: boolean; relayBytes?: number; relayEnabled?: boolean; iceServers: RTCIceServer[] }>(`/api/desktop/stream?lease=${lease}`, { signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(10000)]) });
+  const signal = async () => {
+    try { return await api<{ answer?: string; generation: number; recovering: boolean; relayBytes?: number; relayEnabled?: boolean; iceServers: RTCIceServer[] }>(`/api/desktop/stream?lease=${lease}`, { signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(10000)]) }); }
+    catch (e) { if (["AbortError", "TimeoutError"].includes((e as Error).name)) throw new Error(lifetime.signal.aborted ? "Подключение закрыто" : "Сервер не ответил за 10 секунд. Проверьте подключение к комнате и повторите попытку."); throw e; }
+  };
   const initial = await signal();
   generation = initial.generation;
   relayEnabled = initial.relayEnabled !== false;
@@ -113,11 +116,16 @@ export async function connectDesktop(lease: string, report: (d: DesktopDiagnosti
       if (!(data instanceof ArrayBuffer) || data.byteLength < 8) { clearTimeout(p.timer); pending = null; p.reject(new Error("Хост не смог прочитать файл")); return; }
       const v = new DataView(data); if (v.getUint32(0) !== p.id || v.getUint32(4) !== p.offset || data.byteLength - 8 + p.offset > p.bytes.length) return;
       p.bytes.set(new Uint8Array(data, 8), p.offset); p.offset += data.byteLength - 8;
+      if (data.byteLength > 8) {
+        clearTimeout(initialTimer); clearTimeout(p.timer);
+        p.timer = setTimeout(() => { if (pending !== p) return; pending = null; closePeer(); p.reject(new Error("Прямой канал перестал передавать данные")); }, 8000);
+      }
       if (p.offset === p.bytes.length) { clearTimeout(p.timer); pending = null; p.resolve(p.bytes.buffer as ArrayBuffer); }
     };
     try {
       await pc.setLocalDescription(await pc.createOffer());
       await new Promise<void>(resolve => { const t = setTimeout(done, 8000); function done() { clearTimeout(t); resolve(); } connection.onicegatheringstatechange = () => { if (connection.iceGatheringState === "complete") done(); }; if (connection.iceGatheringState === "complete") done(); });
+      if (stopped || initialFailure || pc !== connection) return;
       await api("/api/desktop/stream", { method: "POST", json: { lease, generation: epoch, offer: connection.localDescription?.sdp } });
     } catch { closePeer(); if (!initialFailure) publish("connecting", "Не удалось согласовать прямой канал; повторяем подключение"); }
   }

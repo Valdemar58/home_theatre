@@ -17,6 +17,7 @@ import { setVoicePref, voicePref } from "./stream-voices";
 import { startTask } from "./tasks";
 import { itemsOf, listRow, membersOf, requireMember } from "./together";
 import { groupEpisodes, meetingResult } from "./meeting-history";
+import { groupSyncPolicy, saveGroupSyncPolicy } from "./room-sync-config";
 
 // Группа просмотра (TASKS 9.4в) — общий список, который смотрят вместе: пресет управления комнатой и пульт, очередь
 // с прогрессом группы и её озвучкой, сеансы по расписанию (за час — подготовка серий и озвучки, за 15 минут —
@@ -79,7 +80,7 @@ export function groupPlan(userId: number, listId: number): GroupPlan {
     "SELECT * FROM group_polls WHERE list_id = ? AND (closed_at IS NULL OR closed_at > ?) ORDER BY id DESC LIMIT 1").get(listId, now() - 3 * 86400);
   return {
     preset: g.preset, control: g.control, canPlan: access.can("schedule"),
-    permissions: access.permissions,
+    permissions: access.permissions, syncPolicy: groupSyncPolicy(listId),
     capabilities: Object.fromEntries(GROUP_CAPABILITIES.map(k => [k, access.can(k)])) as GroupPlan["capabilities"],
     canPoll: g.owner_id === userId, legacyPermissions: access.legacy,
     sessions: sessions.map(sessionView),
@@ -93,6 +94,7 @@ export function groupPlan(userId: number, listId: number): GroupPlan {
 }
 
 export type GroupAction =
+  | { action: "sync-policy"; policy: unknown }
   | { action: "permissions"; permissions: GroupPermissions }
   | { action: "preset"; preset: RoomPreset }
   | { action: "grant"; userId: number; control: boolean }
@@ -125,6 +127,10 @@ export function groupAction(user: { id: number; name: string }, listId: number, 
   const owner = g.owner_id === user.id;
   const planner = groupAccess(listId, user.id).can("schedule");
   switch (a.action) {
+    case "sync-policy":
+      if (!owner) throw new ApiError(403, "Синхронизацию настраивает организатор комнаты");
+      saveGroupSyncPolicy(listId, a.policy);
+      break;
     case "permissions": {
       if (!owner) throw new ApiError(403, "Права меняет организатор комнаты");
       if (!a.permissions || GROUP_CAPABILITIES.some(k => !["all", "owner"].includes(a.permissions[k]))) throw new ApiError(400, "Неверные настройки прав");

@@ -45,6 +45,7 @@ export type GroupQueueItem = {
 };
 
 export type GroupPlan = {
+  syncPolicy?: import("./sync-policy").SyncPolicy;
   permissions: import("./group-policy").GroupPermissions;
   capabilities: Record<import("./group-policy").GroupCapability, boolean>;
   canPoll: boolean;

@@ -65,3 +65,15 @@ it("older servers without relay capability information retain the existing HTTP 
   expect(fetch).toHaveBeenCalledWith(expect.stringContaining("?offset=0&length=4"), expect.any(Object));
   expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ bytes: expect.any(ArrayBuffer) }), expect.any(Array)); expect(reports.at(-1)?.mode).toBe("relay");
 });
+it("does not disconnect a slow mobile transfer while packets keep making progress", async () => {
+  await start(); const dc = Peer.all.at(-1)!.dc; dc.open();
+  dc.send = raw => {
+    const request = JSON.parse(raw);
+    for(let i=0;i<4;i++)setTimeout(()=>{
+      const packet=new Uint8Array(9),view=new DataView(packet.buffer);view.setUint32(0,request.id);view.setUint32(4,i);packet[8]=42;dc.onmessage?.({data:packet.buffer});
+    },(i+1)*5000);
+  };
+  const port=range();await vi.advanceTimersByTimeAsync(21000);
+  expect(reports.at(-1)?.directBytes).toBe(4);expect(reports.some(r=>r.mode==="closed")).toBe(false);
+  expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({bytes:expect.any(ArrayBuffer)}),expect.any(Array));
+});

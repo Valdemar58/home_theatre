@@ -29,6 +29,7 @@ function memberLine(m: RoomMember, s: RoomState): { text: string; tone: string; 
   if (m.status === "left") return { text: "вне комнаты", tone: "text-gray-500" };
   const p = m.presence;
   if (!p?.online) return { text: "не в сети", tone: "text-gray-500" };
+  if (p.playbackError) return { text: "Нет видеосоединения", tone: "text-negative-300" };
   if (p.buffering) return { text: "грузится", tone: "text-warning-300", busy: true };
   if (p.drift !== null && Math.abs(p.drift) > 1.5) return { text: `${p.drift < 0 ? "отстаёт" : "спешит"} на ${Math.round(Math.abs(p.drift))} с`, tone: "text-warning-300" };
   return s.playing ? { text: "смотрит", tone: "text-positive-300" } : { text: "на паузе", tone: "text-gray-400" };

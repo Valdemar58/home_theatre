@@ -1,5 +1,6 @@
 "use client";
 import { RoomHosts } from "./RoomHosts";
+import { RoomSyncSettings } from "./RoomSyncSettings";
 import { MeetingHistory } from "./MeetingHistory";
 import { AdjustmentsHorizontalIcon, ArrowDownIcon, ArrowUpIcon, CalendarDaysIcon, CheckIcon, ChartBarIcon, QueueListIcon, XMarkIcon } from "@heroicons/react/24/outline";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -51,8 +52,9 @@ export function GroupPlan({ list, children, legacy = false }: { list: SharedList
     <div className="space-y-3">
       {Boolean(err) && <ErrorBox error={err} />}
       <details className="rounded-xl bg-gray-800/40 p-4">
-        <summary className="cursor-pointer text-sm font-medium text-gray-300 hover:text-white">Настройки прав комнаты</summary>
+        <summary className="cursor-pointer text-sm font-medium text-gray-300 hover:text-white">Настройки комнаты</summary>
         <div className="mt-4"><Control plan={plan} list={list} me={me.id} act={act} /></div>
+        <div className="mt-5"><RoomSyncSettings policy={plan.syncPolicy} owner={list.ownerId === me.id} save={act} /></div>
       </details>
       {legacy ? <div className="grid items-start gap-4 xl:grid-cols-2">
         <Sessions plan={plan} list={list} media={media} me={me.id} name={name} act={act} />

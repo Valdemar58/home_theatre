@@ -1,7 +1,8 @@
-import { correction, positionAt, type RoomState } from "./room";
+import { positionAt, type RoomState } from "./room";
+import { DEFAULT_SYNC_POLICY, syncCorrection, type SyncPolicy } from "./sync-policy";
 
-type Media = Pick<HTMLMediaElement, "paused" | "ended" | "seeking" | "readyState" | "currentTime" | "duration" | "playbackRate" | "play" | "pause">;
-type Room = { state: RoomState; canControl: boolean; serverNow: () => number; command: (action: "play" | "pause" | "seek", pos: number) => Promise<unknown> | void };
+type Media = Pick<HTMLMediaElement, "paused" | "ended" | "seeking" | "readyState" | "currentTime" | "duration" | "playbackRate" | "play" | "pause"> & { buffered?: TimeRanges };
+type Room = { policy?: SyncPolicy; state: RoomState; canControl: boolean; serverNow: () => number; command: (action: "play" | "pause" | "seek", pos: number) => Promise<unknown> | void };
 
 /** Distinguishes native controls from our own media events and awaits command acknowledgement. */
 export class RoomPlayback {
@@ -9,6 +10,9 @@ export class RoomPlayback {
   private pending = 0;
   private serial = 0;
   private anchor = "";
+  private seekExpected: number | null = null;
+  private desired: boolean | null = null;
+  private commands: Promise<unknown> = Promise.resolve();
   constructor(private media: () => Media | null, private room: () => Room | null | undefined, private error: (message: string) => void, private now = Date.now) {}
   async setPlaying(playing: boolean) {
     const v = this.media();
@@ -20,15 +24,36 @@ export class RoomPlayback {
   request(action: "play" | "pause" | "seek", pos: number) {
     const r = this.room(); if (!r) return;
     const serial = ++this.serial;
+    if (action !== "seek") this.desired = action === "play";
     this.pending = this.now() + 5000;
-    void Promise.resolve().then(() => r.command(action, pos)).catch(e => this.error((e as Error).message)).finally(() => { if (serial === this.serial) this.pending = 0; });
+    this.commands = this.commands.then(() => r.command(action, pos)).catch(e => this.error((e as Error).message)).finally(() => { if (serial === this.serial) { this.pending = 0; this.desired = null; } });
+  }
+  transition() { this.pending = this.now() + 500; }
+  endFullscreen(pictureInPicture = false) {
+    if (pictureInPicture) { if (this.desired === null) this.pending = 0; return; }
+    const r = this.room(), v = this.media();
+    if (r?.canControl && v && !v.ended && r.state.playing && (!r.state.session || r.state.session.phase === "watching")) {
+      if (this.desired !== false) this.request("pause", v.currentTime);
+      void this.setPlaying(false);
+    } else if (this.desired === null) this.pending = 0;
+  }
+  setPosition(pos: number) {
+    const v = this.media(); if (!v) return;
+    this.seekExpected = Math.max(0, Math.min(pos, Number.isFinite(v.duration) ? v.duration - 0.1 : pos));
+    v.currentTime = this.seekExpected;
+  }
+  nativeSeek(active: boolean) {
+    const v = this.media(), r = this.room(); if (!v) return;
+    if (this.seekExpected !== null && Math.abs(this.seekExpected - v.currentTime) < 0.2) { this.seekExpected = null; return; }
+    this.seekExpected = null;
+    if (active && r?.canControl && (!r.state.session || r.state.session.phase === "watching")) this.request("seek", v.currentTime);
   }
   nativePlayback(playing: boolean, nativeFullscreen: boolean) {
     if (this.expected?.playing === playing && this.expected.until >= this.now()) { this.expected = null; return; }
     this.expected = null;
     const r = this.room(), v = this.media();
     if (!nativeFullscreen || !r || !v || v.ended || v.seeking || v.readyState < 2 || !r.canControl || (r.state.session && r.state.session.phase !== "watching")) return;
-    if (r.state.playing !== playing) this.request(playing ? "play" : "pause", v.currentTime);
+    if (r.state.playing !== playing || (this.desired !== null && this.desired !== playing)) this.request(playing ? "play" : "pause", v.currentTime);
   }
   sync(): number | null {
     const r = this.room(), v = this.media();
@@ -36,15 +61,20 @@ export class RoomPlayback {
     const s = r.state, target = positionAt(s, r.serverNow());
     if (v.ended && (!Number.isFinite(v.duration) || target >= v.duration - 0.5)) return null;
     if (v.readyState < 2 || v.seeking) return null;
-    const anchor = `${s.at}:${s.playing}`;
-    // Align once at play/pause/seek, rather than taking tens of seconds to catch up
-    // at 1.025x. Ordinary small clock jitter still uses gentle rate correction.
+    const anchor = `${s.at}:${s.playing}`, policy = r.policy ?? DEFAULT_SYNC_POLICY;
+    // Pauses align immediately. Playback catches up according to the room policy;
+    // only a large discontinuity requires a seek.
     if (this.anchor !== anchor) {
-      if (Math.abs(v.currentTime - target) > 0.15) v.currentTime = Math.max(0, target);
+      if (Math.abs(v.currentTime - target) > (s.playing ? policy.hardSeek : policy.tolerance)) this.setPosition(target);
       this.anchor = anchor;
     }
-    const drift = v.currentTime - target, c = correction(drift, s.playing);
-    if (c.seek) v.currentTime = Math.max(0, target);
+    const drift = v.currentTime - target, c = syncCorrection(drift, s.playing, policy);
+    if (c.seek) this.setPosition(target);
+    // Accelerating a nearly empty buffer creates the very stalls we are correcting.
+    if (c.rate > 1 && v.buffered) {
+      let ahead = 0; for (let i = 0; i < v.buffered.length; i++) if (v.buffered.start(i) <= v.currentTime && v.buffered.end(i) > v.currentTime) ahead = v.buffered.end(i) - v.currentTime;
+      if (ahead < 2) c.rate = 1;
+    }
     if (v.playbackRate !== c.rate) v.playbackRate = c.rate;
     void this.setPlaying(s.playing);
     return drift;

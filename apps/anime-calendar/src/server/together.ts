@@ -83,7 +83,10 @@ export function renameList(userId: number, listId: number, name: string) {
 
 export function deleteList(userId: number, listId: number) {
   if (roleIn(listId, userId) !== "owner") throw new ApiError(403, "Удалить может только создатель");
-  db.prepare("DELETE FROM shared_lists WHERE id = ?").run(listId);
+  db.transaction(() => {
+    db.prepare("DELETE FROM app_settings WHERE key = ?").run(`room-sync:${listId}`);
+    db.prepare("DELETE FROM shared_lists WHERE id = ?").run(listId);
+  })();
 }
 
 export async function addItem(user: { id: number; name: string }, listId: number, anilistId: number) {
