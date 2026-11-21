@@ -65,7 +65,7 @@ node test/installed-updates.mjs --output ../../.local/installed-updates
 ```
 
 Candidate CI выполняет оба gate и сохраняет отчёты, байты передач и трассы.
-Сводка измерений: [desktop-differential-windows.json](evidence/desktop-differential-windows.json).
+Сводка измерений: [desktop-differential-windows-proof.json](desktop-differential-windows-proof.json).
 Локальные исходные артефакты: `.local/r6-differential/final-installed/`,
 `full-integrity/`, `github-range-proof.json`, `build-win.log`.
 
@@ -73,3 +73,4 @@ Candidate CI выполняет оба gate и сохраняет отчёты, 
 ASAR, версия, политика обновлятора и single-range publish config сверены
 с исходниками. Сам локальный EXE остаётся полным установщиком; меньший
 объём относится к последующим автоматическим обновлениям.
+
