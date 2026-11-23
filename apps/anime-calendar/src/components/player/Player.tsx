@@ -13,6 +13,7 @@ import { COMPAT_KEY, rememberedSub, subChoiceOf, type FrameItem, type PlayCaps, 
 import { positionAt, type RoomState } from "@/lib/room";
 import { RoomPlayback } from "@/lib/room-playback";
 import { bindMediaSession } from "@/lib/media-session";
+import { DesktopRecovery } from "@/lib/desktop-recovery";
 import { cx, ErrorBox, Spinner } from "../ui";
 import { StreamStatus, type Stage } from "./StreamStatus";
 import { connectDesktop, type DesktopDiagnostics } from "@/lib/desktop-transport";
@@ -94,6 +95,7 @@ export const clock = (sec: number) => {
 export type SignsState = "loading" | "ready" | "empty" | "error" | null;
 
 export type PlayerControls = {
+  diagnostics?: () => Record<string, number | boolean | null> | null;
   setAudio: (index: number) => void;
   /** Озвучка из раздачи «Стрима» отдельным файлом: сервер скачает звук серии и включит его */
   setVoice: (group: string) => void;
@@ -153,6 +155,7 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [playing, setPlaying] = useState(false);
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const [time, setTime] = useState(0);
   const [buffered, setBuffered] = useState(0);
   const [volume, setVolume] = useState(() => Number(store.get(VOLUME_KEY) ?? 1));
@@ -195,6 +198,7 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
   const [notice, setNotice] = useState<string | null>(null);
   const [bufferAhead, setBufferAhead] = useState(0);
   const [desktopNet, setDesktopNet] = useState<DesktopDiagnostics | null>(null);
+  const desktopNetRef = useRef(desktopNet); desktopNetRef.current = desktopNet;
   const connectionReport = useRef(onConnection); connectionReport.current = onConnection;
   const desktopUnavailable = desktopNet?.mode === "closed" && !desktopNet.directBytes && !desktopNet.relayBytes;
   // До нажатия ▶ — превью: сессия уже открыта (Jellyfin прочитал файл), поток не запрошен
@@ -217,7 +221,7 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
     setNotice(text);
     setTimeout(() => setNotice((n) => (n === text ? null : n)), 3000);
   }, []);
-  if (!playback.current) playback.current = new RoomPlayback(() => video.current, () => roomRef.current, flash);
+  if (!playback.current) playback.current = new RoomPlayback(() => video.current, () => roomRef.current, flash, Date.now, setAutoplayBlocked);
   useEffect(() => {
     if (countdown === null) return;
     if (countdown <= 0) { next?.go(); return; }
@@ -596,6 +600,11 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
   };
   if (controls) {
     controls.current = {
+      diagnostics: () => {
+        const v = video.current; if (!v) return null;
+        let ahead = 0; for (let i = 0; i < v.buffered.length; i++) if (v.buffered.start(i) <= v.currentTime && v.buffered.end(i) > v.currentTime) ahead = v.buffered.end(i) - v.currentTime;
+        return { paused: v.paused, ended: v.ended, seeking: v.seeking, readyState: v.readyState, networkState: v.networkState, currentTime: v.currentTime, bufferedAhead: ahead, playbackRate: v.playbackRate, muted: v.muted, volume: v.volume, errorCode: v.error?.code ?? null, autoplayBlocked, decodedFrames: v.getVideoPlaybackQuality?.().totalVideoFrames ?? null };
+      },
       setAudio: (i) => { if (i !== info?.audioIndex) void open({ audio: i, start: video.current?.currentTime || info?.start || 0 }); },
       setVoice: (group) => void open({ voice: group, start: video.current?.currentTime || info?.start || 0 }),
       setSub: chooseSub,
@@ -634,19 +643,20 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
     const v = video.current;
     if (!v) return;
     const rm = roomRef.current;
+    if (autoplayBlocked && (!rm || rm.state.playing)) { void playback.current!.setPlaying(true, true); return; }
     if (rm) {
       if (rm.state.session && rm.state.session.phase !== "watching") { flash("Используйте управление переходом по плану"); return; }
       if (!rm.canControl) {
         // A viewer may unlock browser autoplay locally without controlling the room.
-        if (rm.state.playing && v.paused) void playback.current!.setPlaying(true);
+        if (rm.state.playing && v.paused) void playback.current!.setPlaying(true, true);
         else flash("Управляет организатор комнаты");
         return;
       }
       // Видео ещё не загрузилось — позиция комнаты, а не ноль
       playback.current!.request(v.paused ? "play" : "pause", v.ended ? 0 : v.readyState ? v.currentTime : positionAt(rm.state, rm.serverNow()));
     }
-    void playback.current!.setPlaying(v.paused);
-  }, [started, flash, desktopRoom]);
+    void playback.current!.setPlaying(v.paused, true);
+  }, [started, flash, desktopRoom, autoplayBlocked]);
   const seek = useCallback((to: number) => {
     const v = video.current;
     if (!v) return;
@@ -689,7 +699,7 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
       setBufferAhead(ahead);
       // Native MP4 buffering is controlled by the browser; on pause it may stop
       // fetching before five seconds. Requiring more would deadlock the barrier.
-      const low = v.readyState < 3 || (!desktopRoom && was === true && ahead < 5 && v.currentTime + ahead < (v.duration || Infinity) - 1);
+      const low = autoplayBlocked || v.readyState < 3 || (!desktopRoom && was === true && ahead < 5 && v.currentTime + ahead < (v.duration || Infinity) - 1);
       if (low && !v.ended) since ??= Date.now(); else since = null;
       const buffering = since !== null && (was === true || Date.now() - since > 1000);
       if (!force && buffering === was) return;
@@ -701,26 +711,25 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
     const fast = setInterval(() => tick(false), 500);
     const slow = setInterval(() => tick(true), 5000);
     return () => { clearInterval(fast); clearInterval(slow); };
-  }, [inRoom, started, desktopRoom, Boolean(error), desktopUnavailable]);
+  }, [inRoom, started, desktopRoom, Boolean(error), desktopUnavailable, autoplayBlocked]);
   // Some native MP4 loaders abandon a long-stalled Range response while paused.
   // Retry the same lease only AFTER exhaustion, never during buffered playback.
   useEffect(() => {
     if (!desktopRoom || !started || !info?.desktop || !["direct", "relay"].includes(desktopNet?.mode ?? "")) return;
-    let emptySince = 0;
+    const recovery = new DesktopRecovery();
     const timer = setInterval(() => {
       const v = video.current, rm = roomRef.current;
-      if (!v || !rm || rm.state.playing || !rm.state.hold.length || v.readyState >= 3 || v.ended) { emptySince = 0; return; }
+      if (!v || !rm) return;
       let ahead = 0;
       for (let i = 0; i < v.buffered.length; i++) if (v.buffered.start(i) <= v.currentTime && v.buffered.end(i) > v.currentTime) ahead = v.buffered.end(i) - v.currentTime;
-      if (ahead > 0.5) { emptySince = 0; return; }
-      emptySince ||= Date.now();
-      if (Date.now() - emptySince < 5000) return;
-      emptySince = Date.now();
+      const net = desktopNetRef.current;
+      const eligible = !rm.state.playing && rm.state.hold.length > 0 && v.readyState < 3 && !v.ended && ahead <= 0.5 && !autoplayBlocked;
+      if (!recovery.observe(Date.now(), eligible, `${net?.progress?.packets ?? 0}:${net?.directBytes ?? 0}:${net?.relayBytes ?? 0}`)) return;
       const target = positionAt(rm.state, rm.serverNow());
       v.load(); v.currentTime = Math.max(0, Math.min(target, (info.duration || Infinity) - 0.1));
     }, 1000);
     return () => clearInterval(timer);
-  }, [desktopRoom, started, info, desktopNet?.mode]);
+  }, [desktopRoom, started, info, desktopNet?.mode, autoplayBlocked]);
   // Скорость: новый источник (смена озвучки, перезапуск) сбрасывает её к defaultPlaybackRate — ставим оба
   const applySpeed = useCallback(() => {
     const v = video.current;
@@ -794,7 +803,7 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
   useEffect(() => {
     if (!started || !info || !("mediaSession" in navigator)) return;
     return bindMediaSession(navigator.mediaSession, {
-      play: () => { const r = roomRef.current; if (r && !r.canControl) { if (r.state.playing) void playback.current!.setPlaying(true); return; } if (r) playback.current!.request("play", video.current?.currentTime || 0); void playback.current!.setPlaying(true); },
+      play: () => { const r = roomRef.current; if (r?.state.playing && video.current?.paused) { void playback.current!.setPlaying(true, true); return; } if (r && !r.canControl) return; if (r) playback.current!.request("play", video.current?.currentTime || 0); void playback.current!.setPlaying(true, true); },
       pause: () => { const r = roomRef.current; if (r && !r.canControl) return; if (r) playback.current!.request("pause", video.current?.currentTime || 0); void playback.current!.setPlaying(false); },
       seek, position: () => video.current?.currentTime || 0, duration: () => info.duration || video.current?.duration || 0, rate: () => video.current?.playbackRate || 1, paused: () => video.current?.paused ?? true,
     });
@@ -912,6 +921,7 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
       </div>
 
       {!started && <Preview preview={preview} start={info?.start ?? 0} ready={Boolean(info)} onPlay={() => setStarted(true)} />}
+      {started && autoplayBlocked && !error && <div className="absolute inset-0 z-30 grid place-content-center gap-3 bg-black/75 p-5 text-center"><p className="text-sm text-gray-200">Браузер ожидает нажатия для запуска видео со звуком</p><button className="min-h-11 rounded-lg bg-gray-800 px-4 py-2 text-sm text-white hover:bg-gray-700 focus-visible:outline-2 focus-visible:outline-accent-400" onClick={() => { void playback.current!.setPlaying(true, true).then(() => { if (roomRef.current && !roomRef.current.state.playing) void playback.current!.setPlaying(false); }); }}>Включить видео и звук</button></div>}
       {started && loading && !error && !desktopUnavailable && <div className="pointer-events-none absolute inset-0 grid place-items-center"><Spinner className="h-10 w-10 text-white/80" /></div>}
       {desktopUnavailable && !error && <div role="alert" className="absolute inset-0 z-30 grid place-content-center overflow-y-auto bg-black/95 p-4"><div className="mx-auto max-w-lg space-y-3"><p className="font-medium text-gray-100">Не удалось подключить видеопоток</p><p className="text-sm leading-relaxed text-gray-300">{desktopNet.reason}</p><button className="min-h-11 rounded-lg bg-gray-800 px-4 py-2 text-sm text-gray-100 hover:bg-gray-700 focus-visible:outline-2 focus-visible:outline-accent-400" onClick={() => void open({ start: video.current?.currentTime || 0 })}>Повторить подключение</button></div></div>}
       {/* Состояние потока: пока грузится (или по кнопке «i») — что делает Jellyfin и раздача */}
