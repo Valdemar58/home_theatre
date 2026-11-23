@@ -49,6 +49,9 @@ for (const source of ["torrent", "magnet"]) test(`${source}: selected episodes d
       assert.equal((await inspectTorrent(descriptor)).hash, metadata.hash);
     }
     const job = await manager.inspect(descriptor.toString("base64"), 42, "Test", "Batch");
+    const repeated = await Promise.all([manager.inspect(descriptor.toString("base64"), 42, "Test", "Batch"), manager.inspect(descriptor.toString("base64"), 42, "Test", "Batch")]);
+    assert(repeated.every(j => j.id === job.id)); assert.equal(manager.jobs.length, 1);
+    await assert.rejects(manager.inspect(descriptor.toString("base64"), 43, "Another season", "Batch"), /другим тайтлом/);
     await assert.rejects(manager.start(job.id, [{ index: 0, episode: 1 }, { index: 2, episode: 1 }], join(dir, "target")), /уникальный/);
     await manager.start(job.id, [{ index: 0, episode: 1 }, { index: 2, episode: 3 }], join(dir, "target"));
     await manager.pause(job.id); assert.equal(manager.get(job.id).state, "paused");

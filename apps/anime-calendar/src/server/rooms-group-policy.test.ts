@@ -15,6 +15,35 @@ const { createRoom, roomCommand, roomReport, roomView, roomPresence, roomPoll, r
 const owner = { id: 1, name: "organizer" }, member = { id: 2, name: "viewer" };
 let group: number;
 let room: string;
+const { createRoomWithSource } = await import("./room-source");
+const desktop = await import("./desktop");
+const stream = await import("./desktop-stream");
+it("carries the owned desktop source into a new group room for both viewers", () => {
+  const pair = desktop.beginPairing("Host", "win32"); desktop.approveDevice(pair.id, 1);
+  const device = desktop.deviceByToken(pair.token);
+  desktop.heartbeat(device, [{ id: "1234567890abcdef", title: 10, ep: 1, state: "ready", bytes: 8, preparedBytes: 8, duration: 24, preparedVersion: `sha256:${"a".repeat(64)}`, version: `sha256:${"b".repeat(64)}`, progress: 1 }]);
+  stream.hostState(device.id);
+  const next = createRoomWithSource(device.id, owner, 10, 1, [2], 12, false, { id: group, preset: "equal", control: [] });
+  roomCommand(member, next.id, { action: "join" });
+  expect(stream.sourceState(1, next.id).selected).toBe(device.id);
+  expect(stream.sourceState(2, next.id).selected).toBe(device.id);
+  expect(roomView(1, next.id).state.pos).toBe(12);
+});
+it("rejects an unavailable device or a missing group without ending the old room", () => {
+  expect(() => createRoomWithSource("missing", owner, 10, 1, [2], 0, false, { id: group, preset: "equal", control: [] })).toThrow();
+  expect(() => createRoomWithSource("missing", owner, 10, 1, [2])).toThrow(/выберите группу/);
+  expect(roomView(1, room).ended).toBe(false);
+  expect(db.prepare("SELECT id FROM watch_rooms").all()).toHaveLength(1);
+});
+it("rolls back a new room and grant when the owned host has no prepared copy", () => {
+  const pair = desktop.beginPairing("Empty host", "win32"); desktop.approveDevice(pair.id, 1);
+  const device = desktop.deviceByToken(pair.token);
+  desktop.heartbeat(device, [{ id: "1234567890abcdef", title: 10, ep: 1, state: "imported", bytes: 8, version: `sha256:${"b".repeat(64)}`, progress: 0 }]); stream.hostState(device.id);
+  expect(() => createRoomWithSource(device.id, owner, 10, 1, [2], 5, false, { id: group, preset: "equal", control: [] })).toThrow(/готовой/);
+  expect(roomView(1, room).ended).toBe(false);
+  expect(db.prepare("SELECT id FROM watch_rooms").all()).toHaveLength(1);
+  expect(desktop.grantsFor(device.id)).toHaveLength(0);
+});
 beforeEach(() => {
   db.exec("DELETE FROM watch_rooms; DELETE FROM shared_lists; DELETE FROM users;");
   for (const u of [owner, member, { id: 3, name: "outsider" }]) db.prepare("INSERT INTO users (id,jellyfin_id,name,created_at) VALUES (?,?,?,0)").run(u.id, String(u.id), u.name);

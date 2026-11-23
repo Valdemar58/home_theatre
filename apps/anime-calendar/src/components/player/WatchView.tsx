@@ -236,7 +236,7 @@ export function WatchView({ id: initialId, ep: initialEp }: { id: number; ep: nu
             invited={!inRoom && rooms?.room && rooms.room.members.find((m) => m.id === rooms.room!.me)?.status === "invited" ? rooms.room : null}
             onJoin={(r) => router.replace(`/anime/${id}/watch/${rooms?.room?.state.ep ?? ep}?room=${r}`)}
             onCreate={async (ids, group) => {
-              const r = await api<RoomView>("/api/rooms", { method: "POST", json: { anilistId: id, ep, invite: ids, group, ...controls.current?.position() } });
+              const r = await api<RoomView>("/api/rooms", { method: "POST", json: { anilistId: id, ep, invite: ids, group, ...(personalDevice ? { device: personalDevice } : {}), ...controls.current?.position() } });
               await refetchRooms();
               router.replace(`/anime/${id}/watch/${ep}?room=${r.id}`);
             }}

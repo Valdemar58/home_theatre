@@ -66,7 +66,11 @@ export class Downloads {
     if (this.closed) throw new Error("Приложение завершается");
     if (!Number.isSafeInteger(title) || title < 1) throw new Error("Выберите тайтл");
     const metadata = await inspectTorrent(Buffer.from(base64, "base64"));
-    if (this.jobs.some(j => j.hash === metadata.hash && j.state !== "cancelled")) throw new Error("Эта раздача уже добавлена. Используйте её в загрузках.");
+    const duplicate = this.jobs.find(j => j.hash === metadata.hash && j.state !== "cancelled");
+    if (duplicate) {
+      if (duplicate.title !== title) throw new Error("Эта раздача уже связана с другим тайтлом. Откройте её в загрузках и проверьте выбранный сезон.");
+      return this.view(duplicate);
+    }
     if (this.jobs.length >= 100) throw new Error("В списке уже 100 раздач. Уберите завершённые записи.");
     const job = { id: randomUUID(), ...metadata, title, titleName: String(titleName || title).slice(0, 250), releaseName: String(releaseName || metadata.name).slice(0, 500), torrent: base64, state: "selecting", selected: [], autoPrepare: true };
     if (commandId) job.commandId = commandId;

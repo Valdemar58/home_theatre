@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { ComputerDesktopIcon, ArrowDownTrayIcon } from "@heroicons/react/24/outline";
@@ -65,6 +65,7 @@ export function DesktopDownloads({ title, titleName = "", episodeCount, watchEpi
   useEffect(()=>{onWatchStage?.({phase:device?.online?phase:"source",progress:stageProgress});},[phase,stageProgress,onWatchStage,watchEpisode,title,device?.online]);
   const [query, setQuery] = useState(titleName), [releases, setReleases] = useState<Release[]>([]), [warning, setWarning] = useState("");
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [message, setMessage] = useState("");
+  const callInFlight = useRef(false);
   const [offlineEpisodes, setOfflineEpisodes] = useState<number[]>([watchEpisode || 1]);
   const [watchRequested, setWatchRequested] = useState(false);
   useEffect(()=>{setOfflineEpisodes([watchEpisode||1]);setWatchRequested(false);},[watchEpisode,title]);
@@ -75,19 +76,23 @@ export function DesktopDownloads({ title, titleName = "", episodeCount, watchEpi
   }, [watchRequested, device, data.data, title, watchEpisode, onReady]);
   useEffect(() => { setQuery(titleName); setReleases([]); }, [titleName, device?.id]);
   const call = async (action: string, body: Record<string, unknown> = {}) => {
-    if (!device || busy) return;
-    setBusy(true); setError(""); setMessage("");
+    if (!device || callInFlight.current) return;
+    callInFlight.current = true;
+    setBusy(true); setError(""); setMessage(action === "inspect" ? "Получаем список файлов раздачи…" : "");
     try {
       const result = await api<{ releases?: Release[]; warning?: string; id?: string }>("/api/desktop/downloads", { method: "POST", json: { action, device: device.id,...(["start","inspect"].includes(action)&&selectedVolume?.targetId?{target:selectedVolume.targetId}:{}), ...body } });
       if (watchEpisode && (action === "start" || (action === "inspect" && !device.online))) setWatchRequested(true);
       if (action === "search") { setReleases(result.releases || []); setWarning(result.warning || (result.releases?.length ? "" : "Раздачи не найдены. Попробуйте другое название.")); }
       else { setMessage(action === "grant" ? "Доступ комнаты обновлён." : device.online ? "Задание передано устройству. Прогресс появится ниже." : "Задание сохранено. Оно начнётся, когда приложение на компьютере подключится."); await data.refetch(); }
       return true;
-    } catch (e) { setError((e as Error).message); return false; } finally { setBusy(false); }
+    } catch (e) { setError((e as Error).message); return false; } finally { callInFlight.current = false; setBusy(false); }
   };
   const [activeTitle,setActiveTitle]=useState<number|null>(null);
   const allJobs=data.data?.jobs??[];
   const jobs=allJobs.filter(j=>(!title||j.title===title)&&(!selectedVolume?.targetId||!j.storageId||j.storageId===selectedVolume.targetId));
+  const selectingJob = compact ? jobs.find(j => j.state === "selecting") : undefined;
+  const selectionPanel = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (selectingJob) selectionPanel.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, [selectingJob?.id]);
   const library=(data.data?.library??[]).filter(f=>!selectedVolume||jobs.some(j=>j.title===f.title)||selectedVolume.titles.some(t=>t.id===f.title));
   const canMove=(id:number)=>{
     const batch=allJobs.filter(j=>j.title===id&&j.files.some(f=>f.selected)),count=data.data?.context[id]?.episodes;
@@ -115,16 +120,17 @@ export function DesktopDownloads({ title, titleName = "", episodeCount, watchEpi
       {title && <div className="space-y-3"><form className="flex flex-wrap gap-2" onSubmit={e => { e.preventDefault(); void call("search", { query }); }}><input aria-label="Название раздачи" value={query} onChange={e => setQuery(e.target.value)} className="min-w-0 flex-1 rounded-lg bg-gray-800 px-3 py-2 ring-1 ring-gray-600" placeholder="Название раздачи" /><Button type="submit" disabled={busy || query.trim().length < 2}>{busy ? "Подождите…" : "Найти раздачи"}</Button></form>
         {!device.online && <div><h3 className="text-sm font-medium">Какие серии скачать после подключения</h3>{!knownEpisodes && <p className="mt-2 text-sm text-gray-400">Количество серий пока неизвестно. Сначала подключите устройство, чтобы выбрать файлы раздачи.</p>}<div className="mt-2 flex flex-wrap gap-2">{Array.from({ length: Math.min(knownEpisodes, 500) }, (_, i) => i + 1).map(n => <button key={n} aria-pressed={offlineEpisodes.includes(n)} onClick={() => setOfflineEpisodes(v => v.includes(n) ? v.filter(e => e !== n) : [...v, n])} className={cx("min-h-11 min-w-11 rounded-lg px-2 text-sm", offlineEpisodes.includes(n) ? "tone-accent solid" : "bg-gray-800 hover:bg-gray-700")}>{n}</button>)}</div><p className="mt-2 text-xs text-gray-400">Номера будут сверены с файлами раздачи. Если соответствие неоднозначно, потребуется ваше уточнение.</p></div>}
         {warning && <p className="text-sm text-amber-300">{warning}</p>}
-        <div className="divide-y divide-gray-700/60">{releases.map(r => <div key={r.id} className="flex flex-wrap items-center gap-3 py-4"><div className="min-w-0 flex-1 basis-64"><h3 className="break-words text-sm font-medium">{r.title}</h3><p className="mt-1 text-xs text-gray-400">{size(r.size)} · раздают {r.seeders} · {r.indexer}</p></div><Button size="sm" disabled={busy || (!device.online && (!knownEpisodes || !offlineEpisodes.length))} onClick={() => void call("inspect", { release: r.id, title, titleName, ...(!device.online ? { episodes: offlineEpisodes } : {}) })}>{device.online ? "Выбрать серии" : "Поставить в очередь"}</Button></div>)}</div>
+        <div className="divide-y divide-gray-700/60">{releases.map(r => <div key={r.id} className="flex flex-wrap items-center gap-3 py-4"><div className="min-w-0 flex-1 basis-64"><h3 className="break-words text-sm font-medium">{r.title}</h3><p className="mt-1 text-xs text-gray-400">{size(r.size)} · раздают {r.seeders} · {r.indexer}</p></div><Button size="sm" disabled={busy || pending.some(c=>c.kind==="inspect") || (!device.online && (!knownEpisodes || !offlineEpisodes.length))} onClick={() => void call("inspect", { release: r.id, title, titleName, ...(!device.online ? { episodes: offlineEpisodes } : {}) })}>{device.online ? "Выбрать серии" : "Поставить в очередь"}</Button></div>)}</div>
       </div>}
+      {selectingJob && <div ref={selectionPanel} className="space-y-2"><p className="break-words text-sm text-gray-300">{selectingJob.releaseName}</p><SeriesSelection key={selectingJob.id} job={selectingJob} busy={busy || !device.online} episodeCount={knownEpisodes || undefined} start={selections => void call("start", { job: selectingJob.id, selections })} /></div>}
       {compact&&watchFile?.prepareState==="ready"&&<Button variant="primary" disabled={!device.online} onClick={()=>onReady?.(device.id)}>Смотреть серию {watchEpisode}</Button>}
       {compact&&jobs.filter(j=>["paused","error"].includes(j.state)&&j.files.some(f=>f.selected&&f.episode===watchEpisode)).map(j=><div key={j.id} className="space-y-2"><p className="text-sm text-gray-400">{j.error||"Загрузка приостановлена"}</p><Button size="sm" disabled={busy} onClick={()=>{setWatchRequested(true);void call("resume",{job:j.id});}}>Продолжить загрузку</Button></div>)}
       {compact&&watchFile?.error&&<ErrorBox error={watchFile.error}/>}
       {message && <p role="status" className="text-sm text-indigo-300">{message}</p>}
       {!!pending.length && <p role="status" className="text-sm text-gray-400">{device.online ? "Устройство обрабатывает задания" : "Ожидают подключения"}: {pending.length}</p>}
-      {data.data?.commands.filter(c => c.state === "error").slice(0, 3).map(c => <ErrorBox key={c.id} error={c.result.error || "Действие не выполнено"} />)}
+      {!!data.data?.commands.some(c => c.state === "error") && <details className="text-sm text-gray-400"><summary className="cursor-pointer py-2 focus-visible:outline-accent-400">Ошибки прошлых заданий</summary><div className="mt-2 space-y-2">{data.data.commands.filter(c => c.state === "error").slice(0, 3).map(c => <ErrorBox key={c.id} error={c.result.error || "Действие не выполнено"} />)}</div></details>}
       {!title && !jobs.length && !library.length && !pending.length && <p className="text-sm text-gray-400">На этом диске пока нет загрузок. Откройте тайтл и выберите «Скачать на устройство».</p>}
-      <div hidden={compact&& !jobs.some(j=>j.state==="selecting")}>
+      <div hidden={compact}>
       <DownloadInventory onActiveTitle={setActiveTitle} storage={data.data?.storage} jobs={jobs} library={library} selectedTitles={selectedTitles} onSelectTitle={!compact&&hasVolumes?id=>setSelectedTitles(old=>{const next=new Set(old);next.has(id)?next.delete(id):next.add(id);return next;}):undefined} canMoveTitle={canMove} context={data.data?.context??{}} device={device} canDelete={data.data?.capabilities?.includes("episode-delete-v1")??false} busy={busy||pending.some(c=>["remove-episode","prepare-episode","move-titles"].includes(c.kind))} focusTitle={title}
         remove={async body=>{await call("remove-episode",body);}} prepareEpisode={async body=>{await call("prepare-episode",body);}} canPrepare={data.data?.capabilities.includes("episode-prepare-v1")}
         renderJob={j=><><div className="flex flex-wrap items-center justify-between gap-3"><p className="min-w-0 flex-1 break-words text-xs text-gray-400">{j.releaseName}{device.online&&j.speed>0?` · ${(j.speed/1e6).toFixed(1)} МБ/с`:""}{j.state==="paused"?" · приостановлено":""}</p><div className="flex flex-wrap gap-2">{["downloading","verifying"].includes(j.state)&&<Button size="sm" disabled={busy} onClick={()=>void call("pause",{job:j.id})}>Пауза</Button>}{["paused","error"].includes(j.state)&&<Button size="sm" disabled={busy} onClick={()=>void call("resume",{job:j.id})}>Продолжить</Button>}{["selecting","downloading","verifying","paused","error"].includes(j.state)&&<Button size="sm" variant="ghost" disabled={busy} onClick={()=>void call("cancel",{job:j.id})}>Отменить загрузку</Button>}</div></div>{j.error&&<ErrorBox error={j.error}/ >}{j.state==="selecting"&&<SeriesSelection job={j} busy={busy} episodeCount={knownEpisodes||data.data?.context[j.title]?.episodes||undefined} start={selections=>void call("start",{job:j.id,selections})}/>}</>}
@@ -136,6 +142,3 @@ export function DesktopDownloads({ title, titleName = "", episodeCount, watchEpi
     </>}
   </section>;
 }
-
-
-
