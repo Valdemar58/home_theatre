@@ -10,6 +10,7 @@ import {
 } from "@/lib/room";
 import { displayTitle } from "@/lib/schedule";
 import { db, now } from "./db";
+import { playbackTelemetry } from "@/lib/playback-telemetry";
 import { getMedia } from "./lists";
 import { notify } from "./notifications";
 import { ApiError } from "./route";
@@ -428,17 +429,29 @@ function release(id: string, userId: number, kind: "resume" | "skip" = "resume")
 }
 
 /** Плеер участника сообщает о себе (раз в несколько секунд и когда начал/перестал грузиться). Ответ — часы сервера. */
-export function roomReport(userId: number, id: string, p: { playbackError?: boolean; position?: number; buffered?: unknown; buffering?: boolean; bw?: number | null; rtt?: number | null; drift?: number | null; revision?: number; anilistId?: number; ep?: number }) {
+export function roomReport(userId: number, id: string, p: { telemetry?: unknown; playbackError?: boolean; position?: number; buffered?: unknown; buffering?: boolean; bw?: number | null; rtt?: number | null; drift?: number | null; revision?: number; anilistId?: number; ep?: number }) {
   return db.transaction(() => {
     db.prepare("UPDATE watch_rooms SET state = state WHERE id = ?").run(id);
     return reportLocked(userId, id, p);
   })();
 }
-function reportLocked(userId: number, id: string, p: { playbackError?: boolean; position?: number; buffered?: unknown; buffering?: boolean; bw?: number | null; rtt?: number | null; drift?: number | null; revision?: number; anilistId?: number; ep?: number }) {
+function reportLocked(userId: number, id: string, p: { telemetry?: unknown; playbackError?: boolean; position?: number; buffered?: unknown; buffering?: boolean; bw?: number | null; rtt?: number | null; drift?: number | null; revision?: number; anilistId?: number; ep?: number }) {
   const { r } = mine(userId, id);
   const s = JSON.parse(r.state) as RoomState;
   if ((s.generation??0)>0 && (p.anilistId!==r.anilist_id || p.ep!==s.ep || p.revision!==(s.session?.revision??s.generation))) return {now:Date.now()};
   if (s.session && (s.session.phase !== "watching" || p.revision !== s.session.revision || p.anilistId !== r.anilist_id || p.ep !== s.ep)) return { now: Date.now() };
+  const diagnostic = playbackTelemetry(p.telemetry);
+  if (diagnostic) {
+    const key = `playback-diagnostic:${userId}:${diagnostic.client}`;
+    const row = db.prepare<[string], { value: string }>("SELECT value FROM app_settings WHERE key=?").get(key);
+    let previous: unknown = null;
+    try {
+      const old = row ? JSON.parse(row.value) : null;
+      if (old?.room === id && old.title === r.anilist_id && old.ep === s.ep && old.at > Date.now() - 60000) previous = { at: old.at, element: old.element, transport: old.transport };
+    } catch { /* A malformed old diagnostic must not break room reporting. */ }
+    db.prepare("DELETE FROM app_settings WHERE key LIKE 'playback-diagnostic:%' AND updated_at < ?").run(now() - 86400);
+    db.prepare("INSERT INTO app_settings(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").run(key, JSON.stringify({ ...diagnostic, room: id, title: r.anilist_id, ep: s.ep, at: Date.now(), previous }), now());
+  }
   const l = liveOf(id);
   const cur = l.presence.get(userId) ?? { online: true, buffering: false, bw: null, rtt: null, drift: null, seenAt: 0, conns: 0 };
   const buffering = Boolean(p.buffering);

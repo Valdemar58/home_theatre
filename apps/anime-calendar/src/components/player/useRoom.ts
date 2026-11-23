@@ -15,7 +15,7 @@ export type RoomHandle = {
   connection: RoomConnection;
   canControl: boolean;
   act: (body: Record<string, unknown>) => Promise<RoomView | null>;
-  report: (r: { playbackError?: boolean; buffering: boolean; bw: number | null; drift: number | null; position?: number; buffered?: [number, number][]; anilistId?: number; ep?: number; revision?: number }) => void;
+  report: (r: { telemetry?: unknown; playbackError?: boolean; buffering: boolean; bw: number | null; drift: number | null; position?: number; buffered?: [number, number][]; anilistId?: number; ep?: number; revision?: number }) => void;
   serverNow: () => number;
   rtt: number | null;
 };
@@ -82,7 +82,7 @@ export function useRoom(rid: string | null): RoomHandle {
     return r;
   }, [rid]);
 
-  const report = useCallback((r: { playbackError?: boolean; buffering: boolean; bw: number | null; drift: number | null; position?: number; buffered?: [number, number][]; anilistId?: number; ep?: number; revision?: number }) => {
+  const report = useCallback((r: { telemetry?: unknown; playbackError?: boolean; buffering: boolean; bw: number | null; drift: number | null; position?: number; buffered?: [number, number][]; anilistId?: number; ep?: number; revision?: number }) => {
     if (!rid) return;
     const t0 = Date.now();
     void api<{ now: number }>(`/api/rooms/${rid}`, { method: "POST", json: { action: "report", ...r, rtt: rttRef.current } }).then(({ now }) => {
