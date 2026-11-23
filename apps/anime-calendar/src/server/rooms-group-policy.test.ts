@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_GROUP_PERMISSIONS } from "@/lib/group-policy";
+import { mediaReady } from "@/lib/media-readiness";
 
 vi.mock("server-only", () => ({}));
 vi.mock("./notifications", () => ({ notify: vi.fn() }));
@@ -80,6 +81,16 @@ describe("group playback permissions", () => {
 });
 
 afterEach(() => vi.useRealTimers());
+it("holds the whole room for Safari's pending seek despite readyState=3 and resumes after real buffering", () => {
+  roomCommand(owner, room, { action: "play", pos: 28 });
+  const safari = { readyState: 3, seeking: true, ahead: 0.0005, position: 28.0895, duration: 1423.097 };
+  roomReport(2, room, { buffering: !mediaReady(safari) });
+  expect(roomView(1, room).state.playing).toBe(false);
+  expect(roomView(1, room).state.hold).toContain(2);
+  roomReport(2, room, { buffering: !mediaReady({ ...safari, seeking: false, ahead: 0.2 }) });
+  expect(roomView(1, room).state.hold).not.toContain(2);
+  expect(roomView(1, room).state.playing).toBe(true);
+});
 it("stores only the latest bounded diagnostic per viewer/browser and rejects reports from outsiders", () => {
   db.prepare("INSERT INTO app_settings(key,value,updated_at) VALUES('playback-diagnostic:expired:safari','{}',0)").run();
   roomReport(2, room, { buffering: false, telemetry: { client: "safari", element: { paused: true, readyState: 2, currentTime: 5, src: "secret" }, transport: { ice: "connected", packets: 20 } } });

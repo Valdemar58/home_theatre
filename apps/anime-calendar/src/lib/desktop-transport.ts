@@ -63,12 +63,15 @@ export async function connectDesktop(lease: string, report: (d: DesktopDiagnosti
     const { offset, length } = e.data, port = e.ports[0];
     if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(length) || offset < 0 || length < 1 || length > 1024 * 1024) { port.postMessage({ error: "Некорректный диапазон" }); return; }
     const request = new AbortController();
-    port.onmessage = e => { if (e.data?.cancel) request.abort(); };
+    progress.rangeRequests = (progress.rangeRequests ?? 0) + 1;
+    progress.queuedRanges = (progress.queuedRanges ?? 0) + 1;
+    port.onmessage = e => { if (e.data?.cancel && !request.signal.aborted) { progress.rangeCancelled = (progress.rangeCancelled ?? 0) + 1; request.abort(); snapshot(); } };
     const heartbeat = setInterval(() => port.postMessage({ waiting: true }), 5000);
     queue = queue.catch(() => {}).then(async () => {
-      try { const bytes = await read(offset, length, request.signal); port.postMessage({ bytes }, [bytes]); }
+      progress.activeOffset = offset; progress.activeLength = length; snapshot();
+      try { const bytes = await read(offset, length, request.signal); progress.rangeCompleted = (progress.rangeCompleted ?? 0) + 1; port.postMessage({ bytes }, [bytes]); }
       catch (e) { if (!stopped && !request.signal.aborted) publish("closed", (e as Error).message); port.postMessage({ error: (e as Error).message }); }
-      finally { clearInterval(heartbeat); port.close(); }
+      finally { progress.queuedRanges = Math.max(0, (progress.queuedRanges ?? 1) - 1); delete progress.activeOffset; delete progress.activeLength; snapshot(); clearInterval(heartbeat); port.close(); }
     });
   };
   const signal = async () => {

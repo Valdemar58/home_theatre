@@ -14,6 +14,7 @@ import { positionAt, type RoomState } from "@/lib/room";
 import { RoomPlayback } from "@/lib/room-playback";
 import { bindMediaSession } from "@/lib/media-session";
 import { DesktopRecovery } from "@/lib/desktop-recovery";
+import { mediaReady } from "@/lib/media-readiness";
 import { cx, ErrorBox, Spinner } from "../ui";
 import { StreamStatus, type Stage } from "./StreamStatus";
 import { connectDesktop, type DesktopDiagnostics } from "@/lib/desktop-transport";
@@ -699,14 +700,14 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
       setBufferAhead(ahead);
       // Native MP4 buffering is controlled by the browser; on pause it may stop
       // fetching before five seconds. Requiring more would deadlock the barrier.
-      const low = autoplayBlocked || v.readyState < 3 || (!desktopRoom && was === true && ahead < 5 && v.currentTime + ahead < (v.duration || Infinity) - 1);
+      const low = autoplayBlocked || !mediaReady({ readyState: v.readyState, seeking: v.seeking, ahead, position: v.currentTime, duration: v.duration }) || (!desktopRoom && was === true && ahead < 5 && v.currentTime + ahead < (v.duration || Infinity) - 1);
       if (low && !v.ended) since ??= Date.now(); else since = null;
       const buffering = since !== null && (was === true || Date.now() - since > 1000);
       if (!force && buffering === was) return;
       was = buffering;
       const bw = hls.current?.bandwidthEstimate;
       const net = desktopNetRef.current;
-      rm.report({ telemetry: { client: /Safari/.test(navigator.userAgent) && !/Chrome|Chromium|CriOS|Edg|FxiOS/.test(navigator.userAgent) ? "safari" : "other", element: controls?.current?.diagnostics?.(), transport: { mode: net?.mode, ice: net?.progress?.ice, channel: net?.progress?.channel, packets: net?.progress?.packets, directBytes: net?.directBytes, relayBytes: net?.relayBytes } }, playbackError: Boolean(error) || desktopUnavailable, buffering, bw: bw && Number.isFinite(bw) ? Math.round(bw) : null, drift: drift.current, position: v.currentTime, buffered: Array.from({ length: Math.min(b.length, 16) }, (_, i) => [b.start(i), b.end(i)] as [number, number]) });
+      rm.report({ telemetry: { client: /Safari/.test(navigator.userAgent) && !/Chrome|Chromium|CriOS|Edg|FxiOS/.test(navigator.userAgent) ? "safari" : "other", element: controls?.current?.diagnostics?.(), transport: { mode: net?.mode, ice: net?.progress?.ice, channel: net?.progress?.channel, packets: net?.progress?.packets, directBytes: net?.directBytes, relayBytes: net?.relayBytes, rangeRequests: net?.progress?.rangeRequests, rangeCompleted: net?.progress?.rangeCompleted, rangeCancelled: net?.progress?.rangeCancelled, queuedRanges: net?.progress?.queuedRanges, activeOffset: net?.progress?.activeOffset, activeLength: net?.progress?.activeLength } }, playbackError: Boolean(error) || desktopUnavailable, buffering, bw: bw && Number.isFinite(bw) ? Math.round(bw) : null, drift: drift.current, position: v.currentTime, buffered: Array.from({ length: Math.min(b.length, 16) }, (_, i) => [b.start(i), b.end(i)] as [number, number]) });
     };
     tick(true);
     const fast = setInterval(() => tick(false), 500);
@@ -724,7 +725,7 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
       let ahead = 0;
       for (let i = 0; i < v.buffered.length; i++) if (v.buffered.start(i) <= v.currentTime && v.buffered.end(i) > v.currentTime) ahead = v.buffered.end(i) - v.currentTime;
       const net = desktopNetRef.current;
-      const eligible = !rm.state.playing && rm.state.hold.length > 0 && v.readyState < 3 && !v.ended && ahead <= 0.5 && !autoplayBlocked;
+      const eligible = !rm.state.playing && rm.state.hold.length > 0 && !mediaReady({ readyState: v.readyState, seeking: v.seeking, ahead, position: v.currentTime, duration: v.duration }) && !v.ended && ahead <= 0.5 && !autoplayBlocked;
       if (!recovery.observe(Date.now(), eligible, `${net?.progress?.packets ?? 0}:${net?.directBytes ?? 0}:${net?.relayBytes ?? 0}`)) return;
       const target = positionAt(rm.state, rm.serverNow());
       v.load(); v.currentTime = Math.max(0, Math.min(target, (info.duration || Infinity) - 0.1));
