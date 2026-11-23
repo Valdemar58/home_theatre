@@ -14,6 +14,6 @@ export function playbackTelemetry(value: unknown) {
   return {
     client: input.client,
     element: clean(input.element, { currentTime: 86400, bufferedAhead: 86400, readyState: 4, networkState: 3, playbackRate: 4, volume: 1, errorCode: 4, decodedFrames: 1e12 }, ["paused", "ended", "seeking", "muted", "autoplayBlocked"]),
-    transport: clean(input.transport, { packets: 1e12, directBytes: 1e15, relayBytes: 1e15 }, [], { mode: ["connecting", "direct", "relay", "recovering", "closed"], ice: ["new", "checking", "connected", "completed", "disconnected", "failed", "closed"], channel: ["connecting", "open", "closing", "closed"] }),
+    transport: clean(input.transport, { packets: 1e12, directBytes: 1e15, relayBytes: 1e15, rangeRequests: 1e12, rangeCompleted: 1e12, rangeCancelled: 1e12, queuedRanges: 10000, activeOffset: 1e15, activeLength: 1048576 }, [], { mode: ["connecting", "direct", "relay", "recovering", "closed"], ice: ["new", "checking", "connected", "completed", "disconnected", "failed", "closed"], channel: ["connecting", "open", "closing", "closed"] }),
   };
 }

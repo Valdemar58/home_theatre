@@ -22,4 +22,10 @@ export type DirectProgress = {
   localCandidates: ReturnType<typeof candidateKinds>;
   remoteCandidates: ReturnType<typeof candidateKinds>;
   packets: number;
+  rangeRequests?: number;
+  rangeCompleted?: number;
+  rangeCancelled?: number;
+  queuedRanges?: number;
+  activeOffset?: number;
+  activeLength?: number;
 };

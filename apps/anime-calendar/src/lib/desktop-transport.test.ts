@@ -51,6 +51,8 @@ it("a successful direct read cancels the initial deadline and preserves later bu
   await start(); Peer.all.at(-1)!.dc.open(); const port = range(); await vi.advanceTimersByTimeAsync(1);
   expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ bytes: expect.any(ArrayBuffer) }), expect.any(Array));
   expect(reports.at(-1)?.directBytes).toBe(4); expect(fetch).not.toHaveBeenCalled();
+  expect(reports.at(-1)?.progress).toMatchObject({ rangeRequests: 1, rangeCompleted: 1, queuedRanges: 0 });
+  expect(reports.at(-1)?.progress?.activeOffset).toBeUndefined();
   const channel = Peer.all.at(-1)!.dc; channel.readyState = "closed"; channel.onclose?.();
   await vi.advanceTimersByTimeAsync(45000);
   expect(reports.some(d => d.mode === "closed")).toBe(false);
