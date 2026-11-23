@@ -4,7 +4,7 @@ import type { RoomConnection } from "@/lib/connection-diagnostics";
 import type { DesktopDiagnostics } from "@/lib/desktop-transport";
 import { Button } from "../ui";
 
-export function ConnectionDiagnostics({ room, media, sourceError }: { room: RoomConnection; media: DesktopDiagnostics | null; sourceError: boolean }) {
+export function ConnectionDiagnostics({ room, media, sourceError, element }: { room: RoomConnection; media: DesktopDiagnostics | null; sourceError: boolean; element?: () => Record<string, number | boolean | null> | null }) {
   const [report, setReport] = useState(""), [copied, setCopied] = useState(false);
   const p = media?.progress;
   const connected = room.transport === "sse" || room.transport === "poll";
@@ -24,7 +24,7 @@ export function ConnectionDiagnostics({ room, media, sourceError }: { room: Room
     </dl>
     <p className="mt-3 text-xs text-gray-400">Отчёт содержит состояния и количество адресов, без IP, токенов и содержимого SDP.</p>
     <Button size="sm" className="mt-3" onClick={async () => {
-      const text = JSON.stringify({ schema: 1, capturedAt: new Date().toISOString(), browser: navigator.userAgent, room, sourceError, media: media ? { mode: media.mode, directBytes: media.directBytes, relayBytes: media.relayBytes, progress: p } : null }, null, 2);
+      const text = JSON.stringify({ schema: 2, capturedAt: new Date().toISOString(), browser: navigator.userAgent, room, sourceError, element: element?.() ?? null, media: media ? { mode: media.mode, directBytes: media.directBytes, relayBytes: media.relayBytes, progress: p } : null }, null, 2);
       setReport(text); setCopied(false);
       try { await navigator.clipboard.writeText(text); setCopied(true); } catch { /* Selectable report below works when clipboard permission is unavailable. */ }
     }}>{copied ? "Отчёт скопирован" : "Скопировать отчёт"}</Button>

@@ -13,13 +13,26 @@ export class RoomPlayback {
   private seekExpected: number | null = null;
   private desired: boolean | null = null;
   private commands: Promise<unknown> = Promise.resolve();
-  constructor(private media: () => Media | null, private room: () => Room | null | undefined, private error: (message: string) => void, private now = Date.now) {}
-  async setPlaying(playing: boolean) {
+  private blocked = false;
+  private starting = false;
+  constructor(private media: () => Media | null, private room: () => Room | null | undefined, private error: (message: string) => void, private now = Date.now, private blockedChanged: (value: boolean) => void = () => {}) {}
+  async setPlaying(playing: boolean, userGesture = false) {
     const v = this.media();
     if (!v || v.paused === !playing) return;
+    if (playing && (this.starting || (this.blocked && !userGesture))) return;
+    if (playing && userGesture && this.blocked && v.readyState >= 2) {
+      const r = this.room(); if (r?.state.playing) this.setPosition(positionAt(r.state, r.serverNow()));
+    }
     this.expected = { playing, until: this.now() + 2000 };
-    if (playing) await v.play().catch(() => { if (this.expected?.playing === playing) this.expected = null; });
-    else v.pause();
+    if (playing) {
+      this.starting = true;
+      try { await v.play(); this.blocked = false; this.blockedChanged(false); }
+      catch (e) {
+        if (this.expected?.playing === playing) this.expected = null;
+        if ((e as Error).name === "NotAllowedError") { this.blocked = true; this.blockedChanged(true); }
+        else if ((e as Error).name !== "AbortError") this.error((e as Error).message);
+      } finally { this.starting = false; }
+    } else v.pause();
   }
   request(action: "play" | "pause" | "seek", pos: number) {
     const r = this.room(); if (!r) return;
@@ -61,6 +74,11 @@ export class RoomPlayback {
     const s = r.state, target = positionAt(s, r.serverNow());
     if (v.ended && (!Number.isFinite(v.duration) || target >= v.duration - 0.5)) return null;
     if (v.readyState < 2 || v.seeking) return null;
+    // A paused element whose play() was denied cannot catch up. Seeking it every
+    // hardSeek seconds only displays isolated frames and never starts its audio.
+    if (s.playing && v.paused) { void this.setPlaying(true); return v.currentTime - target; }
+    if (!v.paused && this.blocked) { this.blocked = false; this.blockedChanged(false); }
+    if (s.playing && v.readyState < 3) { v.playbackRate = 1; return v.currentTime - target; }
     const anchor = `${s.at}:${s.playing}`, policy = r.policy ?? DEFAULT_SYNC_POLICY;
     // Pauses align immediately. Playback catches up according to the room policy;
     // only a large discontinuity requires a seek.

@@ -51,3 +51,19 @@ it("a failed command releases synchronization and reports the error", async () =
   const { r, sync, error } = fixture(); r.command.mockRejectedValue(Error("Нет связи")); sync.request("pause", 12);
   await vi.waitFor(() => expect(error).toHaveBeenCalledWith("Нет связи")); expect(sync.sync()).not.toBeNull();
 });
+it("does not turn denied autoplay into a frame every five seconds, and unlocks locally at the shared position", async () => {
+  const { v, r, sync, advance } = fixture(); v.paused = true;
+  v.play.mockRejectedValue(Object.assign(new Error("Gesture required"), { name: "NotAllowedError" }));
+  sync.sync(); await Promise.resolve(); await Promise.resolve();
+  for (let i = 0; i < 5; i++) { advance(6000); sync.sync(); await Promise.resolve(); }
+  expect(v.currentTime).toBe(12); expect(v.play).toHaveBeenCalledTimes(1); expect(r.command).not.toHaveBeenCalled();
+  v.play.mockImplementation(async () => { v.paused = false; });
+  await sync.setPlaying(true, true);
+  expect(v.currentTime).toBe(42); expect(v.paused).toBe(false); expect(r.command).not.toHaveBeenCalled();
+  sync.sync(); expect(v.currentTime).toBe(42);
+});
+it("never seeks through a starved buffer while the element only has a single current frame", () => {
+  const { v, sync, advance } = fixture(); v.readyState = 2; v.playbackRate = 1.12;
+  for (let i = 0; i < 5; i++) { advance(6000); sync.sync(); }
+  expect(v.currentTime).toBe(12); expect(v.playbackRate).toBe(1);
+});

@@ -215,7 +215,7 @@ export function WatchView({ id: initialId, ep: initialEp }: { id: number; ep: nu
         </Player>}
         {session && <SessionTransition handle={rm} nextTitle={nextTitle} />}
         </div>
-        {rid && <ConnectionDiagnostics room={rm.connection} media={connectionMedia} sourceError={desktopSources.isError && !desktopSources.data} />}
+        {rid && <ConnectionDiagnostics room={rm.connection} media={connectionMedia} sourceError={desktopSources.isError && !desktopSources.data} element={() => controls.current?.diagnostics?.() ?? null} />}
       {eps.length > 0 && (
         <EpisodeStrip id={id} current={ep} statuses={eps} watched={currentCycle?.baseline??watched} seenEpisodes={currentCycle?.episodes ?? []} positions={st?.positions ?? []}
           schedule={[...(a?.schedule??[]),...(a?.nextAiringEpisode?[a.nextAiringEpisode]:[])]} titles={new Map(plot?.episodes.map((e) => [e.number, e]) ?? [])} onPick={(n) => pickEp(n)} />
