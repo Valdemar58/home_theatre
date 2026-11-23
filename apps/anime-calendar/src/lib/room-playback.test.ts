@@ -67,3 +67,9 @@ it("never seeks through a starved buffer while the element only has a single cur
   for (let i = 0; i < 5; i++) { advance(6000); sync.sync(); }
   expect(v.currentTime).toBe(12); expect(v.playbackRate).toBe(1);
 });
+it("does not chase the room when Safari claims future data but only buffers half a millisecond", () => {
+  const { v, sync, advance } = fixture(); v.readyState = 3;
+  Object.assign(v, { buffered: { length: 1, start: () => 12, end: () => 12.0005 } });
+  for (let i = 0; i < 5; i++) { advance(6000); sync.sync(); }
+  expect(v.currentTime).toBe(12); expect(v.playbackRate).toBe(1);
+});

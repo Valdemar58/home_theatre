@@ -1,5 +1,6 @@
 import { positionAt, type RoomState } from "./room";
 import { DEFAULT_SYNC_POLICY, syncCorrection, type SyncPolicy } from "./sync-policy";
+import { mediaReady } from "./media-readiness";
 
 type Media = Pick<HTMLMediaElement, "paused" | "ended" | "seeking" | "readyState" | "currentTime" | "duration" | "playbackRate" | "play" | "pause"> & { buffered?: TimeRanges };
 type Room = { policy?: SyncPolicy; state: RoomState; canControl: boolean; serverNow: () => number; command: (action: "play" | "pause" | "seek", pos: number) => Promise<unknown> | void };
@@ -78,7 +79,11 @@ export class RoomPlayback {
     // hardSeek seconds only displays isolated frames and never starts its audio.
     if (s.playing && v.paused) { void this.setPlaying(true); return v.currentTime - target; }
     if (!v.paused && this.blocked) { this.blocked = false; this.blockedChanged(false); }
-    if (s.playing && v.readyState < 3) { v.playbackRate = 1; return v.currentTime - target; }
+    let ahead: number | undefined;
+    if (v.buffered) {
+      ahead = 0; for (let i = 0; i < v.buffered.length; i++) if (v.buffered.start(i) <= v.currentTime && v.buffered.end(i) > v.currentTime) ahead = v.buffered.end(i) - v.currentTime;
+    }
+    if (s.playing && !mediaReady({ readyState: v.readyState, seeking: v.seeking, ahead, position: v.currentTime, duration: v.duration })) { v.playbackRate = 1; return v.currentTime - target; }
     const anchor = `${s.at}:${s.playing}`, policy = r.policy ?? DEFAULT_SYNC_POLICY;
     // Pauses align immediately. Playback catches up according to the room policy;
     // only a large discontinuity requires a seek.
@@ -89,10 +94,7 @@ export class RoomPlayback {
     const drift = v.currentTime - target, c = syncCorrection(drift, s.playing, policy);
     if (c.seek) this.setPosition(target);
     // Accelerating a nearly empty buffer creates the very stalls we are correcting.
-    if (c.rate > 1 && v.buffered) {
-      let ahead = 0; for (let i = 0; i < v.buffered.length; i++) if (v.buffered.start(i) <= v.currentTime && v.buffered.end(i) > v.currentTime) ahead = v.buffered.end(i) - v.currentTime;
-      if (ahead < 2) c.rate = 1;
-    }
+    if (c.rate > 1 && ahead !== undefined && ahead < 2) c.rate = 1;
     if (v.playbackRate !== c.rate) v.playbackRate = c.rate;
     void this.setPlaying(s.playing);
     return drift;
