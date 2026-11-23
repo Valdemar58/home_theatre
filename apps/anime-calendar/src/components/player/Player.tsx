@@ -120,7 +120,7 @@ export type RoomSync = {
   canControl: boolean;
   serverNow: () => number;
   command: (action: "play" | "pause" | "seek", pos: number) => Promise<unknown> | void;
-  report: (r: { playbackError?: boolean; buffering: boolean; bw: number | null; drift: number | null; position?: number; buffered?: [number, number][] }) => void;
+  report: (r: { telemetry?: unknown; playbackError?: boolean; buffering: boolean; bw: number | null; drift: number | null; position?: number; buffered?: [number, number][] }) => void;
 };
 
 export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, next, onReport, children, autoPlay, preview, onState, onConnection, controls, room, fullscreenRoot }: {
@@ -705,7 +705,8 @@ export function Player({ anilistId, ep, source, desktopRoom, title, onEnded, nex
       if (!force && buffering === was) return;
       was = buffering;
       const bw = hls.current?.bandwidthEstimate;
-      rm.report({ playbackError: Boolean(error) || desktopUnavailable, buffering, bw: bw && Number.isFinite(bw) ? Math.round(bw) : null, drift: drift.current, position: v.currentTime, buffered: Array.from({ length: Math.min(b.length, 16) }, (_, i) => [b.start(i), b.end(i)] as [number, number]) });
+      const net = desktopNetRef.current;
+      rm.report({ telemetry: { client: /Safari/.test(navigator.userAgent) && !/Chrome|Chromium|CriOS|Edg|FxiOS/.test(navigator.userAgent) ? "safari" : "other", element: controls?.current?.diagnostics?.(), transport: { mode: net?.mode, ice: net?.progress?.ice, channel: net?.progress?.channel, packets: net?.progress?.packets, directBytes: net?.directBytes, relayBytes: net?.relayBytes } }, playbackError: Boolean(error) || desktopUnavailable, buffering, bw: bw && Number.isFinite(bw) ? Math.round(bw) : null, drift: drift.current, position: v.currentTime, buffered: Array.from({ length: Math.min(b.length, 16) }, (_, i) => [b.start(i), b.end(i)] as [number, number]) });
     };
     tick(true);
     const fast = setInterval(() => tick(false), 500);

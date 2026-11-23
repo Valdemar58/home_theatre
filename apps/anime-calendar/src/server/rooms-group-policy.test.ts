@@ -80,6 +80,20 @@ describe("group playback permissions", () => {
 });
 
 afterEach(() => vi.useRealTimers());
+it("stores only the latest bounded diagnostic per viewer/browser and rejects reports from outsiders", () => {
+  db.prepare("INSERT INTO app_settings(key,value,updated_at) VALUES('playback-diagnostic:expired:safari','{}',0)").run();
+  roomReport(2, room, { buffering: false, telemetry: { client: "safari", element: { paused: true, readyState: 2, currentTime: 5, src: "secret" }, transport: { ice: "connected", packets: 20 } } });
+  roomReport(2, room, { buffering: false, telemetry: { client: "safari", element: { paused: false, readyState: 4 }, transport: { ice: "connected", packets: 30 } } });
+  const rows = db.prepare("SELECT value FROM app_settings WHERE key='playback-diagnostic:2:safari'").all() as { value: string }[];
+  expect(rows).toHaveLength(1);
+  expect(JSON.parse(rows[0].value)).toMatchObject({ room, element: { paused: false, readyState: 4 }, transport: { packets: 30 } });
+  expect(JSON.parse(rows[0].value).previous).toMatchObject({ element: { paused: true, readyState: 2 }, transport: { packets: 20 } });
+  expect(JSON.parse(rows[0].value).previous.previous).toBeUndefined();
+  expect(db.prepare("SELECT 1 FROM app_settings WHERE key='playback-diagnostic:expired:safari'").get()).toBeUndefined();
+  expect(rows[0].value).not.toContain("secret");
+  expect(() => roomReport(3, room, { telemetry: { client: "safari" } })).toThrow();
+  expect(db.prepare("SELECT 1 FROM app_settings WHERE key='playback-diagnostic:3:safari'").get()).toBeUndefined();
+});
 it("polling keeps a viewer online without leaking SSE counts, and expires into the shared barrier", () => {
   vi.useFakeTimers(); roomCommand(owner, room, {action:"play",pos:10});
   for(let i=0;i<10;i++)roomPoll(2,room);
