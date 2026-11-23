@@ -3,7 +3,7 @@ import { UserGroupIcon } from "@heroicons/react/24/outline";
 import { useState } from "react";
 import { netTone, type RoomAction, type RoomMember, type RoomState, type RoomView } from "@/lib/room";
 import { Avatar } from "../Avatar";
-import { Badge, Button, cx, Spinner } from "../ui";
+import { Badge, Button, cx, Spinner, ErrorBox } from "../ui";
 import { clock } from "./Player";
 import type { RoomHandle } from "./useRoom";
 
@@ -77,7 +77,8 @@ function Invite({ room, onJoin }: { room: RoomView; onJoin: (id: string) => void
 function Create({ friends, groups, ended, onCreate }: { friends: Friend[]; groups: Group[]; ended: boolean; onCreate: (ids: number[], group?: number) => Promise<void> }) {
   const [pick, setPick] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
-  const run = async (f: () => Promise<void>) => { setBusy(true); try { await f(); } finally { setBusy(false); } };
+  const [error, setError] = useState<unknown>(null);
+  const run = async (f: () => Promise<void>) => { setBusy(true); setError(null); try { await f(); } catch (e) { setError(e); } finally { setBusy(false); } };
   return (
     <div className="space-y-2 text-sm">
       <p className="text-xs text-gray-400">
@@ -107,6 +108,7 @@ function Create({ friends, groups, ended, onCreate }: { friends: Friend[]; group
           ))}
         </div>
       ) : <p className="text-xs text-gray-500">Друзей пока нет — комнату можно создать и позвать позже.</p>}
+      {error ? <ErrorBox error={error} /> : null}
       <Button size="sm" variant="primary" disabled={busy}
         onClick={() => void run(() => onCreate([...pick]))}>
         {busy && <Spinner className="h-3.5 w-3.5" />} Создать комнату{pick.size ? ` и позвать (${pick.size})` : ""}
