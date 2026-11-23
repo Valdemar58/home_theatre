@@ -35,6 +35,15 @@ it("rejects an unavailable device or a missing group without ending the old room
   expect(roomView(1, room).ended).toBe(false);
   expect(db.prepare("SELECT id FROM watch_rooms").all()).toHaveLength(1);
 });
+it("rolls back a new room and grant when the owned host has no prepared copy", () => {
+  const pair = desktop.beginPairing("Empty host", "win32"); desktop.approveDevice(pair.id, 1);
+  const device = desktop.deviceByToken(pair.token);
+  desktop.heartbeat(device, [{ id: "1234567890abcdef", title: 10, ep: 1, state: "imported", bytes: 8, version: `sha256:${"b".repeat(64)}`, progress: 0 }]); stream.hostState(device.id);
+  expect(() => createRoomWithSource(device.id, owner, 10, 1, [2], 5, false, { id: group, preset: "equal", control: [] })).toThrow(/готовой/);
+  expect(roomView(1, room).ended).toBe(false);
+  expect(db.prepare("SELECT id FROM watch_rooms").all()).toHaveLength(1);
+  expect(desktop.grantsFor(device.id)).toHaveLength(0);
+});
 beforeEach(() => {
   db.exec("DELETE FROM watch_rooms; DELETE FROM shared_lists; DELETE FROM users;");
   for (const u of [owner, member, { id: 3, name: "outsider" }]) db.prepare("INSERT INTO users (id,jellyfin_id,name,created_at) VALUES (?,?,?,0)").run(u.id, String(u.id), u.name);
